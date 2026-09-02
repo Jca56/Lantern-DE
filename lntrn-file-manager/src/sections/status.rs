@@ -14,6 +14,7 @@ pub fn draw_status_bar(
     palette: &FoxPalette,
     status_rect: Rect,
     entries: &[FileEntry],
+    dir_loading: bool,
     file_info: &mut crate::file_info::FileInfoCache,
     cloud_status: Option<crate::cloud::sync::SyncStatus>,
     op_progress: Option<&OpHandle>,
@@ -80,10 +81,19 @@ pub fn draw_status_bar(
             .draw(text, screen.0, screen.1);
     }
 
-    let counts = format!("{dirs} folders, {files} files");
+    // Slow-mount listing still on its worker thread and nothing to count
+    // yet — say so rather than claiming an empty folder.
+    let (counts, counts_color) = if dir_loading && total == 0 {
+        ("Loading\u{2026}".to_string(), palette.accent)
+    } else {
+        (
+            format!("{dirs} folders, {files} files"),
+            palette.text_secondary,
+        )
+    };
     TextLabel::new(&counts, x, y)
         .size(font)
-        .color(palette.text_secondary)
+        .color(counts_color)
         .draw(text, screen.0, screen.1);
     x += counts.len() as f32 * cw;
 

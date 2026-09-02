@@ -46,6 +46,10 @@ pub struct PendingPaste {
     pub moves: Vec<(PathBuf, PathBuf)>,
     /// Sources that hit PermissionDenied — sent to the sudo flow at the end.
     pub perm_fails: Vec<PathBuf>,
+    /// Cut sources on a different filesystem than `dest` (rename → EXDEV:
+    /// phone → disk, USB stick → home). Handed to the ops worker as a
+    /// copy-then-delete at the end.
+    pub xdev_pairs: Vec<(PathBuf, PathBuf)>,
     /// Resolved (src, target) pairs ready for the copy worker. Only used
     /// in Copy mode — Cut applies inline.
     pub resolved_pairs: Vec<(PathBuf, PathBuf)>,
@@ -65,6 +69,7 @@ impl PendingPaste {
             created: Vec::new(),
             moves: Vec::new(),
             perm_fails: Vec::new(),
+            xdev_pairs: Vec::new(),
             resolved_pairs: Vec::new(),
             reload_tab: None,
         }

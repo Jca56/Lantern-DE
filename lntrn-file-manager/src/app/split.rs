@@ -278,6 +278,10 @@ impl App {
 
     /// Refresh the unfocused pane's listing from disk (after file operations
     /// that may have touched its directory). Uses the parked view's sort.
+    /// Split view: keep the unfocused pane fresh too. Every mutation path
+    /// (paste, drop, trash, undo, fs-watch events, navigation) funnels
+    /// through reload(), so this one hook keeps both panes honest — vital
+    /// when a drop just landed files in the other pane's directory.
     pub fn reload_inactive_pane(&mut self) {
         let Some(split) = self.split.as_mut() else {
             return;
@@ -287,6 +291,11 @@ impl App {
             PaneSide::Left => &mut split.right_tab,
             PaneSide::Right => &mut self.tabs[self.current_tab],
         };
+        if fs::is_slow_path(&tab.path) {
+            let path = tab.path.clone();
+            self.spawn_dir_load(path, super::DirLoadTarget::Inactive, (sort_by, sort_dir));
+            return;
+        }
         let selected: Vec<PathBuf> = tab
             .entries
             .iter()

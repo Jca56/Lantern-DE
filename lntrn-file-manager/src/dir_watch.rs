@@ -80,6 +80,17 @@ impl DirWatcher {
         self.pending_since = None;
     }
 
+    /// Stop watching. Used on slow mounts, where inotify never fires anyway
+    /// and a stale watch on the previous folder would trigger reloads of
+    /// the wrong directory.
+    pub fn unwatch(&mut self) {
+        if let (Some(w), Some(old)) = (&mut self.watcher, self.watched.take()) {
+            let _ = w.unwatch(&old);
+        }
+        self.dirty.store(false, Ordering::Release);
+        self.pending_since = None;
+    }
+
     /// Fd for the main loop's poll() set — readable when fs events arrived.
     pub fn fd(&self) -> RawFd {
         self.eventfd

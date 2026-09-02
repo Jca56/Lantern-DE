@@ -2,7 +2,7 @@
 
 use crate::fs;
 
-use super::{matches_filter, App, ViewMode};
+use super::{matches_filter, App, DirLoadTarget, ViewMode};
 
 impl App {
     /// Called when the user clicks the Cloud button or sidebar Cloud entry.
@@ -126,6 +126,43 @@ impl App {
     }
 
     pub fn reload(&mut self) {
+        if fs::is_slow_path(&self.current_dir) {
+            // Never list a slow mount on the render thread (app/dir_load.rs).
+            // If the listing we're holding belongs to a different folder,
+            // drop it: a stale directory under the new path bar is a lie,
+            // "Loading…" is the truth.
+            let stale = self
+                .entries
+                .first()
+                .is_some_and(|e| e.path.parent() != Some(self.current_dir.as_path()));
+            if stale {
+                self.entries.clear();
+                self.active_nav_tab().entries.clear();
+                self.renaming = None;
+                if self.view_mode == ViewMode::Tree {
+                    self.tree_entries.clear();
+                }
+            }
+            let dir = self.current_dir.clone();
+            let sort = (self.sort_by, self.sort_dir);
+            self.spawn_dir_load(dir, DirLoadTarget::Focused, sort);
+            self.reload_inactive_pane();
+            return;
+        }
+        let entries = fs::list_directory(
+            &self.current_dir,
+            self.show_hidden,
+            self.sort_by,
+            self.sort_dir,
+        );
+        self.apply_listing(entries);
+        self.reload_inactive_pane();
+    }
+
+    /// Install a fresh listing of `current_dir`, carrying selection and an
+    /// in-progress rename across it. Shared by the synchronous reload and
+    /// the slow-mount loader.
+    pub(super) fn apply_listing(&mut self, entries: Vec<fs::FileEntry>) {
         // Preserve an active rename across reload — the auto-refresh poll
         // would otherwise drop the user mid-type ~3 seconds after creating
         // a new folder. Capture the path now, re-resolve to its new index
@@ -144,12 +181,7 @@ impl App {
             .map(|e| e.path.clone())
             .collect();
 
-        self.entries = fs::list_directory(
-            &self.current_dir,
-            self.show_hidden,
-            self.sort_by,
-            self.sort_dir,
-        );
+        self.entries = entries;
         if !selected_paths.is_empty() {
             for e in &mut self.entries {
                 e.selected = selected_paths.contains(&e.path);
@@ -170,15 +202,16 @@ impl App {
         if self.view_mode == ViewMode::Tree {
             self.rebuild_tree();
         }
-        // Split view: keep the unfocused pane fresh too. Every mutation path
-        // (paste, drop, trash, undo, fs-watch events, navigation) funnels
-        // through reload(), so this one hook keeps both panes honest — vital
-        // when a drop just landed files in the other pane's directory.
-        self.reload_inactive_pane();
     }
 
     pub fn reload_tab(&mut self, tab_idx: usize) {
         if tab_idx < self.tabs.len() {
+            let path = self.tabs[tab_idx].path.clone();
+            if fs::is_slow_path(&path) {
+                let sort = (self.sort_by, self.sort_dir);
+                self.spawn_dir_load(path, DirLoadTarget::Tab(tab_idx), sort);
+                return;
+            }
             let tab = &mut self.tabs[tab_idx];
             tab.entries =
                 fs::list_directory(&tab.path, self.show_hidden, self.sort_by, self.sort_dir);

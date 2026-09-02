@@ -65,6 +65,15 @@ impl GitStatus {
         });
     }
 
+    /// Forget the current repo state without scanning. Used on slow mounts,
+    /// where even `git rev-parse` would stat its way up the tree over MTP.
+    pub fn clear(&mut self) {
+        self.generation += 1;
+        self.in_repo = false;
+        self.branch = None;
+        self.marks.clear();
+    }
+
     /// Drain finished scans. Call once per frame.
     pub fn poll(&mut self) {
         while let Ok(result) = self.rx.try_recv() {

@@ -3,6 +3,7 @@ use crate::{PickConfig, PickResult};
 use std::path::PathBuf;
 use std::time::Instant;
 
+mod dir_load;
 mod edit;
 mod nav;
 mod places;
@@ -11,6 +12,7 @@ mod select;
 mod split;
 mod tabs;
 
+pub use dir_load::DirLoadTarget;
 pub use split::{PaneView, SplitState};
 
 /// Which pane of the split view. `Left` is the primary pane (tabs, sidebar
@@ -305,6 +307,10 @@ pub struct App {
     // Background copy worker (None = nothing running).
     pub op_progress: Option<crate::ops::OpHandle>,
 
+    /// Directory listings in flight on worker threads — slow mounts only,
+    /// see app/dir_load.rs. Local folders still list synchronously.
+    pub(super) dir_loads: Vec<dir_load::DirLoad>,
+
     /// Deferred icon-cache invalidations + xattr writes triggered from the
     /// Properties icon picker. We can't mutate icon_cache during the render
     /// frame (it's immutably borrowed by tex_draws), so render_frame stashes
@@ -452,6 +458,7 @@ impl App {
             pending_paste: None,
             pending_rename: None,
             op_progress: None,
+            dir_loads: Vec::new(),
             pending_icon_apply: Vec::new(),
             wayland_clipboard: crate::clipboard::Clipboard::new(),
             undo_stack: crate::undo::UndoStack::new(),

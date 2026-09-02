@@ -1254,6 +1254,14 @@ pub(crate) fn run_loop(
         // Poll search results from background thread
         app.poll_search();
         app.poll_op_progress();
+        // Slow-mount listings and media probes land off-thread; a result
+        // needs one more frame to show.
+        if app.poll_dir_loads() {
+            state.frame_done = true;
+        }
+        if file_info.poll() {
+            state.frame_done = true;
+        }
         // Drain deferred icon-cache invalidations queued by the Properties
         // icon picker. We can't mutate icon_cache during render_frame
         // (tex_draws still borrows it), so we apply changes between frames.
@@ -1278,8 +1286,16 @@ pub(crate) fn run_loop(
         }
 
         // ── Auto-refresh ─────────────────────────────────────────────
+        // On a slow mount (MTP phone, sshfs) every stat below is a device
+        // round-trip that can block for minutes behind a jmtpfs download,
+        // so the watcher, the mtime poll and git all stand down there.
+        let slow_dir = crate::fs::is_slow_path(&app.current_dir);
         // Primary: inotify on the current dir → debounced instant reload.
-        dir_watcher.watch(&app.current_dir);
+        if slow_dir {
+            dir_watcher.unwatch();
+        } else {
+            dir_watcher.watch(&app.current_dir);
+        }
         if dir_watcher.take_due_reload() {
             app.reload();
             // Keep the mtime tracker in sync so the fallback poll below
@@ -1295,7 +1311,11 @@ pub(crate) fn run_loop(
         if app.current_dir != git_dir {
             git_dir = app.current_dir.clone();
             last_git_poll = Instant::now();
-            git.refresh(&app.current_dir);
+            if slow_dir {
+                git.clear();
+            } else {
+                git.refresh(&app.current_dir);
+            }
         } else if git.in_repo() && last_git_poll.elapsed() >= Duration::from_secs(5) {
             // Commits/stages from a terminal change git state without any
             // fs event in the viewed dir — cheap periodic re-scan, repos only.
@@ -1307,11 +1327,15 @@ pub(crate) fn run_loop(
         if app.current_dir != last_dir_path {
             // Directory changed (navigation) — reset tracker, don't reload
             last_dir_path = app.current_dir.clone();
-            last_dir_mtime = std::fs::metadata(&app.current_dir)
-                .and_then(|m| m.modified())
-                .ok();
+            last_dir_mtime = if slow_dir {
+                None
+            } else {
+                std::fs::metadata(&app.current_dir)
+                    .and_then(|m| m.modified())
+                    .ok()
+            };
             last_dir_check = Instant::now();
-        } else if last_dir_check.elapsed() >= Duration::from_secs(3) {
+        } else if !slow_dir && last_dir_check.elapsed() >= Duration::from_secs(3) {
             last_dir_check = Instant::now();
             let current_mtime = std::fs::metadata(&app.current_dir)
                 .and_then(|m| m.modified())
@@ -1345,6 +1369,8 @@ pub(crate) fn run_loop(
             || state.dnd_active
             || icon_cache.has_pending()
             || dir_watcher.reload_pending()
+            || app.dir_loading()
+            || file_info.probing()
             || app.quick_look.as_ref().is_some_and(|ql| ql.loading())
             || app
                 .properties

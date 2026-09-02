@@ -50,6 +50,11 @@ struct ThumbJob {
 /// the process lifetime.
 pub struct ThumbPool {
     queue: Arc<(Mutex<VecDeque<ThumbJob>>, Condvar)>,
+    /// Single-worker lane for slow mounts (MTP phones, sshfs). jmtpfs pulls
+    /// the whole file on the first read under a global device lock, so
+    /// running those on the main pool would queue four full downloads ahead
+    /// of every readdir/stat the render thread needs from the phone.
+    slow_queue: Arc<(Mutex<VecDeque<ThumbJob>>, Condvar)>,
     rx: mpsc::Receiver<ThumbResult>,
 }
 
@@ -67,20 +72,44 @@ impl ThumbPool {
             let tx = tx.clone();
             std::thread::spawn(move || worker_loop(queue, tx));
         }
-        Self { queue, rx }
+        let slow_queue = Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
+        {
+            let queue = Arc::clone(&slow_queue);
+            let tx = tx.clone();
+            std::thread::spawn(move || worker_loop(queue, tx));
+        }
+        Self {
+            queue,
+            slow_queue,
+            rx,
+        }
     }
 
     pub fn submit(&self, key: String, path: PathBuf, kind: ThumbKind) {
-        let (lock, cv) = &*self.queue;
-        lock.lock().unwrap().push_back(ThumbJob { key, path, kind });
+        Self::push(&self.queue, ThumbJob { key, path, kind });
+    }
+
+    /// Queue on the slow lane: one job at a time, never competing with the
+    /// main pool. For files on MTP / network mounts.
+    pub fn submit_slow(&self, key: String, path: PathBuf, kind: ThumbKind) {
+        Self::push(&self.slow_queue, ThumbJob { key, path, kind });
+    }
+
+    fn push(queue: &(Mutex<VecDeque<ThumbJob>>, Condvar), job: ThumbJob) {
+        let (lock, cv) = queue;
+        lock.lock().unwrap().push_back(job);
         cv.notify_one();
     }
 
-    /// Drop all queued (not yet started) jobs, returning their keys so the
-    /// caller can clear its pending set. In-flight jobs finish normally.
+    /// Drop all queued (not yet started) jobs on both lanes, returning their
+    /// keys so the caller can clear its pending set. In-flight jobs finish
+    /// normally.
     pub fn clear_queue(&self) -> Vec<String> {
-        let (lock, _) = &*self.queue;
-        lock.lock().unwrap().drain(..).map(|j| j.key).collect()
+        let mut keys = Vec::new();
+        for (lock, _) in [&*self.queue, &*self.slow_queue] {
+            keys.extend(lock.lock().unwrap().drain(..).map(|j| j.key));
+        }
+        keys
     }
 
     pub fn try_recv(&self) -> Option<ThumbResult> {

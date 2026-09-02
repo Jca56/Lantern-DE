@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 #[derive(Clone)]
 pub struct FileEntry {
@@ -981,4 +981,125 @@ fn statvfs(path: &str) -> Option<StatVfs> {
         blocks: buf.f_blocks,
         blocks_free: buf.f_bavail,
     })
+}
+
+// ── Slow-mount detection ────────────────────────────────────────────────────
+//
+// On a FUSE/network mount every syscall is a device or network round-trip,
+// and jmtpfs is worse: the first read() of a file downloads the WHOLE file
+// over MTP while holding a global device lock, so one 3 GB video costs
+// minutes and every other operation on the phone waits behind it. Anything
+// touching such a path must stay off the render thread, and speculative
+// work (thumbnails, ffprobe, mtime polls, git) is throttled or skipped.
+
+struct MountTable {
+    refreshed: Instant,
+    slow_roots: Vec<PathBuf>,
+}
+
+static MOUNT_TABLE: std::sync::Mutex<Option<MountTable>> = std::sync::Mutex::new(None);
+
+/// How long a parsed /proc/mounts snapshot is trusted before re-reading.
+const MOUNT_TABLE_TTL: Duration = Duration::from_secs(2);
+
+fn is_slow_fstype(fstype: &str) -> bool {
+    // `fuseblk` is ntfs-3g & friends on a local block device — fast enough.
+    fstype == "fuse"
+        || fstype.starts_with("fuse.")
+        || matches!(
+            fstype,
+            "sshfs" | "nfs" | "nfs4" | "cifs" | "smb3" | "davfs" | "afpfs" | "9p"
+        )
+}
+
+/// /proc/mounts escapes whitespace and backslashes in mount points as octal
+/// (`\040` for a space) so the line stays whitespace-separated.
+fn unescape_mount(field: &str) -> PathBuf {
+    let mut out = String::with_capacity(field.len());
+    let bytes = field.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\'
+            && i + 3 < bytes.len()
+            && bytes[i + 1..i + 4].iter().all(|b| (b'0'..=b'7').contains(b))
+        {
+            let code = &field[i + 1..i + 4];
+            if let Ok(v) = u8::from_str_radix(code, 8) {
+                out.push(v as char);
+                i += 4;
+                continue;
+            }
+        }
+        // Mount points are UTF-8 on every system we run on; a lossy char
+        // walk keeps this simple.
+        let ch = field[i..].chars().next().unwrap_or('?');
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    PathBuf::from(out)
+}
+
+fn slow_mount_roots() -> Vec<PathBuf> {
+    let Ok(contents) = std::fs::read_to_string("/proc/mounts") else {
+        return Vec::new();
+    };
+    contents
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let _device = parts.next()?;
+            let mount = parts.next()?;
+            let fstype = parts.next()?;
+            is_slow_fstype(fstype).then(|| unescape_mount(mount))
+        })
+        .collect()
+}
+
+/// True when `path` lives on a slow (FUSE / network / MTP) mount. Cheap
+/// enough to call per entry per frame: the mount table is re-read at most
+/// every two seconds and the check is a prefix match against a few roots.
+pub fn is_slow_path(path: &Path) -> bool {
+    let mut guard = MOUNT_TABLE.lock().unwrap_or_else(|e| e.into_inner());
+    let stale = guard
+        .as_ref()
+        .map_or(true, |t| t.refreshed.elapsed() >= MOUNT_TABLE_TTL);
+    if stale {
+        *guard = Some(MountTable {
+            refreshed: Instant::now(),
+            slow_roots: slow_mount_roots(),
+        });
+    }
+    guard
+        .as_ref()
+        .map_or(false, |t| t.slow_roots.iter().any(|root| path.starts_with(root)))
+}
+
+#[cfg(test)]
+mod slow_mount_tests {
+    use super::*;
+
+    #[test]
+    fn fstype_classification() {
+        assert!(is_slow_fstype("fuse.jmtpfs"));
+        assert!(is_slow_fstype("fuse.sshfs"));
+        assert!(is_slow_fstype("fuse"));
+        assert!(is_slow_fstype("nfs4"));
+        assert!(is_slow_fstype("cifs"));
+        // Local block devices, even via FUSE (ntfs-3g), stay fast.
+        assert!(!is_slow_fstype("fuseblk"));
+        assert!(!is_slow_fstype("btrfs"));
+        assert!(!is_slow_fstype("ext4"));
+        assert!(!is_slow_fstype("vfat"));
+    }
+
+    #[test]
+    fn mount_unescape() {
+        assert_eq!(
+            unescape_mount("/run/media/alva/My\\040Stick"),
+            PathBuf::from("/run/media/alva/My Stick")
+        );
+        assert_eq!(unescape_mount("/plain"), PathBuf::from("/plain"));
+        // Trailing backslash without a full octal triple is kept literally.
+        assert_eq!(unescape_mount("/odd\\4"), PathBuf::from("/odd\\4"));
+    }
 }

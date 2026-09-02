@@ -71,6 +71,23 @@ pub fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::
     Ok(())
 }
 
+/// Cut = rename when possible. Across filesystems (phone → disk, USB stick →
+/// home) rename fails with EXDEV and the move becomes copy-then-delete on
+/// the ops worker — it used to be silently dropped here, so a Move off the
+/// phone did nothing at all.
+fn queue_cut(paste: &mut crate::conflict::PendingPaste, src: PathBuf, target: PathBuf) {
+    match std::fs::rename(&src, &target) {
+        Ok(()) => paste.moves.push((src, target)),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            paste.perm_fails.push(src);
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
+            paste.xdev_pairs.push((src, target));
+        }
+        Err(_) => {}
+    }
+}
+
 /// Returns true if the path looks like an extractable archive.
 pub fn is_archive(path: &std::path::Path) -> bool {
     let name = path.to_string_lossy().to_lowercase();
@@ -244,16 +261,7 @@ impl App {
                     // only collect the resolved (src, target) pairs here.
                     paste.resolved_pairs.push((src, effective_target));
                 }
-                PasteMode::Cut => {
-                    // Rename is atomic and fast; apply inline.
-                    match std::fs::rename(&src, &effective_target) {
-                        Ok(()) => paste.moves.push((src.clone(), effective_target)),
-                        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-                            paste.perm_fails.push(src);
-                        }
-                        Err(_) => {}
-                    }
-                }
+                PasteMode::Cut => queue_cut(paste, src, effective_target),
             }
         }
     }
@@ -274,8 +282,15 @@ impl App {
                 if !paste.perm_fails.is_empty() {
                     self.priv_run(crate::sudo::PendingPrivOp::Move {
                         sources: paste.perm_fails,
-                        dest: paste.dest,
+                        dest: paste.dest.clone(),
                     });
+                }
+                // Cross-filesystem moves (phone → disk) can't rename; they
+                // stream through the worker as copy-then-delete.
+                if !paste.xdev_pairs.is_empty() {
+                    let mut handle = crate::ops::spawn_move_worker(paste.xdev_pairs, paste.dest);
+                    handle.reload_tab = reload_tab;
+                    self.op_progress = Some(handle);
                 }
                 self.reload();
                 if let Some(idx) = reload_tab {
@@ -318,18 +333,32 @@ impl App {
             let handle = self.op_progress.take().unwrap();
             let reload_tab = handle.reload_tab;
             if let Some((created, perm_fails, _cancelled)) = handle.done_payload {
-                if !created.is_empty() {
-                    self.undo_stack.push(crate::undo::UndoAction::Copy {
-                        sources: handle.originals.clone(),
-                        created,
-                    });
-                }
-                self.clipboard = Some(ClipboardOp::Copy(handle.originals));
-                if !perm_fails.is_empty() {
-                    self.priv_run(crate::sudo::PendingPrivOp::Copy {
-                        sources: perm_fails,
-                        dest: handle.dest,
-                    });
+                match handle.mode {
+                    crate::conflict::PasteMode::Copy => {
+                        if !created.is_empty() {
+                            self.undo_stack.push(crate::undo::UndoAction::Copy {
+                                sources: handle.originals.clone(),
+                                created,
+                            });
+                        }
+                        self.clipboard = Some(ClipboardOp::Copy(handle.originals));
+                        if !perm_fails.is_empty() {
+                            self.priv_run(crate::sudo::PendingPrivOp::Copy {
+                                sources: perm_fails,
+                                dest: handle.dest,
+                            });
+                        }
+                    }
+                    // Cross-device move: undo would have to copy the data
+                    // back over the device boundary, so none is offered.
+                    crate::conflict::PasteMode::Cut => {
+                        if !perm_fails.is_empty() {
+                            self.priv_run(crate::sudo::PendingPrivOp::Move {
+                                sources: perm_fails,
+                                dest: handle.dest,
+                            });
+                        }
+                    }
                 }
             }
             self.reload();
@@ -442,13 +471,7 @@ impl App {
             PasteMode::Copy => {
                 paste.resolved_pairs.push((src, effective_target));
             }
-            PasteMode::Cut => match std::fs::rename(&src, &effective_target) {
-                Ok(()) => paste.moves.push((src.clone(), effective_target)),
-                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-                    paste.perm_fails.push(src);
-                }
-                Err(_) => {}
-            },
+            PasteMode::Cut => queue_cut(paste, src, effective_target),
         }
         self.advance_paste();
     }

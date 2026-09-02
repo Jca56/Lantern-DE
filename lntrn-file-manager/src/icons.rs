@@ -130,8 +130,26 @@ impl IconCache {
                     }
                 }
             } else if let Some(kind) = thumb_kind(&entry.name) {
-                self.pending.insert(key.clone());
-                self.pool.submit(key.clone(), entry.path.clone(), kind);
+                if crate::fs::is_slow_path(&entry.path) {
+                    // On MTP the first read downloads the entire file. A
+                    // photo is a few MB — fine one at a time on the slow
+                    // lane. A video frame or an audio tag costs the same
+                    // full download for a file that may be gigabytes, so
+                    // those keep the generic icon.
+                    match kind {
+                        ThumbKind::Image => {
+                            self.pending.insert(key.clone());
+                            self.pool
+                                .submit_slow(key.clone(), entry.path.clone(), kind);
+                        }
+                        ThumbKind::Video | ThumbKind::Audio => {
+                            self.failed.insert(key.clone());
+                        }
+                    }
+                } else {
+                    self.pending.insert(key.clone());
+                    self.pool.submit(key.clone(), entry.path.clone(), kind);
+                }
             }
             // Other file types: procedural fallback icon, no texture.
         }

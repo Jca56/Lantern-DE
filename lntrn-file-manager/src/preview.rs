@@ -108,7 +108,7 @@ pub fn draw_preview_pane(
     cy += 10.0 * s;
 
     // Metadata rows
-    let info = file_info.get(&entry.path);
+    let info = file_info.get(&entry.path).clone();
     let kind = if entry.is_dir {
         "Folder".to_string()
     } else {
@@ -120,11 +120,13 @@ pub fn draw_preview_pane(
         format_bytes(entry.size)
     };
     let modified = format_date(entry.modified);
-    let created = std::fs::metadata(&entry.path)
-        .ok()
-        .and_then(|m| m.created().ok())
-        .map(|t| format_date(Some(t)))
-        .unwrap_or_else(|| "—".into());
+    // Creation time comes from the background probe — a stat per frame on
+    // an MTP path used to be one of the render-thread stalls.
+    let created = match info.created {
+        Some(t) => format_date(Some(t)),
+        None if info.probing => "\u{2026}".to_string(),
+        None => "—".into(),
+    };
 
     let row_label_w = 88.0 * s;
     let row_font = 16.0 * s;

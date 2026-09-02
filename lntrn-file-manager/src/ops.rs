@@ -102,15 +102,33 @@ pub fn spawn_copy_worker(
     dest: PathBuf,
     label: &'static str,
 ) -> OpHandle {
+    spawn_worker(pairs, originals, dest, label, crate::conflict::PasteMode::Copy)
+}
+
+/// Cross-filesystem move (phone → disk, USB stick → home): `rename` fails
+/// with EXDEV there, so each pair is copied and the source deleted once the
+/// copy verifiably landed. Same progress strip and cancel as a copy.
+pub fn spawn_move_worker(pairs: Vec<(PathBuf, PathBuf)>, dest: PathBuf) -> OpHandle {
+    spawn_worker(pairs, Vec::new(), dest, "Moving", crate::conflict::PasteMode::Cut)
+}
+
+fn spawn_worker(
+    pairs: Vec<(PathBuf, PathBuf)>,
+    originals: Vec<PathBuf>,
+    dest: PathBuf,
+    label: &'static str,
+    mode: crate::conflict::PasteMode,
+) -> OpHandle {
     let (tx, rx) = mpsc::channel();
     let cancel = Arc::new(AtomicBool::new(false));
     let cancel_clone = cancel.clone();
     let total = pairs.len();
+    let delete_sources = matches!(mode, crate::conflict::PasteMode::Cut);
 
     thread::Builder::new()
         .name("fox-copy".into())
         .spawn(move || {
-            run_copy(pairs, tx, cancel_clone);
+            run_copy(pairs, tx, cancel_clone, delete_sources);
         })
         .expect("spawn fox-copy thread");
 
@@ -124,13 +142,18 @@ pub fn spawn_copy_worker(
         finished: false,
         originals,
         dest,
-        mode: crate::conflict::PasteMode::Copy,
+        mode,
         done_payload: None,
         reload_tab: None,
     }
 }
 
-fn run_copy(pairs: Vec<(PathBuf, PathBuf)>, tx: Sender<OpProgress>, cancel: Arc<AtomicBool>) {
+fn run_copy(
+    pairs: Vec<(PathBuf, PathBuf)>,
+    tx: Sender<OpProgress>,
+    cancel: Arc<AtomicBool>,
+    delete_sources: bool,
+) {
     let total = pairs.len();
     let mut created = Vec::new();
     let mut perm_fails = Vec::new();
@@ -157,7 +180,16 @@ fn run_copy(pairs: Vec<(PathBuf, PathBuf)>, tx: Sender<OpProgress>, cancel: Arc<
             std::fs::copy(&src, &target).map(|_| ())
         };
         match res {
-            Ok(()) => created.push(target),
+            Ok(()) => {
+                if delete_sources && copy_landed(&src, &target) {
+                    let _ = if src.is_dir() {
+                        std::fs::remove_dir_all(&src)
+                    } else {
+                        std::fs::remove_file(&src)
+                    };
+                }
+                created.push(target);
+            }
             Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
                 perm_fails.push(src);
             }
@@ -175,4 +207,19 @@ fn run_copy(pairs: Vec<(PathBuf, PathBuf)>, tx: Sender<OpProgress>, cancel: Arc<
         perm_fails,
         cancelled,
     });
+}
+
+/// Before a move deletes its source: `fs::copy` reports Ok once the bytes
+/// are written, but a FUSE destination only really commits on close, whose
+/// error `File`'s Drop swallows. A size match is the cheap sanity check
+/// that the data actually arrived. Directories trust the recursive copy's
+/// own error propagation.
+fn copy_landed(src: &std::path::Path, target: &std::path::Path) -> bool {
+    if src.is_dir() {
+        return true;
+    }
+    match (std::fs::metadata(src), std::fs::metadata(target)) {
+        (Ok(s), Ok(t)) => s.len() == t.len(),
+        _ => false,
+    }
 }

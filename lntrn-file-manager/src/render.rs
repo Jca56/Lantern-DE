@@ -936,6 +936,22 @@ pub fn render_frame(
         preview_thumb_entry = entry.cloned();
     }
 
+    // Slow-mount listing in flight with nothing to show yet: a centered
+    // hint instead of a silently empty folder.
+    if entries.is_empty() && app.dir_loading() && !is_searching {
+        let hint = "Loading\u{2026}";
+        let font = 22.0 * s;
+        let hint_w = hint.chars().count() as f32 * font * 0.5;
+        TextLabel::new(
+            hint,
+            content.x + (content.w - hint_w) * 0.5,
+            content.y + content.h * 0.4,
+        )
+        .size(FontSize::Custom(font))
+        .color(pal.text_secondary)
+        .draw(text, w, h);
+    }
+
     // ── Status bar / Pick bar ──────────────────────────────────────────
     if app.pick.is_some() {
         let bar_y = hf - crate::pick_bar::PICK_BAR_H * s;
@@ -956,6 +972,7 @@ pub fn render_frame(
             pal,
             status,
             &app.entries,
+            app.dir_loading(),
             file_info,
             cloud_status,
             app.op_progress.as_ref(),
