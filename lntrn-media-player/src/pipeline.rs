@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use gstreamer::prelude::*;
@@ -12,6 +13,17 @@ use crate::fft::SpectrumAnalyzer;
 const FFT_SIZE: usize = 1024;
 const FFT_SAMPLE_RATE: u32 = 44_100;
 const FFT_UPDATE_HZ: u32 = 30;
+
+/// How long a Null transition may block the caller. Normal teardown is a few
+/// ms; anything longer means the audio sink is stuck waiting on the PipeWire
+/// daemon (graph stall, daemon restart) and will never come back.
+pub const TEARDOWN_TIMEOUT: Duration = Duration::from_millis(1500);
+
+/// How long a fresh pipeline may sit un-prerolled before we give up on it.
+/// A healthy open reaches PAUSED in well under a second; the failure this
+/// guards against is the audio sink waiting forever for PipeWire to link its
+/// stream, which left the player as a blank window with a deadlocked UI.
+pub const PREROLL_TIMEOUT: Duration = Duration::from_secs(6);
 
 // ── Video frame ─────────────────────────────────────────────────────────────
 
@@ -34,6 +46,19 @@ pub struct MediaPipeline {
     spectrum_dirty: Arc<AtomicBool>,
     spectrum: Vec<f32>,
     eos: bool,
+    /// The autoaudiosink; kept so we can log which real sink it settled on.
+    audiosink: Element,
+    sink_logged: bool,
+    /// First fatal bus error, until `take_error` consumes it.
+    error: Option<String>,
+    /// Set once the pipeline reports ASYNC_DONE (every sink has prerolled).
+    /// Until then playbin's locks may be held by the sink activation on a
+    /// streaming thread, so every synchronous query/seek/property call from
+    /// the UI thread is refused — that is exactly the call that deadlocked.
+    prerolled: bool,
+    created: Instant,
+    /// Volume requested before preroll; applied once it is safe to.
+    pending_volume: Option<f64>,
 }
 
 impl MediaPipeline {
@@ -221,17 +246,22 @@ impl MediaPipeline {
             spectrum_dirty,
             spectrum,
             eos: false,
+            audiosink,
+            sink_logged: false,
+            error: None,
+            prerolled: false,
+            created: Instant::now(),
+            pending_volume: None,
         })
     }
 
-    /// Drain pipeline bus for EOS, and pull the latest spectrum if the
-    /// audio appsink has computed a fresh one. Call this each frame.
-    pub fn poll_spectrum(&mut self) -> bool {
+    /// Drain the pipeline bus — EOS, errors, warnings, and a one-time note of
+    /// which real sink autoaudiosink settled on — then pull the latest
+    /// spectrum if the audio appsink has computed a fresh one. Call each frame.
+    pub fn poll_bus(&mut self) -> bool {
         if let Some(bus) = self.pipeline.bus() {
             while let Some(msg) = bus.pop() {
-                if let gst::MessageView::Eos(_) = msg.view() {
-                    self.eos = true;
-                }
+                self.handle_message(&msg);
             }
         }
         if self.spectrum_dirty.swap(false, Ordering::Acquire) {
@@ -244,9 +274,92 @@ impl MediaPipeline {
         }
     }
 
+    fn handle_message(&mut self, msg: &gst::Message) {
+        let src = || {
+            msg.src()
+                .map(|s| s.name().to_string())
+                .unwrap_or_else(|| "?".into())
+        };
+        match msg.view() {
+            gst::MessageView::Eos(_) => self.eos = true,
+            gst::MessageView::AsyncDone(_) => {
+                if !self.prerolled {
+                    self.prerolled = true;
+                    eprintln!(
+                        "[media-player] gst: prerolled after {} ms",
+                        self.created.elapsed().as_millis()
+                    );
+                    if let Some(v) = self.pending_volume.take() {
+                        self.set_volume(v);
+                    }
+                }
+            }
+            gst::MessageView::Error(e) => {
+                let debug = e.debug().map(|d| d.to_string()).unwrap_or_default();
+                eprintln!("[media-player] gst error from {}: {} ({debug})", src(), e.error());
+                // First error wins; the rest is usually fallout from it.
+                self.error
+                    .get_or_insert_with(|| format!("{}: {}", src(), e.error()));
+            }
+            gst::MessageView::Warning(w) => {
+                let debug = w.debug().map(|d| d.to_string()).unwrap_or_default();
+                eprintln!("[media-player] gst warning from {}: {} ({debug})", src(), w.error());
+            }
+            gst::MessageView::StateChanged(sc) => {
+                let from_pipeline = msg.src() == Some(self.pipeline.upcast_ref());
+                // Trail the transitions that matter for the "sink never came
+                // up" diagnosis: the pipeline itself and the audio sink chain.
+                let name = src();
+                if from_pipeline || name.contains("audiosink") || name.contains("sink") && name.contains("pipewire") {
+                    eprintln!(
+                        "[media-player] gst: {name} {:?} → {:?}",
+                        sc.old(),
+                        sc.current()
+                    );
+                }
+                if from_pipeline && sc.current() == GstState::Playing && !self.sink_logged {
+                    self.log_audio_sink();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Note which sink autoaudiosink actually picked. If this ever says
+    /// alsasink, the player went around PipeWire — the kind of thing that can
+    /// take the sound card away from everyone else.
+    fn log_audio_sink(&mut self) {
+        self.sink_logged = true;
+        let Some(bin) = self.audiosink.downcast_ref::<gst::Bin>() else {
+            return;
+        };
+        let picked = bin
+            .iterate_elements()
+            .into_iter()
+            .find_map(|e| e.ok())
+            .and_then(|e| e.factory())
+            .map(|f| f.name().to_string())
+            .unwrap_or_else(|| "none".into());
+        eprintln!("[media-player] audio sink: {picked}");
+    }
+
+    /// The first fatal error the bus reported, if any (consumed on read).
+    pub fn take_error(&mut self) -> Option<String> {
+        self.error.take()
+    }
+
+    /// True when the pipeline has been un-prerolled for longer than
+    /// `PREROLL_TIMEOUT` — the caller should drop it and tell the user.
+    pub fn preroll_stalled(&self) -> bool {
+        !self.prerolled && self.created.elapsed() > PREROLL_TIMEOUT
+    }
+
     /// Check playbin's n-video property to detect audio-only streams.
     /// Returns None if pipeline isn't ready yet, Some(true) for audio-only.
     pub fn is_audio_only(&self) -> bool {
+        if !self.prerolled {
+            return false;
+        }
         let n_video: i32 = self.pipeline.property("n-video");
         n_video == 0
     }
@@ -280,6 +393,9 @@ impl MediaPipeline {
     }
 
     pub fn seek(&self, position_ns: u64) {
+        if !self.prerolled {
+            return;
+        }
         let _ = self.pipeline.seek_simple(
             SeekFlags::FLUSH | SeekFlags::ACCURATE,
             ClockTime::from_nseconds(position_ns),
@@ -291,12 +407,18 @@ impl MediaPipeline {
     }
 
     pub fn position(&self) -> Option<u64> {
+        if !self.prerolled {
+            return None;
+        }
         self.pipeline
             .query_position::<ClockTime>()
             .map(|t| t.nseconds())
     }
 
     pub fn duration(&self) -> Option<u64> {
+        if !self.prerolled {
+            return None;
+        }
         self.pipeline
             .query_duration::<ClockTime>()
             .map(|t| t.nseconds())
@@ -306,13 +428,53 @@ impl MediaPipeline {
         self.frame.lock().ok()?.take()
     }
 
-    pub fn set_volume(&self, vol: f64) {
+    /// Safe before `play()` (no streaming threads yet) and after preroll; in
+    /// between the request is parked and applied on ASYNC_DONE.
+    pub fn set_volume(&mut self, vol: f64) {
+        let playing_or_pending = self.pipeline.current_state() != GstState::Null
+            || self.pipeline.pending_state() != GstState::VoidPending;
+        if playing_or_pending && !self.prerolled {
+            self.pending_volume = Some(vol);
+            return;
+        }
         self.pipeline.set_property("volume", vol.clamp(0.0, 1.0));
     }
 }
 
 impl Drop for MediaPipeline {
     fn drop(&mut self) {
-        let _ = self.pipeline.set_state(GstState::Null);
+        stop_bounded(self.pipeline.clone(), TEARDOWN_TIMEOUT);
+    }
+}
+
+/// Drive `pipeline` to Null on a helper thread, waiting at most `timeout`.
+///
+/// The Null transition is synchronous and waits on the audio sink; when the
+/// PipeWire daemon has stopped serving us that wait never returns. Blocking
+/// the UI thread on it is how the player used to turn into an invisible
+/// zombie that kept its audio stream — so on timeout the helper (and the
+/// pipeline it holds) is simply abandoned. Returns whether teardown finished.
+pub fn stop_bounded(pipeline: Element, timeout: Duration) -> bool {
+    let (done_tx, done_rx) = mpsc::channel();
+    let handle = pipeline.clone();
+    let spawned = std::thread::Builder::new()
+        .name("gst-teardown".into())
+        .spawn(move || {
+            let _ = handle.set_state(GstState::Null);
+            let _ = done_tx.send(());
+        });
+    if spawned.is_err() {
+        // No thread to lean on — fall back to the old inline transition.
+        let _ = pipeline.set_state(GstState::Null);
+        return true;
+    }
+    match done_rx.recv_timeout(timeout) {
+        Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => true,
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            eprintln!(
+                "[media-player] pipeline teardown still blocked after {timeout:?}; abandoning it"
+            );
+            false
+        }
     }
 }

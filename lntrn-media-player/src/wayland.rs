@@ -29,6 +29,7 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 
 use crate::app::App;
 use crate::mpris_server::{MprisCmd, PlayerState};
+use crate::shutdown;
 use crate::{
     Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_FULLSCREEN, ZONE_LOOP, ZONE_MAXIMIZE, ZONE_MINIMIZE,
     ZONE_NEXT, ZONE_PLAY_PAUSE, ZONE_PREV, ZONE_SEEK_BAR, ZONE_TITLE_BAR, ZONE_VIEW_MENU,
@@ -642,7 +643,21 @@ pub fn run(
     let mut mpris_prev_title = String::new();
     let mut mpris_prev_volume = app.volume;
 
+    // Dev/test hook: close on our own after N ms so the close path can be
+    // exercised from a shell without a compositor click.
+    let autoclose = std::env::var("LNTRN_MEDIA_PLAYER_AUTOCLOSE_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(Duration::from_millis);
+    let loop_started = std::time::Instant::now();
+    let watchdog = shutdown::Watchdog::start();
+
     while state.running {
+        watchdog.beat();
+        if autoclose.is_some_and(|d| loop_started.elapsed() >= d) {
+            break;
+        }
+
         // Pump Wayland events with a bounded wait — never block forever. When
         // playing we pace to the frame interval (audio-only caps at ~30fps,
         // video ~60fps); when paused we idle longer. Either way the timeout
@@ -664,6 +679,7 @@ pub fn run(
         if app.check_eos() {
             update_title(&toplevel, &app);
         }
+        app.check_error();
 
         // ── MPRIS commands ──────────────────────────────────────────────
         // Drained every iteration, BEFORE the frame-callback render gate
@@ -698,7 +714,7 @@ pub fn run(
                 }
                 MprisCmd::SetVolume(v) => {
                     app.volume = v;
-                    if let Some(p) = &app.pipeline {
+                    if let Some(p) = &mut app.pipeline {
                         p.set_volume(v);
                     }
                 }
@@ -947,10 +963,31 @@ pub fn run(
         surface.commit();
     }
 
+    // ── Close ─────────────────────────────────────────────────────────────
+    // Committed to exiting from here. Every step is bounded and the backstop
+    // ends the process regardless — that is what keeps a wedged audio sink
+    // from leaving an invisible zombie holding the stream.
+    shutdown::exit_after(shutdown::EXIT_TIMEOUT);
+
     // Remember where we left off so reopening the same file resumes from here.
     app.save_current_position();
 
-    Ok(())
+    // Take the window down first so it disappears immediately (role objects
+    // before the wl_surface, per xdg-shell); the wl_surface itself goes with
+    // the connection when the process exits.
+    toplevel.destroy();
+    if let Some(xs) = state.xdg_surface.take() {
+        xs.destroy();
+    }
+    let _ = conn.flush();
+
+    // Bounded Null transition — see `MediaPipeline`'s Drop.
+    app.pipeline = None;
+
+    // Exit here on purpose instead of returning into the wgpu/Wayland
+    // destructors: NVIDIA's Wayland teardown is one more thing that can block
+    // on a compositor that has already forgotten us.
+    std::process::exit(0)
 }
 
 // ── Event pump ────────────────────────────────────────────────────────────

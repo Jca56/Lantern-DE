@@ -135,7 +135,7 @@ impl App {
 
         let uri = format!("file://{}", abs.display());
         match MediaPipeline::new(&uri) {
-            Ok(pipe) => {
+            Ok(mut pipe) => {
                 pipe.set_volume(self.volume);
                 pipe.play();
                 self.pipeline = Some(pipe);
@@ -229,7 +229,7 @@ impl App {
         }
 
         // Poll bus for spectrum messages + EOS + log-scale into visual bars
-        pipe.poll_spectrum();
+        pipe.poll_bus();
         let raw = pipe.spectrum();
         let log_bars = log_group_spectrum(raw, VIS_BARS);
         for i in 0..VIS_BARS {
@@ -269,6 +269,30 @@ impl App {
             return false;
         }
         self.handle_eos()
+    }
+
+    /// Surface a fatal pipeline error — a decoder failing, or the audio sink
+    /// losing the PipeWire daemon under it. The pipeline is dropped (bounded,
+    /// see `MediaPipeline`'s Drop) so nothing else in the UI can block on it.
+    /// Returns true when an error was consumed.
+    pub fn check_error(&mut self) -> bool {
+        let stalled = self.pipeline.as_ref().is_some_and(|p| p.preroll_stalled());
+        let msg = match self.pipeline.as_mut().and_then(|p| p.take_error()) {
+            Some(m) => m,
+            None if stalled => {
+                let secs = crate::pipeline::PREROLL_TIMEOUT.as_secs();
+                eprintln!(
+                    "[media-player] gst: no preroll after {secs}s — the audio sink never came up; dropping this pipeline"
+                );
+                format!("Audio device did not respond ({secs}s)")
+            }
+            None => return false,
+        };
+        self.status_text = format!("Playback error: {msg}");
+        self.pipeline = None;
+        self.seeking = false;
+        self.pending_resume_ns = None;
+        true
     }
 
     fn handle_eos(&mut self) -> bool {
@@ -433,7 +457,7 @@ impl App {
 
     pub fn adjust_volume(&mut self, delta: f64) {
         self.volume = (self.volume + delta).clamp(0.0, 1.0);
-        if let Some(pipe) = &self.pipeline {
+        if let Some(pipe) = &mut self.pipeline {
             pipe.set_volume(self.volume);
         }
     }

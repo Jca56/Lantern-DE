@@ -4,6 +4,7 @@ mod mpris_server;
 mod pipeline;
 mod position_store;
 mod render;
+mod shutdown;
 mod vis_theme;
 mod wayland;
 
@@ -53,6 +54,25 @@ fn main() {
     if let Some(feature) = gstreamer::Registry::get().lookup_feature("pipewiresink") {
         use gstreamer::prelude::*;
         feature.set_rank(gstreamer::Rank::PRIMARY + 10);
+    }
+
+    // Lantern-local GStreamer plugins. Gentoo doesn't package the nvcodec
+    // (NVDEC/NVENC) plugin, so scripts/build-nvcodec.sh builds it from the
+    // gst-plugins-bad source into ~/.lantern/lib/gstreamer-1.0. Scan that
+    // directory and make sure the hardware H.264/HEVC/AV1 decoders outrank
+    // the software ones, so a 4K60 file stops costing two cores.
+    if let Some(home) = dirs::home_dir() {
+        use gstreamer::prelude::*;
+        let dir = home.join(".lantern/lib/gstreamer-1.0");
+        if dir.is_dir() {
+            let registry = gstreamer::Registry::get();
+            registry.scan_path(&dir);
+            for name in ["nvh264dec", "nvh265dec", "nvav1dec"] {
+                if let Some(feature) = registry.lookup_feature(name) {
+                    feature.set_rank(gstreamer::Rank::PRIMARY + 10);
+                }
+            }
+        }
     }
 
     let path = std::env::args().nth(1).map(|arg| {
