@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use lntrn_render::{GpuContext, GpuTexture, TexturePass};
+use lntrn_render::{Color, GpuContext, GpuTexture, Painter, TexturePass};
 
 use crate::fs::FileEntry;
-use crate::thumbs::ThumbPool;
+use crate::thumbs::{ThumbKind, ThumbPool};
 
 const ICON_RENDER_SIZE: u32 = 192;
 
@@ -129,10 +129,9 @@ impl IconCache {
                         self.failed.insert(key.clone());
                     }
                 }
-            } else if is_image_file(&entry.name) || is_video_file(&entry.name) {
+            } else if let Some(kind) = thumb_kind(&entry.name) {
                 self.pending.insert(key.clone());
-                self.pool
-                    .submit(key.clone(), entry.path.clone(), is_video_file(&entry.name));
+                self.pool.submit(key.clone(), entry.path.clone(), kind);
             }
             // Other file types: procedural fallback icon, no texture.
         }
@@ -203,7 +202,7 @@ fn cache_key(entry: &FileEntry) -> String {
         let icon = get_folder_icon(&entry.path).unwrap_or_default();
         let color = get_folder_color(&entry.path).unwrap_or_default();
         format!("dir:{}:{}:{}", entry.name.to_lowercase(), icon, color)
-    } else if is_image_file(&entry.name) || is_video_file(&entry.name) {
+    } else if thumb_kind(&entry.name).is_some() {
         // Per-file thumbnail, keyed on size + mtime (already stat'd by the
         // listing — no syscall here) so a file that changed on disk gets a
         // fresh texture and a mid-download decode failure retries once the
@@ -265,7 +264,7 @@ fn load_folder_icon(entry: &FileEntry, gpu: &GpuContext, tex: &TexturePass) -> O
     } else {
         // Custom image icon — one-off, goes through the shared thumbnail
         // generator (disk cache + decode limits) synchronously.
-        let (rgba, w, h) = crate::thumbs::generate(&icon_path, false)?;
+        let (rgba, w, h) = crate::thumbs::generate(&icon_path, ThumbKind::Image)?;
         Some(tex.upload(gpu, &rgba, w, h))
     }
 }
@@ -426,6 +425,34 @@ pub fn is_raster_image_file(name: &str) -> bool {
         ext.as_str(),
         "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "tiff" | "tif"
     )
+}
+
+/// WAV / MP3 — anything `audio_tags` can pull cover art out of.
+pub fn is_audio_file(name: &str) -> bool {
+    crate::audio_tags::container_for(Path::new(name)).is_some()
+}
+
+/// Which thumbnail job a file name maps to, if any.
+fn thumb_kind(name: &str) -> Option<ThumbKind> {
+    if is_video_file(name) {
+        Some(ThumbKind::Video)
+    } else if is_audio_file(name) {
+        Some(ThumbKind::Audio)
+    } else if is_image_file(name) {
+        Some(ThumbKind::Image)
+    } else {
+        None
+    }
+}
+
+/// Eighth-note glyph, `u` = unit size (glyph spans roughly 10u × 12u).
+/// Shared by the sidebar "Music" place and tag-less audio file icons.
+pub fn draw_note_glyph(painter: &mut Painter, cx: f32, cy: f32, u: f32, stroke: f32, color: Color) {
+    painter.line(cx - 2.0 * u, cy - 6.0 * u, cx - 2.0 * u, cy + 4.0 * u, stroke, color);
+    painter.circle_filled(cx - 4.0 * u, cy + 5.0 * u, 3.0 * u, color);
+    painter.line(cx - 2.0 * u, cy - 6.0 * u, cx + 4.0 * u, cy - 4.0 * u, stroke, color);
+    painter.line(cx + 4.0 * u, cy - 4.0 * u, cx + 4.0 * u, cy + 1.0 * u, stroke, color);
+    painter.circle_filled(cx + 2.0 * u, cy + 2.0 * u, 2.5 * u, color);
 }
 
 pub fn is_video_file(name: &str) -> bool {

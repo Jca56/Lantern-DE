@@ -119,34 +119,7 @@ pub(super) fn draw_place_icon(
                 color,
             );
         }
-        "Music" => {
-            painter.line(
-                cx - 2.0 * u,
-                cy - 6.0 * u,
-                cx - 2.0 * u,
-                cy + 4.0 * u,
-                sw,
-                color,
-            );
-            painter.circle_filled(cx - 4.0 * u, cy + 5.0 * u, 3.0 * u, color);
-            painter.line(
-                cx - 2.0 * u,
-                cy - 6.0 * u,
-                cx + 4.0 * u,
-                cy - 4.0 * u,
-                sw,
-                color,
-            );
-            painter.line(
-                cx + 4.0 * u,
-                cy - 4.0 * u,
-                cx + 4.0 * u,
-                cy + 1.0 * u,
-                sw,
-                color,
-            );
-            painter.circle_filled(cx + 2.0 * u, cy + 2.0 * u, 2.5 * u, color);
-        }
+        "Music" => crate::icons::draw_note_glyph(painter, cx, cy, u, sw, color),
         "Pictures" => {
             painter.rect_stroke(
                 Rect::new(cx - 7.0 * u, cy - 5.0 * u, 14.0 * u, 12.0 * u),

@@ -65,6 +65,10 @@ pub fn render_frame(
     if let Some(ql) = &mut app.quick_look {
         ql.poll_upload(ctx, tex_pass);
     }
+    // Same for cover art in the Properties → Audio section.
+    if let Some(audio) = app.properties.as_mut().and_then(|p| p.audio.as_mut()) {
+        audio.poll(ctx, tex_pass);
+    }
     // Split view geometry: (left_x, left_w, right_x, right_w) + focused side.
     let split_geom = app
         .split
@@ -1402,6 +1406,13 @@ pub fn render_frame(
             }
         }
     }
+    // Cover art: the Rc clone keeps the texture alive for the draw list even
+    // if the dialog is closed a few lines below.
+    let props_art = app
+        .properties
+        .as_ref()
+        .and_then(|p| p.audio.as_ref())
+        .and_then(|a| Some((a.texture.clone()?, a.art_rect?)));
     // Deferred inactive-pane scroll write-back (see the split pane block —
     // `entries` borrows were still live there).
     if let Some(v) = p2_scroll_new {
@@ -1432,6 +1443,10 @@ pub fn render_frame(
             let (bx, by, bw, bh) = icons::fit_in_box(tex, ix, iy, iw, ih);
             props_tex_draws.push(TextureDraw::new(tex, bx, by, bw, bh));
         }
+    }
+    if let Some((tex, r)) = &props_art {
+        let (bx, by, bw, bh) = icons::fit_in_box(tex, r.x, r.y, r.w, r.h);
+        props_tex_draws.push(TextureDraw::new(tex, bx, by, bw, bh));
     }
     if let Some(ref drop) = app.pending_drop {
         draw_drop_modal(drop, painter, text, input, pal, wf, hf, s, w, h);

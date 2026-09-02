@@ -118,32 +118,44 @@ pub fn draw_content_grid(
                     1.0 * s,
                     Color::from_rgb8(102, 102, 102).with_alpha(alpha),
                 );
-                let lx = icon_x + 10.0 * s;
-                let lw = icsz - 24.0 * s;
-                painter.line(
-                    lx,
-                    icon_y + 20.0 * s,
-                    lx + lw,
-                    icon_y + 20.0 * s,
-                    1.5 * s,
-                    palette.accent.with_alpha(0.6 * alpha),
-                );
-                painter.line(
-                    lx,
-                    icon_y + 26.0 * s,
-                    lx + lw * 0.8,
-                    icon_y + 26.0 * s,
-                    1.5 * s,
-                    Color::from_rgb8(224, 90, 138).with_alpha(0.6 * alpha),
-                );
-                painter.line(
-                    lx,
-                    icon_y + 32.0 * s,
-                    lx + lw * 0.6,
-                    icon_y + 32.0 * s,
-                    1.5 * s,
-                    Color::from_rgb8(155, 93, 229).with_alpha(0.6 * alpha),
-                );
+                if crate::icons::is_audio_file(&entry.name) {
+                    // Audio without embedded artwork: a note on the page.
+                    crate::icons::draw_note_glyph(
+                        painter,
+                        icon_x + icsz * 0.5,
+                        icon_y + icsz * 0.55,
+                        icsz / 24.0,
+                        2.0 * s,
+                        palette.accent.with_alpha(0.85 * alpha),
+                    );
+                } else {
+                    let lx = icon_x + 10.0 * s;
+                    let lw = icsz - 24.0 * s;
+                    painter.line(
+                        lx,
+                        icon_y + 20.0 * s,
+                        lx + lw,
+                        icon_y + 20.0 * s,
+                        1.5 * s,
+                        palette.accent.with_alpha(0.6 * alpha),
+                    );
+                    painter.line(
+                        lx,
+                        icon_y + 26.0 * s,
+                        lx + lw * 0.8,
+                        icon_y + 26.0 * s,
+                        1.5 * s,
+                        Color::from_rgb8(224, 90, 138).with_alpha(0.6 * alpha),
+                    );
+                    painter.line(
+                        lx,
+                        icon_y + 32.0 * s,
+                        lx + lw * 0.6,
+                        icon_y + 32.0 * s,
+                        1.5 * s,
+                        Color::from_rgb8(155, 93, 229).with_alpha(0.6 * alpha),
+                    );
+                }
             }
         }
 

@@ -1,5 +1,5 @@
 //! Background thumbnail pipeline: a bounded worker pool plus an on-disk
-//! cache shared by image, SVG, and video thumbnails.
+//! cache shared by image, SVG, video and audio-artwork thumbnails.
 //!
 //! The render thread never decodes media. It submits jobs via [`ThumbPool`]
 //! and drains finished RGBA buffers each frame (`IconCache::poll_thumbs`).
@@ -21,6 +21,17 @@ pub const THUMB_SIZE: u32 = 192;
 const MAX_DECODE_DIM: u32 = 16_384;
 const MAX_DECODE_BYTES: u64 = 256 * 1024 * 1024;
 
+/// What a worker should do with the path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThumbKind {
+    /// Raster or SVG image file.
+    Image,
+    /// Video — representative frame via ffmpeg.
+    Video,
+    /// WAV / MP3 — embedded cover art via `audio_tags`.
+    Audio,
+}
+
 /// Finished job delivered back to the render thread.
 pub struct ThumbResult {
     pub key: String,
@@ -32,7 +43,7 @@ pub struct ThumbResult {
 struct ThumbJob {
     key: String,
     path: PathBuf,
-    is_video: bool,
+    kind: ThumbKind,
 }
 
 /// Fixed-size worker pool. Workers block on a condvar when idle and live for
@@ -59,13 +70,9 @@ impl ThumbPool {
         Self { queue, rx }
     }
 
-    pub fn submit(&self, key: String, path: PathBuf, is_video: bool) {
+    pub fn submit(&self, key: String, path: PathBuf, kind: ThumbKind) {
         let (lock, cv) = &*self.queue;
-        lock.lock().unwrap().push_back(ThumbJob {
-            key,
-            path,
-            is_video,
-        });
+        lock.lock().unwrap().push_back(ThumbJob { key, path, kind });
         cv.notify_one();
     }
 
@@ -93,7 +100,7 @@ fn worker_loop(queue: Arc<(Mutex<VecDeque<ThumbJob>>, Condvar)>, tx: mpsc::Sende
                 q = cv.wait(q).unwrap();
             }
         };
-        let rgba = generate(&job.path, job.is_video);
+        let rgba = generate(&job.path, job.kind);
         if tx.send(ThumbResult { key: job.key, rgba }).is_err() {
             return; // IconCache dropped — shutting down
         }
@@ -130,7 +137,7 @@ fn cache_file(path: &Path) -> PathBuf {
 /// Produce thumbnail RGBA for a path, via disk cache when possible. Runs on
 /// worker threads (no GPU access); also used synchronously for the rare
 /// custom-folder-icon path in icons.rs.
-pub fn generate(path: &Path, is_video: bool) -> Option<(Vec<u8>, u32, u32)> {
+pub fn generate(path: &Path, kind: ThumbKind) -> Option<(Vec<u8>, u32, u32)> {
     let cached = cache_file(path);
     if let Ok(img) = image::open(&cached) {
         let rgba = img.to_rgba8();
@@ -138,16 +145,15 @@ pub fn generate(path: &Path, is_video: bool) -> Option<(Vec<u8>, u32, u32)> {
         return Some((rgba.into_raw(), w, h));
     }
 
-    let thumb = if is_video {
-        video_frame(path)?
-    } else if path
+    let is_svg = path
         .extension()
         .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("svg"))
-    {
-        rasterize_svg_file(path)?
-    } else {
-        decode_image_limited(path)?
+        .is_some_and(|e| e.eq_ignore_ascii_case("svg"));
+    let thumb = match kind {
+        ThumbKind::Video => video_frame(path)?,
+        ThumbKind::Audio => audio_artwork(path)?,
+        ThumbKind::Image if is_svg => rasterize_svg_file(path)?,
+        ThumbKind::Image => decode_image_limited(path)?,
     };
 
     let _ = std::fs::create_dir_all(thumb_cache_dir());
@@ -160,10 +166,16 @@ pub fn generate(path: &Path, is_video: bool) -> Option<(Vec<u8>, u32, u32)> {
 /// Decode with explicit limits so a huge or malicious file errors out
 /// instead of exhausting memory, then downscale to thumbnail size.
 fn decode_image_limited(path: &Path) -> Option<image::RgbaImage> {
-    let mut reader = image::ImageReader::open(path)
+    let reader = image::ImageReader::open(path)
         .ok()?
         .with_guessed_format()
         .ok()?;
+    decode_limited(reader)
+}
+
+fn decode_limited<R: std::io::BufRead + std::io::Seek>(
+    mut reader: image::ImageReader<R>,
+) -> Option<image::RgbaImage> {
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_DECODE_DIM);
     limits.max_image_height = Some(MAX_DECODE_DIM);
@@ -171,6 +183,16 @@ fn decode_image_limited(path: &Path) -> Option<image::RgbaImage> {
     reader.limits(limits);
     let img = reader.decode().ok()?;
     Some(img.thumbnail(THUMB_SIZE, THUMB_SIZE).to_rgba8())
+}
+
+/// Cover art embedded in a WAV (`id3 ` chunk) or MP3 (APIC frame). Files
+/// without artwork return None and fall back to the procedural note icon.
+fn audio_artwork(path: &Path) -> Option<image::RgbaImage> {
+    let art = crate::audio_tags::read(path).ok()?.tags.artwork?;
+    let reader = image::ImageReader::new(std::io::Cursor::new(art.data))
+        .with_guessed_format()
+        .ok()?;
+    decode_limited(reader)
 }
 
 fn rasterize_svg_file(path: &Path) -> Option<image::RgbaImage> {
@@ -220,6 +242,31 @@ fn video_frame(path: &Path) -> Option<image::RgbaImage> {
 mod tests {
     use super::*;
 
+    /// RIFF/WAVE, 8 kHz mono 8-bit, 100 samples of silence.
+    fn minimal_wav() -> Vec<u8> {
+        let mut fmt = Vec::new();
+        for v in [1u16, 1] {
+            fmt.extend_from_slice(&v.to_le_bytes());
+        }
+        for v in [8000u32, 8000] {
+            fmt.extend_from_slice(&v.to_le_bytes());
+        }
+        for v in [1u16, 8] {
+            fmt.extend_from_slice(&v.to_le_bytes());
+        }
+        let mut body = b"WAVE".to_vec();
+        body.extend_from_slice(b"fmt ");
+        body.extend_from_slice(&(fmt.len() as u32).to_le_bytes());
+        body.extend_from_slice(&fmt);
+        body.extend_from_slice(b"data");
+        body.extend_from_slice(&100u32.to_le_bytes());
+        body.extend_from_slice(&[0u8; 100]);
+        let mut out = b"RIFF".to_vec();
+        out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        out.extend(body);
+        out
+    }
+
     /// Single test fn: `generate` reads `$HOME`, so the env override must
     /// not race a parallel test.
     #[test]
@@ -235,7 +282,7 @@ mod tests {
         image::RgbaImage::from_fn(512, 300, |x, _| image::Rgba([x as u8, 80, 200, 255]))
             .save(&src)
             .unwrap();
-        let (rgba, w, h) = generate(&src, false).expect("thumbnail should generate");
+        let (rgba, w, h) = generate(&src, ThumbKind::Image).expect("thumbnail should generate");
         assert!(w <= THUMB_SIZE && h <= THUMB_SIZE);
         assert_eq!(rgba.len(), (w * h * 4) as usize);
         let cache_files = || std::fs::read_dir(thumb_cache_dir()).unwrap().count();
@@ -247,15 +294,40 @@ mod tests {
         image::RgbaImage::from_pixel(10, 10, image::Rgba([255, 0, 0, 255]))
             .save(&cached)
             .unwrap();
-        let (_, w2, h2) = generate(&src, false).expect("cache hit should succeed");
+        let (_, w2, h2) = generate(&src, ThumbKind::Image).expect("cache hit should succeed");
         assert_eq!((w2, h2), (10, 10));
 
         // Failure: garbage bytes with an image extension must return None,
         // not panic, and must not pollute the cache.
         let bad = tmp.join("bad.jpg");
         std::fs::write(&bad, b"definitely not a jpeg").unwrap();
-        assert!(generate(&bad, false).is_none());
+        assert!(generate(&bad, ThumbKind::Image).is_none());
         assert_eq!(cache_files(), 1);
+
+        // Audio: a WAV with embedded PNG cover art thumbnails to that art
+        // (and lands in the disk cache); a tag-less WAV yields None.
+        let wav = tmp.join("track.wav");
+        std::fs::write(&wav, minimal_wav()).unwrap();
+        assert!(generate(&wav, ThumbKind::Audio).is_none());
+        let mut png = Vec::new();
+        image::RgbaImage::from_pixel(64, 48, image::Rgba([0, 200, 120, 255]))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let tags = crate::audio_tags::AudioTags {
+            artwork: Some(crate::audio_tags::Artwork {
+                mime: "image/png".into(),
+                data: png,
+            }),
+            ..Default::default()
+        };
+        crate::audio_tags::wav::write(&wav, &tags).unwrap();
+        let (rgba, w, h) = generate(&wav, ThumbKind::Audio).expect("artwork thumb");
+        // Scaled to the thumb box (small sources upscale, like image thumbs)
+        // with the 4:3 aspect kept and the solid colour intact.
+        assert!(w <= THUMB_SIZE && h <= THUMB_SIZE);
+        assert_eq!(w * 48, h * 64);
+        assert_eq!(&rgba[..4], &[0, 200, 120, 255]);
+        assert_eq!(cache_files(), 2);
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

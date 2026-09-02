@@ -344,6 +344,16 @@ pub(crate) fn handle_key(
         return;
     }
 
+    // Properties dialog — swallows everything so shortcuts don't leak to the
+    // file view underneath. ESC closes; WAV/MP3 tag fields get text editing.
+    if let Some(props) = app.properties.as_mut() {
+        let ch = keycode_to_char(key, shift);
+        if crate::properties_audio::handle_dialog_key(props, key, ch, ctrl, shift) {
+            app.properties = None;
+        }
+        return;
+    }
+
     // Drive dialog — ESC dismisses, ENTER confirms (Format only)
     if app.drive_dialog.is_some() {
         match key {

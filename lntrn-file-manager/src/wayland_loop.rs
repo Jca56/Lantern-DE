@@ -641,7 +641,7 @@ pub(crate) fn run_loop(
                     if zone == 800 || zone == 801 {
                         // Close button or backdrop
                         app.properties = None;
-                    } else if zone >= 810 && zone <= 815 {
+                    } else if (810..=817).contains(&zone) {
                         // Section header toggle
                         if let Some(ref mut props) = app.properties {
                             let idx = (zone - 810) as usize;
@@ -649,8 +649,21 @@ pub(crate) fn run_loop(
                                 props.section_open[idx] = !props.section_open[idx];
                             }
                         }
+                    } else if (crate::ZONE_PROPS_AUDIO_FIELD_BASE..=crate::ZONE_PROPS_AUDIO_REVERT)
+                        .contains(&zone)
+                    {
+                        // Audio tag editor: field focus, artwork, Save/Revert.
+                        if let Some(audio) = app.properties.as_mut().and_then(|p| p.audio.as_mut())
+                        {
+                            audio.on_zone_pressed(zone);
+                        }
+                    } else if zone == 802 {
+                        // Panel body — keep the dialog open, drop field focus.
+                        if let Some(audio) = app.properties.as_mut().and_then(|p| p.audio.as_mut())
+                        {
+                            audio.focused = None;
+                        }
                     }
-                    // zone == 802 (panel body) — do nothing, keep dialog open
                 } else {
                     // Click outside any zone — close
                     app.properties = None;
@@ -1332,7 +1345,12 @@ pub(crate) fn run_loop(
             || state.dnd_active
             || icon_cache.has_pending()
             || dir_watcher.reload_pending()
-            || app.quick_look.as_ref().is_some_and(|ql| ql.loading());
+            || app.quick_look.as_ref().is_some_and(|ql| ql.loading())
+            || app
+                .properties
+                .as_ref()
+                .and_then(|p| p.audio.as_ref())
+                .is_some_and(|a| a.busy());
     }
 
     Ok(())

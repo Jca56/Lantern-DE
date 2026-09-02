@@ -1,4 +1,5 @@
 mod app;
+mod audio_tags;
 mod checksums;
 mod clipboard;
 mod cloud;
@@ -18,6 +19,7 @@ mod pick_bar;
 mod popup_backend;
 mod preview;
 mod properties;
+mod properties_audio;
 mod quick_look;
 mod render;
 mod sections;
@@ -185,6 +187,12 @@ pub const ZONE_PROPS_PICKER_TAB_BASE: u32 = 78; // 78..82
 pub const ZONE_PROPS_PICKER_RESET: u32 = 83;
 pub const ZONE_PROPS_PICKER_BACK: u32 = 84;
 pub const ZONE_PROPS_ICON_BASE: u32 = 2000; // 2000+, one per shown icon
+// Properties → Audio section (WAV / MP3 tags). Field zones are contiguous.
+pub const ZONE_PROPS_AUDIO_FIELD_BASE: u32 = 830; // 830..838
+pub const ZONE_PROPS_AUDIO_ART: u32 = 840;
+pub const ZONE_PROPS_AUDIO_ART_REMOVE: u32 = 841;
+pub const ZONE_PROPS_AUDIO_SAVE: u32 = 842;
+pub const ZONE_PROPS_AUDIO_REVERT: u32 = 843;
 
 // Quick Look overlay — full-screen backdrop, click closes.
 pub const ZONE_QUICK_LOOK: u32 = 905;

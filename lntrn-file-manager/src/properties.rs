@@ -8,9 +8,11 @@ use lntrn_ui::gpu::{FoxPalette, GradientStrip, InteractionContext};
 const ZONE_PROPS_CLOSE: u32 = 800;
 const ZONE_PROPS_BACKDROP: u32 = 801;
 const ZONE_PROPS_CHECKSUM_ROW: u32 = 805;
-const ZONE_SECTION_BASE: u32 = 810; // 810..816 for 7 sections
+const ZONE_SECTION_BASE: u32 = 810; // 810..817 for 8 sections
 
 const DIALOG_W: f32 = 520.0;
+/// Wider for audio files: cover art + a two-column tag grid.
+const AUDIO_DIALOG_W: f32 = 680.0;
 const PADDING: f32 = 24.0;
 const ROW_H: f32 = 28.0;
 const SECTION_H: f32 = 34.0;
@@ -31,6 +33,7 @@ const SEC_SYSTEM: usize = 3;
 const SEC_PERMS: usize = 4;
 const SEC_SYMLINK: usize = 5;
 const SEC_CHECKSUM: usize = 6;
+const SEC_AUDIO: usize = 7;
 
 /// Gathered file properties for display.
 #[allow(dead_code)]
@@ -65,8 +68,10 @@ pub struct FileProperties {
     // Media (populated separately via populate_media_info)
     pub image_dimensions: Option<(u32, u32)>,
     pub media_duration: Option<String>,
+    /// WAV / MP3 tag editor — present only for supported audio files.
+    pub audio: Option<crate::properties_audio::AudioEdit>,
     // UI state
-    pub section_open: [bool; 7],
+    pub section_open: [bool; 8],
     pub scroll_offset: f32,
     /// Lazy SHA-256 — spawned the first time the Checksum section opens.
     pub checksum_job: Option<crate::checksums::ChecksumJob>,
@@ -212,6 +217,11 @@ impl FileProperties {
         let group = get_groupname(meta.gid()).unwrap_or_else(|| format!("{}", meta.gid()));
 
         let (disk_total, disk_free, disk_used_fraction) = disk_usage(path);
+        let audio = if is_dir {
+            None
+        } else {
+            crate::properties_audio::AudioEdit::load(path)
+        };
 
         Some(Self {
             path: path.to_path_buf(),
@@ -244,10 +254,20 @@ impl FileProperties {
             // Checksum starts closed — hashing only begins when the user
             // opens the section (could be a 50GB ISO).
             section_open: {
-                let mut so = [true; 7];
+                let mut so = [true; 8];
                 so[SEC_CHECKSUM] = false;
+                // Audio files lead with their tags; everything else starts
+                // folded so the dialog fits a laptop screen with the Audio
+                // section open (one click expands any of them).
+                if audio.is_some() {
+                    so[SEC_GENERAL] = false;
+                    so[SEC_DISK] = false;
+                    so[SEC_SYSTEM] = false;
+                    so[SEC_PERMS] = false;
+                }
                 so
             },
+            audio,
             scroll_offset: 0.0,
             icon_rect: None,
             checksum_job: None,
@@ -265,7 +285,8 @@ impl FileProperties {
     }
 
     fn has_media_section(&self) -> bool {
-        self.image_dimensions.is_some() || self.media_duration.is_some()
+        // The Audio section owns duration for WAV / MP3.
+        (self.image_dimensions.is_some() || self.media_duration.is_some()) && self.audio.is_none()
     }
 
     fn has_symlink_section(&self) -> bool {
@@ -491,7 +512,11 @@ pub fn draw_properties_dialog(
     sw: u32,
     sh: u32,
 ) -> Option<PropertiesEvent> {
-    let dialog_w = DIALOG_W * s;
+    let dialog_w = if props.audio.is_some() {
+        AUDIO_DIALOG_W
+    } else {
+        DIALOG_W
+    } * s;
     let pad = PADDING * s;
     let row_h = ROW_H * s;
     let section_h = SECTION_H * s;
@@ -506,6 +531,14 @@ pub fn draw_properties_dialog(
     let header_h =
         pad + icon_sz + 8.0 * s + TITLE_FONT * s + 4.0 * s + SUBTITLE_FONT * s + pad * 0.5;
     let mut content_h = header_h + 1.0 * s; // separator
+
+    // Audio section (WAV / MP3 tags)
+    if let Some(audio) = &props.audio {
+        content_h += section_h;
+        if props.section_open[SEC_AUDIO] {
+            content_h += audio.body_height(s);
+        }
+    }
 
     // General section
     content_h += section_h;
@@ -714,6 +747,19 @@ pub fn draw_properties_dialog(
             return Some(PropertiesEvent::Close);
         }
         return None;
+    }
+
+    // ── Audio section (WAV / MP3 tags) ──────────────────────────────────
+    if props.audio.is_some() {
+        cy = draw_section_header(
+            "Audio", SEC_AUDIO, props, painter, text, ix, fox, inner_x, cy, inner_w, section_h, s,
+            sw, sh,
+        );
+        if props.section_open[SEC_AUDIO] {
+            if let Some(audio) = props.audio.as_mut() {
+                cy += audio.draw(painter, text, ix, fox, inner_x, cy, inner_w, s, sw, sh);
+            }
+        }
     }
 
     // ── General section ─────────────────────────────────────────────────

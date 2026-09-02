@@ -216,6 +216,16 @@ pub fn draw_content_list(
                     2.0 * s,
                     Color::from_rgb8(72, 72, 72).with_alpha(alpha),
                 );
+                if crate::icons::is_audio_file(&entry.name) {
+                    crate::icons::draw_note_glyph(
+                        painter,
+                        icon_x + icon_sz * 0.5,
+                        icon_y + icon_sz * 0.5,
+                        icon_sz / 16.0,
+                        1.5 * s,
+                        palette.accent.with_alpha(0.85 * alpha),
+                    );
+                }
             }
         }
 
@@ -486,6 +496,16 @@ pub fn draw_content_tree(
                     2.0 * s,
                     Color::from_rgb8(72, 72, 72).with_alpha(alpha),
                 );
+                if crate::icons::is_audio_file(&te.entry.name) {
+                    crate::icons::draw_note_glyph(
+                        painter,
+                        icon_x + icon_sz * 0.5,
+                        icon_y + icon_sz * 0.5,
+                        icon_sz / 16.0,
+                        1.5 * s,
+                        palette.accent.with_alpha(0.85 * alpha),
+                    );
+                }
             }
         }
 
