@@ -57,6 +57,9 @@ pub(crate) fn apply_sort_selection(app: &mut App, settings: &mut Settings, sort:
     }
     settings.set_sort_by(app.sort_by);
     settings.set_sort_dir(app.sort_dir);
+    // Persist right away so the image viewer (which reads this file when it
+    // scans a folder) follows the new order without waiting for Fox to exit.
+    settings.save();
     app.reload();
 }
 

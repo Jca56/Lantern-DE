@@ -9,6 +9,7 @@ use std::time::Instant;
 use lntrn_render::{GpuContext, GpuTexture, TexturePass};
 use lntrn_ui::gpu::SmoothScroll;
 
+use super::sidebar_layout::{SidebarLayout, PAD};
 use super::thumbs::ThumbPool;
 
 /// Logical px (multiply by scale `s`).
@@ -56,6 +57,9 @@ pub struct SidebarState {
     /// (slot index, press screen x, press screen y) — pending click or drag-out.
     pub pressed: Option<(usize, f32, f32)>,
     pub last_click: Option<(usize, Instant)>,
+    /// Path the browser last auto-scrolled to (viewer mode follows the
+    /// open image; this stops it re-scrolling every frame).
+    pub revealed: Option<PathBuf>,
 }
 
 impl SidebarState {
@@ -83,7 +87,44 @@ impl SidebarState {
             failed: HashSet::new(),
             pressed: None,
             last_click: None,
+            revealed: None,
         }
+    }
+
+    pub fn is_loaded(&self) -> bool {
+        self.loaded
+    }
+
+    /// Re-list the current folder (something was added or trashed).
+    pub fn refresh(&mut self) {
+        self.loaded = true;
+        self.entries = list_dir(&self.current_dir);
+        self.pressed = None;
+    }
+
+    /// Slot index of the tile showing `path`, if it's in this folder.
+    pub fn slot_of_path(&self, layout: &SidebarLayout, path: &Path) -> Option<usize> {
+        self.entries
+            .iter()
+            .position(|e| e.path == path)
+            .map(|i| i + layout.skip_parent)
+    }
+
+    /// Scroll just enough that `slot` sits fully inside the viewport.
+    pub fn reveal_slot(&mut self, layout: &SidebarLayout, slot: usize) {
+        let r = layout.slot_rect_content(slot);
+        let vp_h = layout.rows_vp.h;
+        let pad = PAD * layout.scale();
+        let top = self.scroll.offset;
+        let target = if r.y < top + pad {
+            r.y - pad
+        } else if r.y + r.h > top + vp_h - pad {
+            r.y + r.h + pad - vp_h
+        } else {
+            return;
+        };
+        self.scroll.set(target.max(0.0));
+        self.scroll.clamp_to(layout.content_h, vp_h);
     }
 
     /// Lazily list the start directory — keeps viewer-mode launches from
@@ -181,11 +222,13 @@ impl SidebarState {
     }
 }
 
-/// List a directory for the sidebar: visible dirs + supported images,
-/// dirs first, alphabetical within each group.
+/// List a directory for the sidebar: folders first (A–Z), then images in
+/// the same order Fox shows them (its sort + hidden-file rule), so the
+/// browser and Left/Right agree with the file manager.
 fn list_dir(dir: &Path) -> Vec<SidebarEntry> {
+    let listing = crate::dir_sort::read_fox_listing();
     let mut dirs: Vec<SidebarEntry> = Vec::new();
-    let mut files: Vec<SidebarEntry> = Vec::new();
+    let mut files: Vec<PathBuf> = Vec::new();
     for entry in std::fs::read_dir(dir)
         .into_iter()
         .flatten()
@@ -193,19 +236,30 @@ fn list_dir(dir: &Path) -> Vec<SidebarEntry> {
     {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') {
+        if !listing.show_hidden && name.starts_with('.') {
             continue;
         }
-        let is_dir = path.is_dir();
-        if is_dir {
-            dirs.push(SidebarEntry { name, path, is_dir });
+        if path.is_dir() {
+            dirs.push(SidebarEntry {
+                name,
+                path,
+                is_dir: true,
+            });
         } else if crate::app::is_supported(&path) {
-            files.push(SidebarEntry { name, path, is_dir });
+            files.push(path);
         }
     }
-    let key = |e: &SidebarEntry| e.name.to_lowercase();
-    dirs.sort_by_key(key);
-    files.sort_by_key(key);
-    dirs.extend(files);
+    dirs.sort_by_key(|e| e.name.to_lowercase());
+    crate::dir_sort::sort_like_fox(&mut files, listing);
+    dirs.extend(files.into_iter().map(|path| {
+        SidebarEntry {
+            name: path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            path,
+            is_dir: false,
+        }
+    }));
     dirs
 }

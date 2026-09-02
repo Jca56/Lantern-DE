@@ -2,6 +2,8 @@
 //! and folder rows, the image tile grid, scrollbar, and the resize grip.
 //! Geometry comes from `SidebarLayout` so hit-testing in input.rs agrees.
 
+use std::path::Path;
+
 use lntrn_render::{Color, Painter, Rect, TextRenderer, TextureDraw};
 use lntrn_ui::gpu::{FontSize, FoxPalette, InteractionContext, Scrollbar, TextLabel};
 
@@ -11,6 +13,15 @@ use crate::{
     ZONE_SIDEBAR_ITEM_BASE, ZONE_SIDEBAR_NAMES, ZONE_SIDEBAR_RESIZE, ZONE_SIDEBAR_SCROLLBAR,
     ZONE_SIDEBAR_TOGGLE,
 };
+
+/// Per-mode presentation knobs for the shared sidebar.
+#[derive(Clone, Copy)]
+pub struct SidebarFlavor<'p> {
+    /// Show the "+" add-to-canvas badge on hovered tiles (canvas mode).
+    pub add_badge: bool,
+    /// Tile to outline as the currently open image (viewer mode).
+    pub current: Option<&'p Path>,
+}
 
 /// Draws the whole sidebar. Returns the rect of the hovered tile's "+" badge,
 /// if any — the caller paints it on the overlay layer so it sits above the
@@ -23,6 +34,7 @@ pub fn draw_sidebar<'a>(
     sb: &'a SidebarState,
     layout: &SidebarLayout,
     visible: &[usize],
+    flavor: SidebarFlavor<'_>,
     tex_draws: &mut Vec<TextureDraw<'a>>,
     palette: &FoxPalette,
     s: f32,
@@ -41,13 +53,20 @@ pub fn draw_sidebar<'a>(
         let px = FontSize::Small.px() * s;
         let strip = Rect::new(side.x, side.y + 8.0 * s, side.w, px + 16.0 * s);
         centered_label(text, "▶", &strip, px, palette.text_secondary, false, sw, sh);
-        painter.line(edge_x, side.y, edge_x, side.y + side.h, 1.0, palette.muted.with_alpha(0.25));
+        painter.line(
+            edge_x,
+            side.y,
+            edge_x,
+            side.y + side.h,
+            1.0,
+            palette.muted.with_alpha(0.25),
+        );
         return None;
     }
 
     draw_header(painter, text, input, sb, layout, palette, s, sw, sh);
     let badge = draw_slots(
-        painter, text, input, sb, layout, visible, tex_draws, palette, s, sw, sh,
+        painter, text, input, sb, layout, visible, flavor, tex_draws, palette, s, sw, sh,
     );
 
     // Scrollbar.
@@ -67,7 +86,14 @@ pub fn draw_sidebar<'a>(
             palette.accent.with_alpha(0.9),
         );
     } else {
-        painter.line(edge_x, side.y, edge_x, side.y + side.h, 1.0, palette.muted.with_alpha(0.25));
+        painter.line(
+            edge_x,
+            side.y,
+            edge_x,
+            side.y + side.h,
+            1.0,
+            palette.muted.with_alpha(0.25),
+        );
     }
     badge
 }
@@ -90,15 +116,34 @@ fn draw_header(
     let btn_w = 44.0 * s;
 
     // Collapse toggle (rightmost, clear of the resize grip).
-    let toggle = Rect::new(header.x + header.w - btn_w - 6.0 * s, header.y, btn_w, header.h);
+    let toggle = Rect::new(
+        header.x + header.w - btn_w - 6.0 * s,
+        header.y,
+        btn_w,
+        header.h,
+    );
     let tg = input.add_zone(ZONE_SIDEBAR_TOGGLE, toggle);
     if tg.is_hovered() {
         painter.rect_filled(toggle, 6.0 * s, Color::WHITE.with_alpha(0.06));
     }
-    centered_label(text, "◀", &toggle, px, palette.text_secondary, false, sw, sh);
+    centered_label(
+        text,
+        "◀",
+        &toggle,
+        px,
+        palette.text_secondary,
+        false,
+        sw,
+        sh,
+    );
 
     // Filenames on/off.
-    let names = Rect::new(toggle.x - btn_w, header.y + 8.0 * s, btn_w, header.h - 16.0 * s);
+    let names = Rect::new(
+        toggle.x - btn_w,
+        header.y + 8.0 * s,
+        btn_w,
+        header.h - 16.0 * s,
+    );
     let ns = input.add_zone(ZONE_SIDEBAR_NAMES, names);
     if sb.show_names {
         painter.rect_filled(names, 6.0 * s, palette.accent.with_alpha(0.18));
@@ -119,12 +164,16 @@ fn draw_header(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "/".into());
-    TextLabel::new(&dir_name, header.x + 12.0 * s, header.y + (header.h - px) * 0.5)
-        .size(FontSize::Custom(px))
-        .bold()
-        .color(palette.text)
-        .max_width((names.x - header.x - 20.0 * s).max(20.0))
-        .draw(text, sw, sh);
+    TextLabel::new(
+        &dir_name,
+        header.x + 12.0 * s,
+        header.y + (header.h - px) * 0.5,
+    )
+    .size(FontSize::Custom(px))
+    .bold()
+    .color(palette.text)
+    .max_width((names.x - header.x - 20.0 * s).max(20.0))
+    .draw(text, sw, sh);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -135,6 +184,7 @@ fn draw_slots<'a>(
     sb: &'a SidebarState,
     layout: &SidebarLayout,
     visible: &[usize],
+    flavor: SidebarFlavor<'_>,
     tex_draws: &mut Vec<TextureDraw<'a>>,
     palette: &FoxPalette,
     s: f32,
@@ -175,10 +225,10 @@ fn draw_slots<'a>(
             draw_dir_row(painter, text, entry, &r, hovered, palette, s, sw, sh);
         } else {
             draw_tile(
-                painter, text, sb, layout, entry, &r, hovered, tex_draws, rows_clip, palette, s,
-                sw, sh,
+                painter, text, sb, layout, entry, &r, hovered, flavor, tex_draws, rows_clip,
+                palette, s, sw, sh,
             );
-            if hovered {
+            if hovered && flavor.add_badge {
                 badge = Some(layout.add_badge_rect(&r));
             }
         }
@@ -225,6 +275,7 @@ fn draw_tile<'a>(
     entry: &'a SidebarEntry,
     tile: &Rect,
     hovered: bool,
+    flavor: SidebarFlavor<'_>,
     tex_draws: &mut Vec<TextureDraw<'a>>,
     rows_clip: [f32; 4],
     palette: &FoxPalette,
@@ -233,11 +284,20 @@ fn draw_tile<'a>(
     sh: u32,
 ) {
     let radius = 8.0 * s;
+    let is_current = flavor.current == Some(entry.path.as_path());
     painter.rect_filled(*tile, radius, palette.surface_2.with_alpha(0.55));
+    if is_current {
+        painter.rect_filled(*tile, radius, palette.accent.with_alpha(0.22));
+    }
 
     let tb = layout.thumb_box(tile);
     let inset = 4.0 * s;
-    let inner = Rect::new(tb.x + inset, tb.y + inset, tb.w - inset * 2.0, tb.h - inset * 2.0);
+    let inner = Rect::new(
+        tb.x + inset,
+        tb.y + inset,
+        tb.w - inset * 2.0,
+        tb.h - inset * 2.0,
+    );
     if let Some(tex) = sb.thumb(&entry.path) {
         let (tw, th) = (tex.width as f32, tex.height as f32);
         let k = (inner.w / tw).min(inner.h / th);
@@ -256,18 +316,24 @@ fn draw_tile<'a>(
         painter.rect_filled(inner, radius * 0.75, palette.surface.with_alpha(0.7));
     }
 
-    if hovered {
+    if is_current {
+        painter.rect_stroke(*tile, radius, 3.0 * s, palette.accent);
+    } else if hovered {
         painter.rect_stroke(*tile, radius, 2.0 * s, palette.accent.with_alpha(0.85));
     }
 
     if sb.show_names {
         let px = FontSize::Caption.px() * s;
         let strip_y = tile.y + tile.h - NAME_H * s;
-        TextLabel::new(&entry.name, tile.x + 8.0 * s, strip_y + (NAME_H * s - px) * 0.5)
-            .size(FontSize::Custom(px))
-            .color(palette.text_secondary)
-            .max_width((tile.w - 16.0 * s).max(10.0))
-            .draw(text, sw, sh);
+        TextLabel::new(
+            &entry.name,
+            tile.x + 8.0 * s,
+            strip_y + (NAME_H * s - px) * 0.5,
+        )
+        .size(FontSize::Custom(px))
+        .color(palette.text_secondary)
+        .max_width((tile.w - 16.0 * s).max(10.0))
+        .draw(text, sw, sh);
     }
 }
 

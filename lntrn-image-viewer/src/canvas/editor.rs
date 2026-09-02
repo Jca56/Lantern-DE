@@ -48,7 +48,10 @@ impl ResizeHandle {
     }
 
     pub fn moves_left(self) -> bool {
-        matches!(self, ResizeHandle::TopLeft | ResizeHandle::Left | ResizeHandle::BottomLeft)
+        matches!(
+            self,
+            ResizeHandle::TopLeft | ResizeHandle::Left | ResizeHandle::BottomLeft
+        )
     }
 
     pub fn moves_right(self) -> bool {
@@ -59,7 +62,10 @@ impl ResizeHandle {
     }
 
     pub fn moves_top(self) -> bool {
-        matches!(self, ResizeHandle::TopLeft | ResizeHandle::Top | ResizeHandle::TopRight)
+        matches!(
+            self,
+            ResizeHandle::TopLeft | ResizeHandle::Top | ResizeHandle::TopRight
+        )
     }
 
     pub fn moves_bottom(self) -> bool {

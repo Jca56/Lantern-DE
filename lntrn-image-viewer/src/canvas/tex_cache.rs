@@ -95,7 +95,7 @@ fn load_capped(path: &Path, gpu: &GpuContext, tex_pass: &TexturePass) -> Option<
 fn rasterize_svg_capped(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     let data = std::fs::read_to_string(path).ok()?;
     let mut opt = resvg::usvg::Options::default();
-    opt.fontdb = crate::app::svg_font_database();
+    opt.fontdb = crate::loaders::svg_font_database();
     let tree = resvg::usvg::Tree::from_str(&data, &opt).ok()?;
     let size = tree.size();
     let (nw, nh) = (size.width().max(1.0), size.height().max(1.0));

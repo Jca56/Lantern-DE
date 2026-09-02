@@ -15,7 +15,7 @@ use crate::canvas::sidebar::SidebarState;
 use crate::canvas::sidebar_layout::SidebarLayout;
 use crate::canvas::tex_cache::{CanvasTexCache, TexEntry};
 use crate::render_dialog::draw_dialog;
-use crate::render_sidebar::{draw_add_badge, draw_sidebar};
+use crate::render_sidebar::{draw_add_badge, draw_sidebar, SidebarFlavor};
 use crate::{
     Gpu, ZONE_CANVAS_AREA, ZONE_CANVAS_REDO, ZONE_CANVAS_SAVE, ZONE_CANVAS_UNDO, ZONE_CLOSE,
     ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_SEL_DELETE,
@@ -148,6 +148,10 @@ pub fn render_canvas_frame(
         sb,
         &layout,
         &visible,
+        SidebarFlavor {
+            add_badge: true,
+            current: None,
+        },
         &mut tex_draws,
         palette,
         s,
@@ -193,16 +197,46 @@ pub fn render_canvas_frame(
     let undo_rect = Rect::new(redo_rect.x - hist_w, title_rect.y, hist_w, title_rect.h);
     let save_label = if editor.dirty { "Save •" } else { "Save" };
     title_button(
-        painter, text, input, ZONE_CANVAS_UNDO, undo_rect, "Undo",
-        editor.history.can_undo(), false, palette, s, sw, sh,
+        painter,
+        text,
+        input,
+        ZONE_CANVAS_UNDO,
+        undo_rect,
+        "Undo",
+        editor.history.can_undo(),
+        false,
+        palette,
+        s,
+        sw,
+        sh,
     );
     title_button(
-        painter, text, input, ZONE_CANVAS_REDO, redo_rect, "Redo",
-        editor.history.can_redo(), false, palette, s, sw, sh,
+        painter,
+        text,
+        input,
+        ZONE_CANVAS_REDO,
+        redo_rect,
+        "Redo",
+        editor.history.can_redo(),
+        false,
+        palette,
+        s,
+        sw,
+        sh,
     );
     title_button(
-        painter, text, input, ZONE_CANVAS_SAVE, save_rect, save_label, true, editor.dirty,
-        palette, s, sw, sh,
+        painter,
+        text,
+        input,
+        ZONE_CANVAS_SAVE,
+        save_rect,
+        save_label,
+        true,
+        editor.dirty,
+        palette,
+        s,
+        sw,
+        sh,
     );
 
     // ── Status bar ──────────────────────────────────────────────────
@@ -334,11 +368,15 @@ fn title_button(
     } else {
         palette.text_secondary
     };
-    TextLabel::new(label, rect.x + (rect.w - tw) * 0.5, rect.y + (rect.h - px) * 0.5)
-        .size(FontSize::Custom(px))
-        .color(color)
-        .max_width(tw + 20.0)
-        .draw(text, sw, sh);
+    TextLabel::new(
+        label,
+        rect.x + (rect.w - tw) * 0.5,
+        rect.y + (rect.h - px) * 0.5,
+    )
+    .size(FontSize::Custom(px))
+    .color(color)
+    .max_width(tw + 20.0)
+    .draw(text, sw, sh);
 }
 
 /// Alignment guides for the in-flight drag: lines through the matched edge,

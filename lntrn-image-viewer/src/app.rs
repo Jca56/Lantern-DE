@@ -1,11 +1,10 @@
-use std::io::BufReader;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use image::codecs::gif::GifDecoder;
-use image::AnimationDecoder;
 use lntrn_render::{GpuContext, GpuTexture, TexturePass};
+
+use crate::info::ImageInfo;
+use crate::loaders;
 
 // ── Supported formats ───────────────────────────────────────────────────────
 
@@ -23,31 +22,11 @@ pub(crate) fn is_supported(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn is_svg(path: &Path) -> bool {
+pub(crate) fn is_svg(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.eq_ignore_ascii_case("svg"))
         .unwrap_or(false)
-}
-
-/// Read just the header of an image to get its dimensions without a full decode.
-/// Used to pick the initial window size before we even create the toplevel.
-pub fn peek_image_dimensions(path: &Path) -> Option<(u32, u32)> {
-    if is_svg(path) {
-        let data = std::fs::read_to_string(path).ok()?;
-        let mut opt = resvg::usvg::Options::default();
-        opt.fontdb = svg_font_database();
-        let tree = resvg::usvg::Tree::from_str(&data, &opt).ok()?;
-        let s = tree.size();
-        Some((s.width().ceil() as u32, s.height().ceil() as u32))
-    } else {
-        image::ImageReader::open(path)
-            .ok()?
-            .with_guessed_format()
-            .ok()?
-            .into_dimensions()
-            .ok()
-    }
 }
 
 fn is_gif(path: &Path) -> bool {
@@ -152,6 +131,15 @@ impl XorShift64 {
 
 // ── App state ───────────────────────────────────────────────────────────────
 
+/// Viewer-mode modal dialogs.
+pub enum ViewerDialog {
+    ConfirmTrash(PathBuf),
+    Error(String),
+}
+
+/// How long a status-bar flash ("Copied to clipboard") stays up.
+const FLASH_TTL: Duration = Duration::from_secs(2);
+
 pub struct App {
     pub image: Option<LoadedImage>,
     pub zoom: f32,
@@ -163,6 +151,21 @@ pub struct App {
     pub file_name: String,
     pub status_text: String,
     pub dimensions_text: String,
+    /// Super+F11 "rice mode": no title bar, no status bar, just the picture.
+    pub chrome_hidden: bool,
+    /// Absolute path of the open image (None until something loads).
+    pub path: Option<PathBuf>,
+    /// File facts + EXIF for the info overlay.
+    pub info: Option<ImageInfo>,
+    /// I key: show the info overlay.
+    pub show_info: bool,
+    /// Some(last advance) while a slideshow is running.
+    pub slideshow: Option<Instant>,
+    pub slideshow_interval: Duration,
+    /// Modal in front of the picture (trash confirm / error).
+    pub dialog: Option<ViewerDialog>,
+    /// Transient status-bar message (replaces the path briefly).
+    pub flash: Option<(String, Instant)>,
     // Directory navigation
     pub dir_files: Vec<PathBuf>,
     pub dir_index: usize,
@@ -188,6 +191,14 @@ impl App {
             file_name: String::new(),
             status_text: "No image loaded".into(),
             dimensions_text: String::new(),
+            chrome_hidden: false,
+            path: None,
+            info: None,
+            show_info: false,
+            slideshow: None,
+            slideshow_interval: Duration::from_secs(4),
+            dialog: None,
+            flash: None,
             dir_files: Vec::new(),
             dir_index: 0,
             shuffle: false,
@@ -238,13 +249,14 @@ impl App {
         // Check for animated GIF
         self.gif = None;
         if is_gif(&abs) {
-            if let Some(anim) = load_gif_frames(&abs) {
+            if let Some(anim) = loaders::load_gif_frames(&abs) {
                 if anim.frames.len() > 1 {
                     // Upload first frame as texture
                     let f = &anim.frames[0];
                     let tex = tex_pass.upload(gpu, &f.rgba, f.width, f.height);
                     let (w, h) = (f.width, f.height);
-                    self.set_loaded(abs.clone(), tex, w, h, None);
+                    let info = ImageInfo::gather(&abs, "GIF (animated)", None);
+                    self.set_loaded(abs.clone(), tex, w, h, None, info);
                     self.gif = Some(anim);
                     return;
                 }
@@ -252,19 +264,36 @@ impl App {
         }
 
         if is_svg(&abs) {
-            match load_svg_texture(gpu, tex_pass, &abs) {
-                Some((tex, w, h, svg)) => self.set_loaded(abs, tex, w, h, Some(svg)),
+            match loaders::load_svg_texture(gpu, tex_pass, &abs) {
+                Some((tex, w, h, svg)) => {
+                    let info = ImageInfo::gather(&abs, "SVG", None);
+                    self.set_loaded(abs, tex, w, h, Some(svg), info);
+                }
                 None => self.status_text = format!("Cannot load: {}", abs.display()),
             }
         } else {
-            match load_raster_texture(gpu, tex_pass, &abs) {
-                Some((tex, w, h)) => self.set_loaded(abs, tex, w, h, None),
+            match loaders::load_raster_texture(gpu, tex_pass, &abs) {
+                Some(r) => {
+                    let format = crate::info::format_name(r.format);
+                    let info = ImageInfo::gather(&abs, &format, r.exif.as_deref());
+                    self.set_loaded(abs, r.tex, r.width, r.height, None, info);
+                }
                 None => self.status_text = format!("Cannot load: {}", abs.display()),
             }
         }
     }
 
-    fn set_loaded(&mut self, abs: PathBuf, tex: GpuTexture, w: u32, h: u32, svg: Option<SvgImage>) {
+    fn set_loaded(
+        &mut self,
+        abs: PathBuf,
+        tex: GpuTexture,
+        w: u32,
+        h: u32,
+        svg: Option<SvgImage>,
+        info: ImageInfo,
+    ) {
+        self.info = Some(info);
+        self.path = Some(abs.clone());
         self.file_name = abs
             .file_name()
             .map(|n| n.to_string_lossy().into())
@@ -325,7 +354,7 @@ impl App {
             return;
         }
 
-        if let Some((tex, rw, rh)) = rasterize_svg(
+        if let Some((tex, rw, rh)) = loaders::rasterize_svg(
             gpu,
             tex_pass,
             &svg.source,
@@ -346,15 +375,25 @@ impl App {
         }
     }
 
+    /// Build the Left/Right sibling list, ordered the way Fox currently lists
+    /// this folder (same sort key, direction, and hidden-file rule).
     fn scan_directory(&mut self, dir: &Path) {
+        let listing = crate::dir_sort::read_fox_listing();
         let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
             .into_iter()
             .flatten()
             .filter_map(|e| e.ok())
             .map(|e| e.path())
             .filter(|p| p.is_file() && is_supported(p))
+            .filter(|p| {
+                listing.show_hidden
+                    || !p
+                        .file_name()
+                        .map(|n| n.to_string_lossy().starts_with('.'))
+                        .unwrap_or(false)
+            })
             .collect();
-        files.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+        crate::dir_sort::sort_like_fox(&mut files, listing);
         self.dir_files = files;
         self.dir_index = 0;
     }
@@ -398,6 +437,106 @@ impl App {
         }
         let path = self.dir_files[self.dir_index].to_string_lossy().to_string();
         self.open_image(gpu, tex_pass, &path);
+    }
+
+    // ── Slideshow / flash / trash ───────────────────────────────────────
+
+    pub fn flash(&mut self, msg: impl Into<String>) {
+        self.flash = Some((msg.into(), Instant::now()));
+    }
+
+    /// The flash message while it's still fresh.
+    pub fn flash_text(&self) -> Option<&str> {
+        self.flash
+            .as_ref()
+            .filter(|(_, at)| at.elapsed() < FLASH_TTL)
+            .map(|(m, _)| m.as_str())
+    }
+
+    pub fn flash_remaining(&self) -> Option<Duration> {
+        self.flash
+            .as_ref()
+            .map(|(_, at)| FLASH_TTL.saturating_sub(at.elapsed()))
+    }
+
+    pub fn toggle_slideshow(&mut self) {
+        self.slideshow = match self.slideshow {
+            Some(_) => None,
+            None => Some(Instant::now()),
+        };
+    }
+
+    /// Nudge the slideshow interval by whole seconds (1–60 s).
+    pub fn adjust_slideshow(&mut self, steps: i64) {
+        let secs = (self.slideshow_interval.as_secs() as i64 + steps).clamp(1, 60);
+        self.slideshow_interval = Duration::from_secs(secs as u64);
+        self.flash(format!("Slideshow interval: {secs}s"));
+    }
+
+    /// Time until the slideshow advances, if one is running.
+    pub fn slideshow_remaining(&self) -> Option<Duration> {
+        self.slideshow
+            .map(|at| self.slideshow_interval.saturating_sub(at.elapsed()))
+    }
+
+    /// Advance the slideshow when its interval is up. Returns true on advance.
+    pub fn tick_slideshow(&mut self, gpu: &GpuContext, tex_pass: &TexturePass) -> bool {
+        let Some(at) = self.slideshow else {
+            return false;
+        };
+        if at.elapsed() < self.slideshow_interval || self.dir_files.len() < 2 {
+            return false;
+        }
+        self.next_image(gpu, tex_pass);
+        self.slideshow = Some(Instant::now());
+        true
+    }
+
+    /// Whether anything time-driven needs the loop to keep ticking.
+    pub fn is_animating(&self) -> bool {
+        self.gif.is_some() || self.slideshow.is_some() || self.flash.is_some()
+    }
+
+    /// Drop the open image from the sibling list (it's been trashed) and
+    /// show the next one, or an empty view when the folder is now empty.
+    pub fn remove_current(&mut self, gpu: &GpuContext, tex_pass: &TexturePass) {
+        if self.dir_files.is_empty() {
+            self.clear_image();
+            return;
+        }
+        // Locate the trashed file by path (the open image may not be in the
+        // list at all, e.g. a hidden file opened directly).
+        let idx = match self
+            .dir_files
+            .iter()
+            .position(|p| Some(p) == self.path.as_ref())
+        {
+            Some(i) => {
+                self.dir_files.remove(i);
+                i
+            }
+            None => self.dir_index,
+        };
+        if self.dir_files.is_empty() {
+            self.clear_image();
+            return;
+        }
+        self.dir_index = idx.min(self.dir_files.len() - 1);
+        if self.shuffle {
+            self.regenerate_shuffle();
+        }
+        let next = self.dir_files[self.dir_index].to_string_lossy().to_string();
+        self.open_image(gpu, tex_pass, &next);
+    }
+
+    fn clear_image(&mut self) {
+        self.image = None;
+        self.gif = None;
+        self.path = None;
+        self.info = None;
+        self.file_name.clear();
+        self.dimensions_text.clear();
+        self.status_text = "No images left in this folder".into();
     }
 
     pub fn toggle_shuffle(&mut self) {
@@ -456,118 +595,4 @@ impl App {
         self.pan_x = 0.0;
         self.pan_y = 0.0;
     }
-}
-
-// ── Image loading helpers ───────────────────────────────────────────────────
-
-fn load_raster_texture(
-    gpu: &GpuContext,
-    tex_pass: &TexturePass,
-    path: &Path,
-) -> Option<(GpuTexture, u32, u32)> {
-    let img = image::open(path).ok()?;
-    let rgba = img.to_rgba8();
-    let (w, h) = (rgba.width(), rgba.height());
-    let tex = tex_pass.upload(gpu, &rgba, w, h);
-    Some((tex, w, h))
-}
-
-fn load_gif_frames(path: &Path) -> Option<GifAnimation> {
-    let file = std::fs::File::open(path).ok()?;
-    let decoder = GifDecoder::new(BufReader::new(file)).ok()?;
-    let frames_iter = decoder.into_frames();
-    let mut frames = Vec::new();
-    for result in frames_iter {
-        let frame = result.ok()?;
-        let (numer, denom) = frame.delay().numer_denom_ms();
-        let delay_ms = if denom == 0 { 100 } else { numer / denom };
-        // GIF spec: 0 or very small delay defaults to 100ms
-        let delay_ms = if delay_ms < 20 { 100 } else { delay_ms };
-        let buf = frame.into_buffer();
-        let (w, h) = (buf.width(), buf.height());
-        frames.push(GifFrame {
-            rgba: buf.into_raw(),
-            width: w,
-            height: h,
-            delay: Duration::from_millis(delay_ms as u64),
-        });
-    }
-    if frames.is_empty() {
-        return None;
-    }
-    Some(GifAnimation {
-        frames,
-        current: 0,
-        last_swap: Instant::now(),
-    })
-}
-
-pub(crate) fn svg_font_database() -> Arc<resvg::usvg::fontdb::Database> {
-    static DB: OnceLock<Arc<resvg::usvg::fontdb::Database>> = OnceLock::new();
-    DB.get_or_init(|| {
-        let mut db = resvg::usvg::fontdb::Database::new();
-        db.load_system_fonts();
-        Arc::new(db)
-    })
-    .clone()
-}
-
-/// Initial SVG load: rasterize at native size and keep the source around so it
-/// can be re-rasterized larger on demand (see `App::maybe_rerender_svg`).
-fn load_svg_texture(
-    gpu: &GpuContext,
-    tex_pass: &TexturePass,
-    path: &Path,
-) -> Option<(GpuTexture, u32, u32, SvgImage)> {
-    let svg_data = std::fs::read_to_string(path).ok()?;
-    let mut opt = resvg::usvg::Options::default();
-    opt.fontdb = svg_font_database();
-    let tree = resvg::usvg::Tree::from_str(&svg_data, &opt).ok()?;
-    let size = tree.size();
-    let native_w = size.width();
-    let native_h = size.height();
-
-    // Start at native size; window/zoom growth triggers a sharper re-render.
-    let want_w = (native_w.ceil() as u32).min(8192).max(1);
-    let want_h = (native_h.ceil() as u32).min(8192).max(1);
-    let (tex, rw, rh) =
-        rasterize_svg(gpu, tex_pass, &svg_data, native_w, native_h, want_w, want_h)?;
-
-    let svg = SvgImage {
-        source: svg_data,
-        native_w,
-        native_h,
-        rendered_w: rw,
-        rendered_h: rh,
-    };
-    Some((tex, rw, rh, svg))
-}
-
-/// Rasterize an SVG source string to a GPU texture at `target_w × target_h`
-/// pixels, preserving the native aspect ratio. Returns the texture and the
-/// actual pixel size used.
-fn rasterize_svg(
-    gpu: &GpuContext,
-    tex_pass: &TexturePass,
-    source: &str,
-    native_w: f32,
-    native_h: f32,
-    target_w: u32,
-    target_h: u32,
-) -> Option<(GpuTexture, u32, u32)> {
-    let mut opt = resvg::usvg::Options::default();
-    opt.fontdb = svg_font_database();
-    let tree = resvg::usvg::Tree::from_str(source, &opt).ok()?;
-
-    let render_w = target_w.clamp(1, 8192);
-    let render_h = target_h.clamp(1, 8192);
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(render_w, render_h)?;
-    let transform = resvg::tiny_skia::Transform::from_scale(
-        render_w as f32 / native_w,
-        render_h as f32 / native_h,
-    );
-    resvg::render(&tree, transform, &mut pixmap.as_mut());
-
-    let tex = tex_pass.upload(gpu, pixmap.data(), render_w, render_h);
-    Some((tex, render_w, render_h))
 }

@@ -5,14 +5,16 @@ use std::sync::mpsc;
 use std::time::Instant;
 
 use anyhow::{anyhow, Result};
-use lntrn_render::{GpuContext, Painter, Rect, TextRenderer, TexturePass};
+use lntrn_render::{GpuContext, Painter, TextRenderer, TexturePass};
 use lntrn_ui::gpu::{FoxPalette, InteractionContext};
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
     RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle, WindowHandle,
 };
 use wayland_client::{
-    protocol::{wl_compositor, wl_data_device_manager, wl_data_offer, wl_seat, wl_surface},
+    protocol::{
+        wl_compositor, wl_data_device, wl_data_device_manager, wl_data_offer, wl_seat, wl_surface,
+    },
     Connection, EventQueue, Proxy,
 };
 use wayland_protocols::wp::cursor_shape::v1::client::{
@@ -28,9 +30,10 @@ use crate::canvas::persist;
 use crate::canvas::sidebar::SidebarState;
 use crate::canvas::tex_cache::CanvasTexCache;
 use crate::render_launcher::{self, LauncherState};
+use crate::viewer_input::{self, Mods, ViewerAction};
 use crate::{
-    AppMode, Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_LAUNCHER_ITEM_BASE, ZONE_LAUNCHER_NEW,
-    ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_NAV_NEXT, ZONE_NAV_PREV, ZONE_SHUFFLE,
+    AppMode, Gpu, ZONE_CLOSE, ZONE_LAUNCHER_ITEM_BASE, ZONE_LAUNCHER_NEW, ZONE_MAXIMIZE,
+    ZONE_MINIMIZE,
 };
 
 // ── WaylandHandle for wgpu ──────────────────────────────────────────────────
@@ -95,7 +98,10 @@ pub(crate) struct State {
     pub(crate) ctrl: bool,
     pub(crate) shift: bool,
     pub(crate) alt: bool,
+    pub(crate) logo: bool,
     pub(crate) key_pressed: Option<u32>,
+    /// Serial of the latest key press — clipboard set_selection needs a recent one.
+    pub(crate) key_serial: u32,
     // Drag-and-drop receive (Dispatch impls live in dnd.rs)
     pub(crate) data_device_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
     pub(crate) dnd_mimes: Vec<String>,
@@ -145,7 +151,9 @@ impl State {
             ctrl: false,
             shift: false,
             alt: false,
+            logo: false,
             key_pressed: None,
+            key_serial: 0,
             data_device_manager: None,
             dnd_mimes: Vec::new(),
             dnd_offer: None,
@@ -213,7 +221,7 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
 
     let (init_w, init_h) = initial_path
         .as_deref()
-        .and_then(|p| crate::app::peek_image_dimensions(Path::new(p)))
+        .and_then(|p| crate::loaders::peek_image_dimensions(Path::new(p)))
         .map(|(w, h)| fit_to_screen(w, h, screen_logical_w, screen_logical_h))
         .unwrap_or((960, 640));
 
@@ -242,7 +250,7 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
     state.toplevel = Some(toplevel.clone());
 
     // DnD target: needs a data device on our seat (events handled in dnd.rs).
-    let _data_device = match (&state.data_device_manager, &state.seat) {
+    let data_device = match (&state.data_device_manager, &state.seat) {
         (Some(mgr), Some(seat)) => Some(mgr.get_data_device(seat, &qh, ())),
         _ => None,
     };
@@ -311,6 +319,11 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
         }
         None => AppMode::Launcher,
     };
+    // The viewer starts with the browser folded to a strip (B or click opens
+    // it); canvas mode wants it open since it's the source of images.
+    if mode == AppMode::Viewer {
+        sidebar.collapsed = true;
+    }
 
     let mut last_frame = Instant::now();
     let mut last_title = String::new();
@@ -319,9 +332,9 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
         // Non-blocking dispatch while anything animates or a DnD read is in
         // flight (those complete off the wayland socket, so blocking_dispatch
         // would never wake for them); blocking otherwise.
-        let canvas_busy =
-            mode == AppMode::Canvas && (sidebar.scroll.is_animating() || sidebar.has_pending());
-        if app.gif.is_some() || canvas_busy || state.dnd_reading {
+        let sidebar_busy =
+            mode != AppMode::Launcher && (sidebar.scroll.is_animating() || sidebar.has_pending());
+        if app.is_animating() || sidebar_busy || state.dnd_reading {
             if let Some(guard) = event_queue.prepare_read() {
                 let _ = guard.read();
             }
@@ -330,27 +343,34 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
                 break;
             }
             event_queue.flush()?;
-            // Tick GIF animation
-            let gif_changed = app.tick_gif(&gpu.ctx, &gpu.tex_pass);
-            if gif_changed {
+            // Tick time-driven state: GIF frames, slideshow advance, flash expiry.
+            if app.tick_gif(&gpu.ctx, &gpu.tex_pass) || app.tick_slideshow(&gpu.ctx, &gpu.tex_pass)
+            {
+                state.frame_done = true;
+            }
+            if app.flash.is_some() && app.flash_text().is_none() {
+                app.flash = None;
                 state.frame_done = true;
             }
             if !state.frame_done {
-                if canvas_busy || state.dnd_reading {
+                if sidebar_busy || state.dnd_reading {
                     // Steady redraw cadence for scroll animation / thumbnail
                     // arrival / drop-read completion.
                     std::thread::sleep(std::time::Duration::from_millis(12));
                     state.frame_done = true;
                 } else {
-                    // Sleep until next GIF frame is due (or a short poll interval)
-                    let sleep = app
-                        .gif
-                        .as_ref()
-                        .map(|g| {
-                            let remaining = g.current_delay().saturating_sub(g.last_swap.elapsed());
-                            remaining.min(std::time::Duration::from_millis(16))
-                        })
-                        .unwrap_or(std::time::Duration::from_millis(16));
+                    // Sleep until the next GIF frame / slideshow advance /
+                    // flash expiry is due, polling at least every 16 ms.
+                    let mut sleep = std::time::Duration::from_millis(16);
+                    if let Some(g) = &app.gif {
+                        sleep = sleep.min(g.current_delay().saturating_sub(g.last_swap.elapsed()));
+                    }
+                    if let Some(r) = app.slideshow_remaining() {
+                        sleep = sleep.min(r);
+                    }
+                    if let Some(r) = app.flash_remaining() {
+                        sleep = sleep.min(r);
+                    }
                     std::thread::sleep(sleep);
                     continue;
                 }
@@ -429,19 +449,17 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
             state.scroll_delta = 0.0;
             match mode {
                 AppMode::Viewer => {
-                    let title_h = crate::TITLE_H * s;
-                    let status_h = crate::STATUS_H * s;
-                    let canvas = Rect::new(0.0, title_h, wf, hf - title_h - status_h);
-                    if canvas.contains(cx, cy) {
-                        let factor = if delta < 0.0 { 1.03 } else { 1.0 / 1.03 };
-                        app.zoom_at(
-                            factor,
-                            cx,
-                            cy,
-                            canvas.x + canvas.w * 0.5,
-                            canvas.y + canvas.h * 0.5,
-                        );
-                    }
+                    viewer_input::on_scroll(
+                        &mut app,
+                        &mut sidebar,
+                        delta,
+                        state.ctrl,
+                        cx,
+                        cy,
+                        wf,
+                        hf,
+                        s,
+                    );
                 }
                 AppMode::Canvas => {
                     canvas_input::on_scroll(
@@ -465,7 +483,19 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
         // ── Keyboard ────────────────────────────────────────────────────
         if let Some(key) = state.key_pressed.take() {
             match mode {
-                AppMode::Viewer => handle_key(&mut app, &mut gpu, key, state.ctrl),
+                AppMode::Viewer => {
+                    let mods = Mods {
+                        ctrl: state.ctrl,
+                        logo: state.logo,
+                    };
+                    match viewer_input::on_key(&mut app, &mut sidebar, &gpu, key, mods) {
+                        ViewerAction::Quit => state.running = false,
+                        ViewerAction::Copy => {
+                            copy_current(&state, data_device.as_ref(), &qh, &mut app)
+                        }
+                        ViewerAction::None => {}
+                    }
+                }
                 AppMode::Canvas => {
                     let action = canvas_input::on_key(
                         &mut editor,
@@ -519,24 +549,16 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
                         }
                     }
                     _ => match mode {
-                        AppMode::Viewer => match zone_id {
-                            ZONE_CANVAS => {
-                                // Start panning
-                                app.is_panning = true;
-                                app.last_pan_x = cx;
-                                app.last_pan_y = cy;
-                            }
-                            ZONE_NAV_PREV => {
-                                app.prev_image(&gpu.ctx, &gpu.tex_pass);
-                            }
-                            ZONE_NAV_NEXT => {
-                                app.next_image(&gpu.ctx, &gpu.tex_pass);
-                            }
-                            ZONE_SHUFFLE => {
-                                app.toggle_shuffle();
-                            }
-                            _ => {}
-                        },
+                        AppMode::Viewer => {
+                            viewer_input::on_zone_pressed(
+                                &mut app,
+                                &mut sidebar,
+                                &gpu,
+                                zone_id,
+                                cx,
+                                cy,
+                            );
+                        }
                         AppMode::Canvas => {
                             let action = canvas_input::on_zone_pressed(
                                 &mut editor,
@@ -582,8 +604,12 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
                     },
                 }
             } else {
-                // Title bar drag
-                let title_h = crate::TITLE_H * s;
+                // Title bar drag (no bar to grab while the viewer chrome is hidden)
+                let title_h = if mode == AppMode::Viewer && app.chrome_hidden {
+                    0.0
+                } else {
+                    crate::TITLE_H * s
+                };
                 if cy < title_h {
                     if let Some(seat) = &state.seat {
                         toplevel._move(seat, state.pointer_serial);
@@ -614,13 +640,8 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
         }
 
         // ── Pointer-driven updates while moving ─────────────────────────
-        if mode == AppMode::Viewer && app.is_panning && state.pointer_in_surface {
-            let dx = cx - app.last_pan_x;
-            let dy = cy - app.last_pan_y;
-            app.pan_x += dx;
-            app.pan_y += dy;
-            app.last_pan_x = cx;
-            app.last_pan_y = cy;
+        if mode == AppMode::Viewer && state.pointer_in_surface {
+            viewer_input::on_motion(&mut app, &mut sidebar, &input, cx, cy, wf, hf, s);
         }
         if mode == AppMode::Canvas && state.pointer_in_surface {
             canvas_input::on_motion(
@@ -639,8 +660,14 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
         // ── Left/middle release ─────────────────────────────────────────
         if state.left_released {
             state.left_released = false;
-            if mode == AppMode::Canvas {
-                canvas_input::on_release(&mut editor, &mut sidebar, cx, cy, wf, hf, s);
+            match mode {
+                AppMode::Canvas => {
+                    canvas_input::on_release(&mut editor, &mut sidebar, cx, cy, wf, hf, s)
+                }
+                AppMode::Viewer => {
+                    viewer_input::on_release(&mut app, &mut sidebar, &gpu, cx, cy, wf, hf, s)
+                }
+                AppMode::Launcher => {}
             }
             app.is_panning = false;
             input.on_left_released();
@@ -657,8 +684,9 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
         // Re-rasterize the vector image to the size it's about to be drawn at,
         // mirroring the fit+zoom math in render_frame so it never looks blurry.
         if let Some(img) = &app.image {
-            let canvas_w = wf;
-            let canvas_h = hf - (crate::TITLE_H + crate::STATUS_H) * s;
+            let canvas = crate::render::viewer_canvas(&app, &sidebar, wf, hf, s);
+            let canvas_w = canvas.w;
+            let canvas_h = canvas.h;
             let fit_zoom = (canvas_w / img.width as f32).min(canvas_h / img.height as f32);
             let display_zoom = fit_zoom * app.zoom;
             let disp_w = img.width as f32 * display_zoom;
@@ -672,7 +700,8 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
         if state.pointer_in_surface {
             let border = crate::RESIZE_BORDER * s;
             let in_canvas = mode == AppMode::Canvas;
-            let desired = if in_canvas && sidebar.resizing {
+            let in_viewer = mode == AppMode::Viewer;
+            let desired = if (in_canvas || in_viewer) && sidebar.resizing {
                 wp_cursor_shape_device_v1::Shape::ColResize
             } else {
                 match edge_resize(cx, cy, wf, hf, border) {
@@ -680,6 +709,11 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
                     None if in_canvas => canvas_cursor_shape(canvas_input::cursor_hint(
                         &editor, &sidebar, cx, cy, wf, hf, s,
                     )),
+                    None if in_viewer
+                        && viewer_input::over_grip(&app, &sidebar, cx, cy, wf, hf, s) =>
+                    {
+                        wp_cursor_shape_device_v1::Shape::ColResize
+                    }
                     None => wp_cursor_shape_device_v1::Shape::Default,
                 }
             };
@@ -709,7 +743,16 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
         let palette = FoxPalette::current();
         match mode {
             AppMode::Viewer => {
-                crate::render::render_frame(&mut gpu, &app, &mut input, &palette, s);
+                viewer_input::sync_sidebar(&app, &mut sidebar, wf, hf, s);
+                crate::render::render_frame(
+                    &mut gpu,
+                    &app,
+                    &mut sidebar,
+                    &mut input,
+                    &palette,
+                    s,
+                    dt,
+                );
             }
             AppMode::Launcher => {
                 render_launcher::render_launcher_frame(
@@ -812,38 +855,23 @@ fn resize_edge_to_cursor_shape(edge: xdg_toplevel::ResizeEdge) -> wp_cursor_shap
 }
 
 // Linux keycodes
-const KEY_Q: u32 = 16;
-const KEY_0: u32 = 11;
-const KEY_EQUAL: u32 = 13; // =/+ key
-const KEY_MINUS: u32 = 12;
-const KEY_S: u32 = 31;
-const KEY_LEFT: u32 = 105;
-const KEY_RIGHT: u32 = 106;
-
-fn handle_key(app: &mut App, gpu: &mut Gpu, key: u32, ctrl: bool) {
-    match key {
-        KEY_LEFT => {
-            app.prev_image(&gpu.ctx, &gpu.tex_pass);
-        }
-        KEY_RIGHT => {
-            app.next_image(&gpu.ctx, &gpu.tex_pass);
-        }
-        KEY_S if !ctrl => {
-            app.toggle_shuffle();
-        }
-        _ if ctrl => match key {
-            KEY_Q => std::process::exit(0),
-            KEY_EQUAL => {
-                app.zoom = (app.zoom * 1.05).min(50.0);
-            }
-            KEY_MINUS => {
-                app.zoom = (app.zoom / 1.05).max(0.05);
-            }
-            KEY_0 => {
-                app.fit_to_view();
-            }
-            _ => {}
-        },
-        _ => {}
+/// Ctrl+C: hand the open image to the clipboard module and report the
+/// outcome in the status bar.
+fn copy_current(
+    state: &State,
+    data_device: Option<&wl_data_device::WlDataDevice>,
+    qh: &wayland_client::QueueHandle<State>,
+    app: &mut App,
+) {
+    let Some(path) = app.path.clone() else {
+        return;
+    };
+    let result = match data_device {
+        Some(dev) => crate::clipboard::copy_image(state, dev, qh, state.key_serial, &path),
+        None => Err("Clipboard unavailable (no data device)".to_string()),
+    };
+    match result {
+        Ok(()) => app.flash("Copied to clipboard"),
+        Err(e) => app.flash(e),
     }
 }

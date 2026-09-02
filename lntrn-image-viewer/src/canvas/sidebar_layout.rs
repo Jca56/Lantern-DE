@@ -42,14 +42,22 @@ pub struct SidebarLayout {
 }
 
 impl SidebarLayout {
+    /// Standard placement: full height between the title bar and status bar.
     pub fn compute(sb: &SidebarState, wf: f32, hf: f32, s: f32) -> Self {
         let title_h = crate::TITLE_H * s;
         let status_h = crate::STATUS_H * s;
+        let band = Rect::new(0.0, title_h, wf, (hf - title_h - status_h).max(1.0));
+        Self::compute_in(sb, band, s)
+    }
+
+    /// Place the sidebar at the left edge of `band`, the vertical strip it
+    /// may occupy (the viewer hands over a taller one in rice mode).
+    pub fn compute_in(sb: &SidebarState, band: Rect, s: f32) -> Self {
         let side = Rect::new(
-            0.0,
-            title_h,
-            sb.phys_width(s).min(wf),
-            (hf - title_h - status_h).max(1.0),
+            band.x,
+            band.y,
+            sb.phys_width(s).min(band.w),
+            band.h.max(1.0),
         );
         let header = Rect::new(side.x, side.y, side.w, HEADER_H * s);
         let rows_vp = Rect::new(
@@ -101,6 +109,10 @@ impl SidebarLayout {
         }
     }
 
+    pub fn scale(&self) -> f32 {
+        self.s
+    }
+
     pub fn slot_count(&self) -> usize {
         self.skip_parent + self.n_dirs + self.n_files
     }
@@ -126,7 +138,12 @@ impl SidebarLayout {
         let list_rows = self.skip_parent + self.n_dirs;
         if slot < list_rows {
             let row_h = DIR_ROW_H * s;
-            return Rect::new(pad, pad + slot as f32 * row_h, self.side.w - pad * 2.0, row_h);
+            return Rect::new(
+                pad,
+                pad + slot as f32 * row_h,
+                self.side.w - pad * 2.0,
+                row_h,
+            );
         }
         let f = slot - list_rows;
         let (row, col) = (f / self.cols, f % self.cols);

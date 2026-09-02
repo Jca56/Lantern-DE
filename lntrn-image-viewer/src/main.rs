@@ -1,11 +1,19 @@
 mod app;
 mod canvas;
+mod clipboard;
+mod dir_sort;
 mod dnd;
+mod exif;
+mod file_actions;
+mod info;
+mod loaders;
 mod render;
 mod render_canvas;
 mod render_dialog;
+mod render_info;
 mod render_launcher;
 mod render_sidebar;
+mod viewer_input;
 mod wayland;
 mod wayland_dispatch;
 

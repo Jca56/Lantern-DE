@@ -446,7 +446,7 @@ pub fn add_at(ed: &mut CanvasEditor, path: PathBuf, ccx: f32, ccy: f32, vp: &Rec
 /// visible viewport so big photos arrive at a workable size. No history
 /// entry — callers `record()` so a multi-file drop is one step.
 fn place(ed: &mut CanvasEditor, path: PathBuf, ccx: f32, ccy: f32, vp: &Rect, s: f32) {
-    let (nat_w, nat_h) = crate::app::peek_image_dimensions(&path).unwrap_or((400, 300));
+    let (nat_w, nat_h) = crate::loaders::peek_image_dimensions(&path).unwrap_or((400, 300));
     let zs = (ed.doc.view.zoom * s).max(1e-6);
     let max_w = vp.w / zs * PLACE_FIT;
     let max_h = vp.h / zs * PLACE_FIT;

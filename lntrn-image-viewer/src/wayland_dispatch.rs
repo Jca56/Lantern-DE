@@ -341,12 +341,14 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
     ) {
         match event {
             wl_keyboard::Event::Key {
+                serial,
                 key,
                 state: key_state,
                 ..
             } => {
                 if key_state == WEnum::Value(wl_keyboard::KeyState::Pressed) {
                     state.key_pressed = Some(key);
+                    state.key_serial = serial;
                 }
                 state.frame_done = true;
             }
@@ -354,6 +356,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                 state.ctrl = mods_depressed & 4 != 0;
                 state.shift = mods_depressed & 1 != 0;
                 state.alt = mods_depressed & 8 != 0;
+                state.logo = mods_depressed & 64 != 0; // Mod4 = Super/Logo
             }
             _ => {}
         }
