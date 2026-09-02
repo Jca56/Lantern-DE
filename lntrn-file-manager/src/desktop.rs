@@ -264,7 +264,12 @@ pub fn launch_app(exec: &str, file_path: &Path) {
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
         match cmd.spawn() {
-            Ok(_child) => {}
+            // Reap the child from this thread (it's already dedicated to the
+            // launch): without a wait() every closed or killed app lingers as
+            // a <defunct> row under Fox until Fox itself exits.
+            Ok(mut child) => {
+                let _ = child.wait();
+            }
             Err(e) => eprintln!("[fox] launch_app: failed to spawn {bin:?}: {e}"),
         }
     });
