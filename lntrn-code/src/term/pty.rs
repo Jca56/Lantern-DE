@@ -1,308 +1,207 @@
-use std::io::Read;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::sync::mpsc::{self, Receiver, TryRecvError};
+//! A pseudo-terminal with a shell in it. The master side is read by one
+//! thread and written by another, so the UI never blocks on the child;
+//! output arrives over a bounded channel, which stops a chatty child when
+//! nobody is looking (a hidden terminal) instead of filling memory.
 
-use nix::pty::openpty;
-use nix::sys::termios::{self, SetArg};
-use nix::unistd::{close, dup, dup2, execvp, fork, setsid, ForkResult};
+use std::ffi::{CStr, c_char, c_int, c_ulong};
+use std::fs::{File, OpenOptions};
+use std::io::{self, Read, Write};
+use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::process::CommandExt;
+use std::path::Path;
+use std::process::{Child, Command};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::thread;
 
-// ── PTY handle ──────────────────────────────────────────────────────────────
+use lntrn_app::Waker;
+
+unsafe extern "C" {
+    fn posix_openpt(flags: c_int) -> c_int;
+    fn grantpt(fd: c_int) -> c_int;
+    fn unlockpt(fd: c_int) -> c_int;
+    fn ptsname_r(fd: c_int, buf: *mut c_char, len: usize) -> c_int;
+    fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
+    fn setsid() -> c_int;
+}
+
+const O_RDWR: c_int = 2;
+const O_NOCTTY: c_int = 0o400;
+const TIOCSCTTY: c_ulong = 0x540E;
+const TIOCSWINSZ: c_ulong = 0x5414;
+
+#[repr(C)]
+struct Winsize {
+    ws_row: u16,
+    ws_col: u16,
+    ws_xpixel: u16,
+    ws_ypixel: u16,
+}
+
+/// Output chunks queued for the UI before the reader blocks.
+const QUEUE_CHUNKS: usize = 256;
 
 pub struct Pty {
-    master: OwnedFd,
-    child_pid: nix::unistd::Pid,
-    pub alive: bool,
+    master: File,
+    child: Child,
     rx: Receiver<Vec<u8>>,
-    buffered: Vec<u8>,
+    tx_in: SyncSender<Vec<u8>>,
+    /// The reader saw the end of the output: the shell is gone.
+    eof: Arc<AtomicBool>,
+    exited: Option<i32>,
+}
+
+fn check(r: c_int, what: &str) -> io::Result<()> {
+    if r < 0 { Err(io::Error::other(format!("{what}: {}", io::Error::last_os_error()))) } else { Ok(()) }
+}
+
+fn set_size(fd: c_int, cols: u16, rows: u16) {
+    let ws = Winsize { ws_row: rows.max(1), ws_col: cols.max(1), ws_xpixel: 0, ws_ypixel: 0 };
+    // SAFETY: TIOCSWINSZ reads a winsize struct; the fd is ours.
+    unsafe {
+        ioctl(fd, TIOCSWINSZ, &ws as *const Winsize);
+    }
 }
 
 impl Pty {
-    /// Spawn a new PTY running the given shell command.
-    /// `repaint` is called from the reader thread when new output arrives.
-    pub fn spawn(
-        shell: &str,
-        cwd: Option<&str>,
-        repaint: Box<dyn Fn() + Send + 'static>,
-    ) -> Result<Self, String> {
-        let pty_pair = openpty(None, None).map_err(|e| format!("openpty: {e}"))?;
-
-        if let Ok(mut termios) = termios::tcgetattr(&pty_pair.slave) {
-            termios::cfsetspeed(&mut termios, termios::BaudRate::B38400)
-                .map_err(|e| format!("cfsetspeed: {e}"))?;
-            termios.local_flags |= termios::LocalFlags::ECHO
-                | termios::LocalFlags::ICANON
-                | termios::LocalFlags::ISIG
-                | termios::LocalFlags::IEXTEN;
-            termios.input_flags |= termios::InputFlags::ICRNL;
-            termios.output_flags |= termios::OutputFlags::OPOST | termios::OutputFlags::ONLCR;
-            termios::tcsetattr(&pty_pair.slave, SetArg::TCSANOW, &termios)
-                .map_err(|e| format!("tcsetattr: {e}"))?;
+    /// Open a pty and start the user's shell in it, `cols`×`rows`, in
+    /// `cwd`. Output wakes the loop through `waker` when there is one.
+    pub fn spawn(cwd: Option<&Path>, cols: u16, rows: u16, waker: Option<Waker>, env: &[(String, String)]) -> io::Result<Self> {
+        // SAFETY: plain libc calls on a fresh descriptor; ptsname_r writes
+        // at most `len` bytes into our buffer.
+        let (master_fd, slave_path) = unsafe {
+            let fd = posix_openpt(O_RDWR | O_NOCTTY);
+            check(fd, "posix_openpt")?;
+            check(grantpt(fd), "grantpt")?;
+            check(unlockpt(fd), "unlockpt")?;
+            let mut buf = [0 as c_char; 256];
+            check(ptsname_r(fd, buf.as_mut_ptr(), buf.len()), "ptsname_r")?;
+            let path = CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned();
+            (fd, path)
+        };
+        // SAFETY: we own the descriptor from here on.
+        let master = unsafe { File::from_raw_fd(master_fd) };
+        set_size(master_fd, cols, rows);
+        // O_NOCTTY matters: an app launched detached (the desktop's
+        // launcher runs it in a session of its own with no terminal) is a
+        // session leader, and a session leader that opens a tty without
+        // it adopts the tty as its controlling terminal. The shell's
+        // setsid + TIOCSCTTY then fails, the parent hangs up on itself
+        // when the fds close, and the whole app dies of SIGHUP.
+        let slave = OpenOptions::new().read(true).write(true).custom_flags(O_NOCTTY).open(&slave_path)?;
+        let shell = std::env::var("SHELL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/bin/sh".to_owned());
+        let mut cmd = Command::new(&shell);
+        cmd.env("TERM", "xterm-256color").env("COLORTERM", "truecolor").env("TERM_PROGRAM", "lntrn-code");
+        cmd.env_remove("LINES").env_remove("COLUMNS");
+        for (k, v) in env {
+            cmd.env(k, v);
         }
-
-        match unsafe { fork() }.map_err(|e| format!("fork: {e}"))? {
-            ForkResult::Child => {
-                setsid().ok();
-
-                let slave_fd = pty_pair.slave.as_raw_fd();
-                let master_fd = pty_pair.master.as_raw_fd();
-
-                close(master_fd).ok();
-
-                dup2(slave_fd, 0).ok();
-                dup2(slave_fd, 1).ok();
-                dup2(slave_fd, 2).ok();
-
-                if slave_fd > 2 {
-                    close(slave_fd).ok();
+        if let Some(d) = cwd.filter(|d| d.is_dir()) {
+            cmd.current_dir(d);
+        }
+        cmd.stdin(slave.try_clone()?).stdout(slave.try_clone()?).stderr(slave);
+        // SAFETY: only async-signal-safe calls between fork and exec.
+        unsafe {
+            cmd.pre_exec(|| {
+                if setsid() < 0 {
+                    return Err(io::Error::last_os_error());
                 }
-
-                // Set controlling terminal — required for sudo, ssh, etc.
-                unsafe { libc::ioctl(0, libc::TIOCSCTTY, 0) };
-
-                if let Some(dir) = cwd {
-                    std::env::set_current_dir(dir).ok();
+                if ioctl(0, TIOCSCTTY, 0) < 0 {
+                    return Err(io::Error::last_os_error());
                 }
-
-                std::env::set_var("TERM", "xterm-256color");
-                std::env::set_var("TERM_PROGRAM", "Lantern");
-                std::env::set_var("TERM_PROGRAM_VERSION", "0.1.0");
-
-                // Clean up inherited env vars that confuse child tools
-                // (e.g. Claude Code thinks it's already in a session)
-                std::env::remove_var("CLAUDECODE");
-                std::env::remove_var("CLAUDE_CODE_ENTRYPOINT");
-
-                let shell_cstr = std::ffi::CString::new(shell).expect("Invalid shell path");
-                execvp(&shell_cstr, &[&shell_cstr]).ok();
-
-                std::process::exit(1);
-            }
-            ForkResult::Parent { child } => {
-                drop(pty_pair.slave);
-
-                let reader_fd =
-                    dup(pty_pair.master.as_raw_fd()).map_err(|e| format!("dup: {e}"))?;
-                let (tx, rx) = mpsc::channel();
-                std::thread::spawn(move || {
-                    let mut read_buf = vec![0u8; 4096];
-
-                    loop {
-                        let mut poll_fd = libc::pollfd {
-                            fd: reader_fd.as_raw_fd(),
-                            events: libc::POLLIN | libc::POLLHUP | libc::POLLERR,
-                            revents: 0,
-                        };
-
-                        let poll_result = unsafe { libc::poll(&mut poll_fd, 1, -1) };
-                        if poll_result <= 0 {
+                Ok(())
+            });
+        }
+        let child = cmd.spawn()?;
+        let mut reader = master.try_clone()?;
+        let (tx, rx) = sync_channel::<Vec<u8>>(QUEUE_CHUNKS);
+        let eof = Arc::new(AtomicBool::new(false));
+        let eof_flag = Arc::clone(&eof);
+        thread::Builder::new().name("pty-read".into()).spawn(move || {
+            let mut buf = vec![0u8; 16 * 1024];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if tx.send(buf[..n].to_vec()).is_err() {
                             break;
                         }
-
-                        if poll_fd.revents & (libc::POLLHUP | libc::POLLERR) != 0 {
-                            break;
-                        }
-
-                        let mut file = unsafe { std::fs::File::from_raw_fd(reader_fd.as_raw_fd()) };
-                        let result = file.read(&mut read_buf);
-                        std::mem::forget(file);
-
-                        match result {
-                            Ok(0) => break,
-                            Ok(n) => {
-                                if tx.send(read_buf[..n].to_vec()).is_err() {
-                                    break;
-                                }
-                                repaint();
-                            }
-                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
-                            Err(_) => break,
+                        if let Some(w) = &waker {
+                            w.wake();
                         }
                     }
-
-                    close(reader_fd).ok();
-                });
-
-                let master_fd = pty_pair.master.as_raw_fd();
-                let flags = nix::fcntl::fcntl(master_fd, nix::fcntl::FcntlArg::F_GETFL)
-                    .map_err(|e| format!("fcntl F_GETFL: {e}"))?;
-
-                let mut oflags = nix::fcntl::OFlag::from_bits_truncate(flags);
-                oflags.insert(nix::fcntl::OFlag::O_NONBLOCK);
-                nix::fcntl::fcntl(master_fd, nix::fcntl::FcntlArg::F_SETFL(oflags))
-                    .map_err(|e| format!("fcntl F_SETFL: {e}"))?;
-
-                Ok(Self {
-                    master: pty_pair.master,
-                    child_pid: child,
-                    alive: true,
-                    rx,
-                    buffered: Vec::new(),
-                })
-            }
-        }
-    }
-
-    pub fn read(&mut self, max_bytes: usize) -> Option<(Vec<u8>, bool)> {
-        take_buffered_chunk(&mut self.buffered, &self.rx, max_bytes, &mut self.alive)
-    }
-
-    pub fn write(&self, data: &[u8]) {
-        use std::io::Write;
-        let fd = self.master.as_raw_fd();
-        let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
-        file.write_all(data).ok();
-        std::mem::forget(file);
-    }
-
-    pub fn cleanup(&mut self) {
-        if self.alive {
-            self.alive = false;
-            self.graceful_kill();
-        }
-    }
-
-    /// Send SIGHUP first so the shell can flush history, then SIGKILL as fallback.
-    fn graceful_kill(&self) {
-        let pid = self.child_pid;
-        let _ = nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGHUP);
-        match nix::sys::wait::waitpid(pid, Some(nix::sys::wait::WaitPidFlag::WNOHANG)) {
-            Ok(nix::sys::wait::WaitStatus::StillAlive) | Err(_) => {
-                std::thread::sleep(std::time::Duration::from_millis(100));
-                if matches!(
-                    nix::sys::wait::waitpid(pid, Some(nix::sys::wait::WaitPidFlag::WNOHANG)),
-                    Ok(nix::sys::wait::WaitStatus::StillAlive) | Err(_)
-                ) {
-                    let _ = nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGKILL);
-                    let _ = nix::sys::wait::waitpid(pid, None);
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                    Err(_) => break,
                 }
             }
-            Ok(_) => {} // Already exited
-        }
+            eof_flag.store(true, Ordering::Release);
+            if let Some(w) = &waker {
+                w.wake();
+            }
+        })?;
+        let mut writer = master.try_clone()?;
+        let (tx_in, rx_in) = sync_channel::<Vec<u8>>(QUEUE_CHUNKS);
+        thread::Builder::new().name("pty-write".into()).spawn(move || {
+            while let Ok(bytes) = rx_in.recv() {
+                if writer.write_all(&bytes).is_err() {
+                    break;
+                }
+            }
+        })?;
+        Ok(Self { master, child, rx, tx_in, eof, exited: None })
     }
 
-    /// Get the current working directory of the child process via /proc.
-    pub fn cwd(&self) -> Option<String> {
-        let path = format!("/proc/{}/cwd", self.child_pid);
-        std::fs::read_link(path)
-            .ok()
-            .map(|p| p.to_string_lossy().into_owned())
+    /// Move everything the child wrote since the last call into `out`.
+    pub fn drain(&mut self, out: &mut Vec<u8>) -> bool {
+        let mut any = false;
+        while let Ok(chunk) = self.rx.try_recv() {
+            out.extend_from_slice(&chunk);
+            any = true;
+        }
+        any
+    }
+
+    /// The shell's process id.
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
+    /// Send keystrokes (or a paste) to the child.
+    pub fn write(&self, bytes: &[u8]) {
+        if !bytes.is_empty() {
+            let _ = self.tx_in.try_send(bytes.to_vec());
+        }
     }
 
     pub fn resize(&self, cols: u16, rows: u16) {
-        let ws = nix::pty::Winsize {
-            ws_row: rows,
-            ws_col: cols,
-            ws_xpixel: 0,
-            ws_ypixel: 0,
-        };
-        unsafe {
-            libc::ioctl(
-                self.master.as_raw_fd(),
-                libc::TIOCSWINSZ,
-                &ws as *const nix::pty::Winsize,
-            );
-        }
-    }
-}
-
-fn take_buffered_chunk(
-    buffered: &mut Vec<u8>,
-    rx: &Receiver<Vec<u8>>,
-    max_bytes: usize,
-    alive: &mut bool,
-) -> Option<(Vec<u8>, bool)> {
-    if max_bytes == 0 {
-        return None;
+        set_size(self.master.as_raw_fd(), cols, rows);
     }
 
-    while buffered.len() < max_bytes {
-        match rx.try_recv() {
-            Ok(chunk) => buffered.extend_from_slice(&chunk),
-            Err(TryRecvError::Empty) => break,
-            Err(TryRecvError::Disconnected) => {
-                *alive = false;
-                break;
+    /// The exit code once the shell is gone. After the output ended the
+    /// wait is a real one, so the code is known the moment it shows.
+    pub fn poll_exit(&mut self) -> Option<i32> {
+        if self.exited.is_none() {
+            let status = if self.eof.load(Ordering::Acquire) { self.child.wait().ok() } else { self.child.try_wait().ok().flatten() };
+            if let Some(status) = status {
+                self.exited = Some(status.code().unwrap_or(-1));
             }
         }
+        self.exited
     }
 
-    // Probe one more queued chunk when we exactly hit the budget so callers
-    // can tell there is more output ready to drain next frame.
-    if buffered.len() == max_bytes {
-        match rx.try_recv() {
-            Ok(chunk) => buffered.extend_from_slice(&chunk),
-            Err(TryRecvError::Empty) => {}
-            Err(TryRecvError::Disconnected) => {
-                *alive = false;
-            }
+    pub fn kill(&mut self) {
+        if self.exited.is_none() {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            self.exited = Some(-1);
         }
-    }
-
-    if buffered.is_empty() && !*alive {
-        return None;
-    }
-
-    if buffered.is_empty() {
-        return None;
-    }
-
-    let data = if buffered.len() <= max_bytes {
-        std::mem::take(buffered)
-    } else {
-        let remaining = buffered.split_off(max_bytes);
-        std::mem::replace(buffered, remaining)
-    };
-
-    let has_more = !buffered.is_empty();
-    Some((data, has_more))
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::mpsc;
-
-    use super::take_buffered_chunk;
-
-    #[test]
-    fn read_preserves_unconsumed_output_between_calls() {
-        let (tx, rx) = mpsc::channel();
-        tx.send(vec![b'a'; 4]).unwrap();
-        tx.send(vec![b'b'; 4]).unwrap();
-        drop(tx);
-
-        let mut buffered = Vec::new();
-        let mut alive = true;
-
-        let (first, has_more) = take_buffered_chunk(&mut buffered, &rx, 4, &mut alive).unwrap();
-        assert_eq!(first, vec![b'a'; 4]);
-        assert!(has_more);
-        assert_eq!(buffered, vec![b'b'; 4]);
-
-        let (second, has_more) = take_buffered_chunk(&mut buffered, &rx, 4, &mut alive).unwrap();
-        assert_eq!(second, vec![b'b'; 4]);
-        assert!(!has_more);
-        assert!(!alive);
-    }
-
-    #[test]
-    fn read_marks_more_output_when_budget_boundary_is_exact() {
-        let (tx, rx) = mpsc::channel();
-        tx.send(vec![1; 4]).unwrap();
-        tx.send(vec![2; 4]).unwrap();
-
-        let mut buffered = Vec::new();
-        let mut alive = true;
-
-        let (first, has_more) = take_buffered_chunk(&mut buffered, &rx, 4, &mut alive).unwrap();
-        assert_eq!(first, vec![1; 4]);
-        assert!(has_more);
-        assert_eq!(buffered, vec![2; 4]);
-        assert!(alive);
     }
 }
 
 impl Drop for Pty {
     fn drop(&mut self) {
-        self.graceful_kill();
+        self.kill();
     }
 }

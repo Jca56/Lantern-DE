@@ -1,84 +1,361 @@
-//! Top-level actions invoked by the menu, keyboard, and mouse handlers —
-//! file dialogs and clipboard glue.
+//! What each action does: the file operations, the editing commands that
+//! reach the focused document from a menu or key, the dialogs, and the
+//! context menu of a file in the tree.
 
-use crate::editor::Editor;
-use crate::TextHandler;
+use std::path::{Path, PathBuf};
 
-/// Open a file via the lntrn-file-manager picker. Loads it into a new tab.
-pub fn open_file_dialog(handler: &mut TextHandler) {
-    let output = std::process::Command::new("lntrn-file-manager")
-        .args(["--pick", "--title", "Open File"])
-        .output();
-    if let Ok(out) = output {
-        if out.status.success() {
-            let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !path.is_empty() {
-                let mut e = Editor::new();
-                e.tab_id = handler.next_tab_id;
-                handler.next_tab_id += 1;
-                let _ = e.load_file(std::path::PathBuf::from(path));
-                handler.tabs.push(e);
-                handler.active_tab = handler.tabs.len() - 1;
-            }
-        }
+use lntrn_math::Vec2;
+use lntrn_props::Value;
+use lntrn_ui::{Action, ContextMenu, Dialog, HostCx, Item, ShellRequest};
+
+use crate::app::{App, ClipOp, Editor};
+use crate::buffer::Pos;
+use crate::commands::*;
+use crate::editor::ops;
+use crate::syntax::Language;
+
+fn arg_str(action: &Action, name: &str) -> Option<String> {
+    match action.arg(name) {
+        Some(Value::Str(s)) => Some(s.clone()),
+        _ => None,
     }
 }
 
-/// Save the active editor. If no file path is set, prompt for one via the
-/// file manager.
-pub fn save_file_dialog(handler: &mut TextHandler) {
-    if handler.editor_mut().file_path.is_some() {
-        let _ = handler.editor_mut().save_file();
-        crate::lsp::glue::notify_did_save(handler);
-        return;
+fn arg_i64(action: &Action, name: &str) -> Option<i64> {
+    match action.arg(name) {
+        Some(Value::I64(n)) => Some(*n),
+        _ => None,
     }
-    save_file_as_dialog(handler);
 }
 
-/// Always prompt for a destination, then save. Used by the Save As menu.
-pub fn save_file_as_dialog(handler: &mut TextHandler) {
-    let title = if handler.editor().file_path.is_some() {
-        "Save As"
+/// The folder a picked path means: itself, its parent for `.` or a file.
+fn folder_of(path: &Path) -> PathBuf {
+    if path.is_dir() {
+        return path.to_path_buf();
+    }
+    path.parent().map(Path::to_path_buf).unwrap_or_else(|| path.to_path_buf())
+}
+
+/// The right-click menu of a file or folder in the tree.
+pub fn file_menu(path: &Path, is_dir: bool, at: Vec2) -> ContextMenu {
+    let p = |id: &str| Action::new(id).with("path", Value::Str(path.display().to_string()));
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut items = Vec::new();
+    if is_dir {
+        items.push(Item::action("New File…", p(FILE_NEW)));
+        items.push(Item::action("New Folder…", p(FOLDER_NEW)));
+        items.push(Item::action("Terminal Here", p(TERMINAL_HERE)));
+        items.push(Item::Separator);
     } else {
-        "Save File"
-    };
-    let output = std::process::Command::new("lntrn-file-manager")
-        .args(["--pick-save", "--title", title])
-        .output();
-    if let Ok(out) = output {
-        if out.status.success() {
-            let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !path.is_empty() {
-                handler.editor_mut().file_path = Some(std::path::PathBuf::from(path));
-                let _ = handler.editor_mut().save_file();
-                // Treat as a fresh open so the right LSP picks it up.
-                handler.editor_mut().lsp_just_opened = true;
+        items.push(Item::action("Open", p(OPENED)));
+        items.push(Item::Separator);
+    }
+    items.push(Item::action("Rename…", p(RENAME)));
+    items.push(Item::action("Delete…", p(DELETE_ASK)));
+    items.push(Item::Separator);
+    items.push(Item::action("Copy Path", p(COPY_PATH)));
+    ContextMenu::new(&name, at).tab("File", items)
+}
+
+impl App {
+    fn dialog_with_field(&mut self, title: &str, body: &str, verb: &str, action: &str, key: &str, cx: &mut HostCx) {
+        let dialog = Dialog::new(title, body).button("Cancel", None).button(verb, Some(Action::new(action))).default_button(1).content(key);
+        cx.request(ShellRequest::Dialog(dialog));
+    }
+
+    fn save_doc(&mut self, cx: &mut HostCx) {
+        let trim = self.settings.trim_on_save;
+        let now = cx_now();
+        let Some(doc) = self.focus_doc_mut() else {
+            return;
+        };
+        if doc.path.is_none() {
+            self.run_action(&Action::new(SAVE_AS), cx);
+            return;
+        }
+        match doc.save(trim, now) {
+            Ok(()) => {
+                let msg = format!("Saved {}", doc.title);
+                self.session_dirty = true;
+                cx.toast(&msg);
+            }
+            Err(e) => cx.request(ShellRequest::Dialog(Dialog::notice("Could not save", &e.to_string()))),
+        }
+    }
+
+    pub fn run_action(&mut self, action: &Action, cx: &mut HostCx) {
+        let path = || arg_str(action, "path").map(PathBuf::from).unwrap_or_default();
+        let now = cx_now();
+        match action.id.as_str() {
+            NEW => {
+                let id = self.new_untitled();
+                self.pending_docs.push(id);
+            }
+            OPEN => {
+                let suggest = self.focus_doc().and_then(|d| d.path.as_ref()).and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_else(|| self.base_dir()).join(" ");
+                cx.request(ShellRequest::PathDialog { action: Action::new(OPENED), save: false, suggest: suggest.display().to_string() });
+            }
+            OPENED => {
+                let p = path();
+                if p.is_dir() {
+                    self.pending_folder = Some(p);
+                } else {
+                    self.pending_paths.push(p);
+                }
+            }
+            OPEN_FOLDER => {
+                let suggest = self.base_dir();
+                cx.request(ShellRequest::FolderDialog { action: Action::new(FOLDER_OPENED), suggest: suggest.display().to_string() });
+            }
+            FOLDER_OPENED => self.pending_folder = Some(folder_of(&path())),
+            SAVE => self.save_doc(cx),
+            SAVE_AS => {
+                if let Some(d) = self.focus_doc() {
+                    let suggest = d.path.clone().unwrap_or_else(|| self.base_dir().join(&d.title));
+                    cx.request(ShellRequest::PathDialog { action: Action::new(SAVED_AS), save: true, suggest: suggest.display().to_string() });
+                }
+            }
+            SAVED_AS => {
+                let p = path();
+                if let Some(doc) = self.focus_doc_mut() {
+                    doc.set_path(p);
+                }
+                self.save_doc(cx);
+                if let Some(p) = self.project.as_mut() {
+                    p.refresh();
+                }
+            }
+            CLOSE_TAB => {
+                if let Some(d) = self.focus_doc() {
+                    let id = d.id;
+                    if d.is_dirty() {
+                        let dialog = Dialog::new("Unsaved changes", &format!("**{}** has unsaved changes.", d.title))
+                            .button("Cancel", None)
+                            .button("Don't Save", Some(Action::new(CLOSE_FORCE).with("doc", Value::I64(id.0 as i64))))
+                            .button("Save", Some(Action::new(SAVE_CLOSE).with("doc", Value::I64(id.0 as i64))))
+                            .default_button(2);
+                        cx.request(ShellRequest::Dialog(dialog));
+                    } else {
+                        self.pending_close.push(id);
+                    }
+                }
+            }
+            CLOSE_FORCE => {
+                if let Some(n) = arg_i64(action, "doc") {
+                    self.pending_close.push(crate::doc::DocId(n as u64));
+                }
+            }
+            SAVE_CLOSE => {
+                if let Some(n) = arg_i64(action, "doc") {
+                    let id = crate::doc::DocId(n as u64);
+                    self.focus_doc = Some(id);
+                    self.save_doc(cx);
+                    if self.doc(id).is_some_and(|d| !d.is_dirty()) {
+                        self.pending_close.push(id);
+                    }
+                }
+            }
+            // Closing the main window asks about unsaved work on the way.
+            QUIT => cx.request(ShellRequest::CloseWindow),
+            UNDO => {
+                if let Some(d) = self.focus_doc_mut() {
+                    d.undo(now);
+                }
+            }
+            REDO => {
+                if let Some(d) = self.focus_doc_mut() {
+                    d.redo(now);
+                }
+            }
+            CUT => self.pending_clip = Some(ClipOp::Copy { cut: true }),
+            COPY => self.pending_clip = Some(ClipOp::Copy { cut: false }),
+            PASTE => self.pending_clip = Some(ClipOp::Paste),
+            SELECT_ALL => {
+                if let Some(d) = self.focus_doc_mut() {
+                    d.select_all();
+                }
+            }
+            FIND | REPLACE => {
+                let replace = action.id == REPLACE;
+                let App { finder, docs, focus_doc, .. } = self;
+                if let Some(d) = focus_doc.and_then(|id| docs.iter().find(|d| d.id == id)) {
+                    finder.show(d, replace);
+                }
+            }
+            FIND_NEXT | FIND_PREV => {
+                let forward = action.id == FIND_NEXT;
+                let App { finder, docs, focus_doc, .. } = self;
+                if let Some(d) = focus_doc.and_then(|id| docs.iter_mut().find(|d| d.id == id)) {
+                    if !finder.open {
+                        finder.show(d, false);
+                    }
+                    finder.step(d, forward);
+                }
+            }
+            GOTO_LINE => {
+                if let Some((line, n)) = self.focus_doc().map(|d| (d.cursor.line + 1, d.buffer.line_count())) {
+                    self.dialog_text = line.to_string();
+                    self.dialog_with_field("Go to Line", &format!("1 to {n}"), "Go", GOTO_LINE_GO, "line", cx);
+                }
+            }
+            GOTO_LINE_GO => {
+                let line = self.dialog_text.trim().parse::<usize>().unwrap_or(1).max(1) - 1;
+                if let Some(d) = self.focus_doc_mut() {
+                    d.set_cursor(Pos::new(line, 0), false);
+                }
+                if let Some(a) = self.focus_area {
+                    self.pending_focus = Some(crate::editor::editor_id(a));
+                }
+            }
+            TOGGLE_COMMENT => {
+                if let Some(d) = self.focus_doc_mut() {
+                    ops::toggle_comment(d, now);
+                }
+            }
+            DUPLICATE_LINE => {
+                if let Some(d) = self.focus_doc_mut() {
+                    ops::duplicate_lines(d, now);
+                }
+            }
+            DELETE_LINE => {
+                if let Some(d) = self.focus_doc_mut() {
+                    ops::delete_lines(d, now);
+                }
+            }
+            NEXT_FILE => self.pending_cycle = Some(1),
+            PREV_FILE => self.pending_cycle = Some(-1),
+            SET_LANG => {
+                if let Some(i) = arg_i64(action, "lang").and_then(|i| Language::ALL.get(i as usize).copied())
+                    && let Some(d) = self.focus_doc_mut()
+                {
+                    d.set_lang(i);
+                }
+            }
+            SHOW_FILES => self.pending_show.push(Editor::Files),
+            SHOW_TERMINAL => self.pending_show.push(Editor::Terminal),
+            SHOW_PROBLEMS => self.pending_show.push(Editor::Problems),
+            NEW_TERMINAL => self.pending_new_terminal = Some(None),
+            SHOW_PREVIEW => self.pending_show.push(Editor::Preview),
+            SHOW_PREFS => self.pending_show.push(Editor::Preferences),
+            SHOW_KEYS => self.pending_show.push(Editor::Keys),
+            ABOUT => cx.request(ShellRequest::Dialog(Dialog::notice(
+                "lntrn-code",
+                "The Lantern DE code editor, on **Lantern UI 2**.\n\nRust, `wgpu` and `winit`; everything else is ours: the text engine, the widgets, the syntax highlighting, the terminal.\n\n- Ctrl+P: command palette and quick open\n- Ctrl+B: files · Ctrl+`: terminal\n- Ctrl+F / Ctrl+H: find and replace\n- Split any area from the ⋮ menu in its header",
+            ))),
+            FILE_NEW | FOLDER_NEW => {
+                let dir = path();
+                self.dialog_target = Some(dir.clone());
+                self.dialog_text.clear();
+                let folder = action.id == FOLDER_NEW;
+                let title = if folder { "New Folder" } else { "New File" };
+                let go = if folder { FOLDER_NEW_GO } else { FILE_NEW_GO };
+                self.dialog_with_field(title, &format!("in `{}`", dir.display()), "Create", go, "text", cx);
+            }
+            FILE_NEW_GO | FOLDER_NEW_GO => {
+                let name = self.dialog_text.trim().to_owned();
+                if let Some(dir) = self.dialog_target.take()
+                    && !name.is_empty()
+                {
+                    let target = dir.join(&name);
+                    let result = if action.id == FOLDER_NEW_GO {
+                        std::fs::create_dir_all(&target)
+                    } else if target.exists() {
+                        Ok(())
+                    } else {
+                        target.parent().map(std::fs::create_dir_all).unwrap_or(Ok(())).and_then(|()| std::fs::write(&target, ""))
+                    };
+                    match result {
+                        Ok(()) => {
+                            if action.id == FILE_NEW_GO {
+                                self.pending_paths.push(target);
+                            }
+                        }
+                        Err(e) => cx.request(ShellRequest::Dialog(Dialog::notice("Could not create", &format!("{}\n{e}", target.display())))),
+                    }
+                    if let Some(p) = self.project.as_mut() {
+                        p.refresh();
+                    }
+                }
+            }
+            RENAME => {
+                let p = path();
+                self.dialog_text = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                self.dialog_target = Some(p);
+                self.dialog_with_field("Rename", "", "Rename", RENAME_GO, "text", cx);
+            }
+            RENAME_GO => {
+                let name = self.dialog_text.trim().to_owned();
+                if let Some(from) = self.dialog_target.take()
+                    && !name.is_empty()
+                    && let Some(parent) = from.parent()
+                {
+                    let to = parent.join(&name);
+                    match std::fs::rename(&from, &to) {
+                        Ok(()) => {
+                            for d in &mut self.docs {
+                                if d.path.as_deref() == Some(from.as_path()) {
+                                    d.set_path(to.clone());
+                                } else if let Some(rest) = d.path.as_ref().and_then(|p| p.strip_prefix(&from).ok()).map(Path::to_path_buf) {
+                                    d.set_path(to.join(rest));
+                                }
+                            }
+                            self.session_dirty = true;
+                        }
+                        Err(e) => cx.request(ShellRequest::Dialog(Dialog::notice("Could not rename", &e.to_string()))),
+                    }
+                    if let Some(p) = self.project.as_mut() {
+                        p.refresh();
+                    }
+                }
+            }
+            DELETE_ASK => {
+                let p = path();
+                let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                let what = if p.is_dir() { "folder and everything in it" } else { "file" };
+                cx.request(ShellRequest::Dialog(Dialog::confirm("Delete", &format!("Delete the {what} **{name}**? This cannot be undone."), "Delete", Action::new(DELETE).with("path", Value::Str(p.display().to_string())))));
+            }
+            DELETE => {
+                let p = path();
+                let result = if p.is_dir() { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) };
+                match result {
+                    Ok(()) => {
+                        let gone: Vec<_> = self.docs.iter().filter(|d| d.path.as_ref().is_some_and(|dp| dp == &p || dp.starts_with(&p))).map(|d| d.id).collect();
+                        self.pending_close.extend(gone);
+                    }
+                    Err(e) => cx.request(ShellRequest::Dialog(Dialog::notice("Could not delete", &e.to_string()))),
+                }
+                if let Some(pr) = self.project.as_mut() {
+                    pr.refresh();
+                }
+            }
+            COPY_PATH => {
+                self.pending_clip = Some(ClipOp::Set(path().display().to_string()));
+                cx.toast("Path copied");
+            }
+            TERMINAL_HERE => self.pending_new_terminal = Some(Some(path())),
+            IDE_ACCEPT | IDE_REJECT => {
+                if let Some(id) = self.focus_diff {
+                    self.pending_diff_resolve.push((id, action.id == IDE_ACCEPT));
+                }
+            }
+            IDE_SEND => self.pending_ide_send = true,
+            other => {
+                if let Some(p) = other.strip_prefix(OPEN_PREFIX) {
+                    self.pending_paths.push(PathBuf::from(p));
+                } else {
+                    cx.toast(&format!("Unknown action {other}"));
+                }
             }
         }
+        cx.rebuild();
     }
 }
 
-pub fn do_copy(handler: &mut TextHandler) {
-    if let Some(text) = handler.editor().selected_text() {
-        if let Some(cb) = &handler.clipboard {
-            cb.set_text(&text);
-        }
-    }
-}
-
-pub fn do_cut(handler: &mut TextHandler) {
-    if let Some(text) = handler.editor().selected_text() {
-        if let Some(cb) = &handler.clipboard {
-            cb.set_text(&text);
-        }
-        handler.editor_mut().delete_selection();
-    }
-}
-
-pub fn do_paste(handler: &mut TextHandler) {
-    if let Some(cb) = &handler.clipboard {
-        if let Some(text) = cb.get_text() {
-            handler.editor_mut().insert_str(&text);
-        }
-    }
+/// The frame clock is not in `HostCx`; actions stamp edits with wall time
+/// since the app started, which is what the widgets use too.
+fn cx_now() -> f64 {
+    use std::sync::OnceLock;
+    use std::time::Instant;
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_secs_f64()
 }

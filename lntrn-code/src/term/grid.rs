@@ -1,536 +1,587 @@
-use std::collections::HashMap;
+//! The terminal screen: a grid of styled cells, a scrollback of the rows
+//! that left the top, the alternate screen, a scroll region, tab stops,
+//! and the cursor. Erasing, inserting and the alternate screen live in
+//! `grid_edit.rs`; what the escape sequences do lives in [`super::csi`].
 
-use super::performer::Performer;
+use std::collections::VecDeque;
 
-// ── Framework-agnostic color type ───────────────────────────────────────────
+use crate::charwidth::char_cells;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Color8 {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
-    pub a: u8,
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TermColor {
+    #[default]
+    Default,
+    Indexed(u8),
+    Rgb(u8, u8, u8),
 }
 
-impl Color8 {
-    pub const fn from_rgb(r: u8, g: u8, b: u8) -> Self {
-        Self { r, g, b, a: 255 }
-    }
+pub const BOLD: u8 = 1;
+pub const ITALIC: u8 = 2;
+pub const UNDERLINE: u8 = 4;
+pub const INVERSE: u8 = 8;
+pub const DIM: u8 = 16;
+pub const STRIKE: u8 = 32;
+pub const HIDDEN: u8 = 64;
 
-    pub const fn from_rgba(r: u8, g: u8, b: u8, a: u8) -> Self {
-        Self { r, g, b, a }
-    }
-
-    pub const TRANSPARENT: Self = Self {
-        r: 0,
-        g: 0,
-        b: 0,
-        a: 0,
-    };
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Style {
+    pub fg: TermColor,
+    pub bg: TermColor,
+    pub flags: u8,
 }
 
-// ── ANSI color palette ──────────────────────────────────────────────────────
-
-pub const ANSI_COLORS: [Color8; 16] = [
-    Color8::from_rgb(0, 0, 0),       // 0  Black
-    Color8::from_rgb(205, 49, 49),   // 1  Red
-    Color8::from_rgb(13, 188, 121),  // 2  Green
-    Color8::from_rgb(229, 229, 16),  // 3  Yellow
-    Color8::from_rgb(80, 200, 195),  // 4  Blue
-    Color8::from_rgb(188, 63, 188),  // 5  Magenta
-    Color8::from_rgb(17, 168, 205),  // 6  Cyan
-    Color8::from_rgb(229, 229, 229), // 7  White
-    Color8::from_rgb(102, 102, 102), // 8  Bright Black
-    Color8::from_rgb(241, 76, 76),   // 9  Bright Red
-    Color8::from_rgb(35, 209, 139),  // 10 Bright Green
-    Color8::from_rgb(245, 245, 67),  // 11 Bright Yellow
-    Color8::from_rgb(120, 225, 215), // 12 Bright Blue
-    Color8::from_rgb(214, 112, 214), // 13 Bright Magenta
-    Color8::from_rgb(41, 184, 219),  // 14 Bright Cyan
-    Color8::from_rgb(229, 229, 229), // 15 Bright White
-];
-
-// ── Terminal cell ───────────────────────────────────────────────────────────
-
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cell {
-    pub c: char,
-    pub fg: Color8,
-    pub bg: Color8,
-    pub bold: bool,
-    pub italic: bool,
-    pub underline: bool,
-    /// For wide characters: the first cell has `wide: Wide::Head`,
-    /// the continuation cell has `wide: Wide::Tail`.
-    /// Normal single-width characters have `wide: Wide::No`.
-    pub wide: Wide,
-    /// Index into TerminalState::hyperlinks, or 0 for no link.
-    pub hyperlink: u16,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Wide {
-    No,
-    Head,
-    Tail,
+    pub ch: char,
+    pub style: Style,
+    /// The first half of a two-cell character.
+    pub wide: bool,
+    /// The second half of one: drawn as nothing.
+    pub spacer: bool,
 }
 
 impl Default for Cell {
     fn default() -> Self {
-        Self {
-            c: ' ',
-            fg: Color8::from_rgb(236, 236, 236),
-            bg: Color8::TRANSPARENT,
-            bold: false,
-            italic: false,
-            underline: false,
-            wide: Wide::No,
-            hyperlink: 0,
-        }
+        Self { ch: ' ', style: Style::default(), wide: false, spacer: false }
     }
 }
 
-// ── Terminal grid state ─────────────────────────────────────────────────────
+impl Cell {
+    pub(super) fn blank(style: Style) -> Self {
+        Self { ch: ' ', style: Style { fg: TermColor::Default, bg: style.bg, flags: 0 }, wide: false, spacer: false }
+    }
+}
 
-pub struct TerminalState {
+pub type Row = Vec<Cell>;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Cursor {
+    pub x: usize,
+    pub y: usize,
+}
+
+/// The DEC special graphics set (`ESC ( 0`), for box drawing.
+fn graphics(c: char) -> char {
+    match c {
+        'j' => '┘',
+        'k' => '┐',
+        'l' => '┌',
+        'm' => '└',
+        'n' => '┼',
+        'q' => '─',
+        't' => '├',
+        'u' => '┤',
+        'v' => '┴',
+        'w' => '┬',
+        'x' => '│',
+        'a' => '▒',
+        '`' => '◆',
+        '~' => '·',
+        'f' => '°',
+        'g' => '±',
+        'o' => '⎺',
+        'p' => '⎻',
+        'r' => '⎼',
+        's' => '⎽',
+        'y' => '≤',
+        'z' => '≥',
+        '{' => 'π',
+        '|' => '≠',
+        '}' => '£',
+        _ => c,
+    }
+}
+
+pub struct Grid {
     pub cols: usize,
     pub rows: usize,
-    pub grid: Vec<Vec<Cell>>,
-    pub cursor_row: usize,
-    pub cursor_col: usize,
-    pub scrollback: Vec<Vec<Cell>>,
-    pub max_scrollback: usize,
-    pub scroll_offset: usize,
-
-    // Theme-aware default colors (updated on theme switch)
-    pub default_fg: Color8,
-    pub default_bg: Color8,
-    pub default_bold: bool,
-
-    // Current text attributes
-    pub attr_fg: Color8,
-    pub attr_bg: Color8,
-    pub attr_bold: bool,
-    pub attr_italic: bool,
-    pub attr_underline: bool,
-    pub attr_reverse: bool,
-
-    // Scroll region (top, bottom) — inclusive, 0-indexed
-    pub scroll_top: usize,
-    pub scroll_bottom: usize,
-
-    // Saved cursor position (CSI s / ESC 7)
-    pub saved_cursor: Option<(usize, usize)>,
-
-    // DEC private modes
-    pub cursor_hidden: bool,      // mode 25
-    pub application_cursor: bool, // mode 1
-
-    // Cursor shape (DECSCUSR): 0/1=blinking block, 2=steady block,
-    // 3=blinking underline, 4=steady underline, 5=blinking beam, 6=steady beam
-    pub cursor_shape: u8,
-
-    // Title set by OSC 0/2
-    pub title: Option<String>,
-
-    // Working directory reported by OSC 7
-    pub osc7_cwd: Option<String>,
-
-    // Alternate screen buffer
-    pub alt_grid: Option<Vec<Vec<Cell>>>,
-    pub alt_cursor: Option<(usize, usize)>,
-
-    // Responses to write back to the PTY (DA, DSR, etc.)
-    pub pending_responses: Vec<Vec<u8>>,
-
-    // BEL (0x07) received — app should fire a desktop notification
+    pub(super) lines: Vec<Row>,
+    /// The main screen and its cursor while the alternate one shows.
+    pub(super) saved_main: Option<(Vec<Row>, Cursor)>,
+    pub scrollback: VecDeque<Row>,
+    pub(super) scrollback_cap: usize,
+    pub cursor: Cursor,
+    pub(super) saved_cursor: (Cursor, Style),
+    pub pen: Style,
+    /// Inclusive scroll region.
+    pub(super) top: usize,
+    pub(super) bottom: usize,
+    tabs: Vec<bool>,
+    pub cursor_visible: bool,
+    pub app_cursor: bool,
+    pub bracketed_paste: bool,
+    pub origin_mode: bool,
+    pub autowrap: bool,
+    pub insert_mode: bool,
+    pub mouse_reporting: bool,
+    /// Mouse reports in the SGR form (`CSI < b;x;y M`), else X10 bytes.
+    pub mouse_sgr: bool,
+    pub graphics_charset: bool,
+    pub(super) pending_wrap: bool,
+    pub title: String,
+    /// Bytes to send back to the child (cursor position reports, DA).
+    pub replies: Vec<u8>,
+    /// Lines the view is scrolled up into the scrollback.
+    pub view_offset: usize,
+    /// Rows that fell off the front of the scrollback, so a row keeps its
+    /// absolute number (see [`Grid::abs_row`]) while output scrolls.
+    pub scrolled_off: u64,
     pub bell: bool,
-
-    // OSC 99 (Kitty) desktop notifications — accumulator and queue
-    pub osc99_title: String,
-    pub osc99_body: String,
-    pub pending_notifications: Vec<(String, String)>, // (title, body)
-
-    // Text selection — stored in ABSOLUTE line coordinates so the highlight
-    // follows the text when the user scrolls the scrollback. Absolute row 0
-    // is the oldest line in scrollback; the live grid starts at
-    // `scrollback.len()`. Use `set_selection_anchor`/`set_selection_end` to
-    // store, and `is_selected` for queries from visible-row code.
-    pub selection_anchor: Option<(usize, usize)>, // (absolute_row, col)
-    pub selection_end: Option<(usize, usize)>,    // (absolute_row, col)
-
-    // Deferred line-wrap flag (standard terminal "pending wrap" / "wrap_next").
-    // When a character fills the last column the cursor stays at cols-1 and this
-    // flag is set. The *next* printable character triggers the actual wrap.
-    pub wrap_next: bool,
-
-    // Synchronized output (Mode 2026) — when true, suppress rendering until
-    // the application sends CSI ? 2026 l to end the synchronized update.
-    pub sync_update: bool,
-
-    // OSC 8 hyperlinks — registry of URL strings keyed by u16 ID.
-    // ID 0 means "no link". Active hyperlink is applied to new cells.
-    pub hyperlinks: HashMap<u16, String>,
-    pub active_hyperlink: u16,
-    pub hyperlink_next_id: u16,
-
-    // VTE parser
-    parser: vte::Parser,
 }
 
-impl TerminalState {
-    pub fn new(cols: usize, rows: usize) -> Self {
-        let grid = vec![vec![Cell::default(); cols]; rows];
-        Self {
+impl Grid {
+    pub fn new(cols: usize, rows: usize, scrollback_cap: usize) -> Self {
+        let (cols, rows) = (cols.max(1), rows.max(1));
+        let mut g = Self {
             cols,
             rows,
-            grid,
-            cursor_row: 0,
-            cursor_col: 0,
-            scrollback: Vec::new(),
-            max_scrollback: 5000,
-            scroll_offset: 0,
-            default_fg: Cell::default().fg,
-            default_bg: Cell::default().bg,
-            default_bold: false,
-            attr_fg: Cell::default().fg,
-            attr_bg: Cell::default().bg,
-            attr_bold: false,
-            attr_italic: false,
-            attr_underline: false,
-            attr_reverse: false,
-            scroll_top: 0,
-            scroll_bottom: rows - 1,
-            saved_cursor: None,
-            cursor_hidden: false,
-            application_cursor: false,
-            cursor_shape: 0,
-            title: None,
-            osc7_cwd: None,
-            alt_grid: None,
-            alt_cursor: None,
-            pending_responses: Vec::new(),
+            lines: vec![vec![Cell::default(); cols]; rows],
+            saved_main: None,
+            scrollback: VecDeque::new(),
+            scrollback_cap,
+            cursor: Cursor::default(),
+            saved_cursor: (Cursor::default(), Style::default()),
+            pen: Style::default(),
+            top: 0,
+            bottom: rows - 1,
+            tabs: Vec::new(),
+            cursor_visible: true,
+            app_cursor: false,
+            bracketed_paste: false,
+            origin_mode: false,
+            autowrap: true,
+            insert_mode: false,
+            mouse_reporting: false,
+            mouse_sgr: false,
+            graphics_charset: false,
+            pending_wrap: false,
+            title: String::new(),
+            replies: Vec::new(),
+            view_offset: 0,
+            scrolled_off: 0,
             bell: false,
-            osc99_title: String::new(),
-            osc99_body: String::new(),
-            pending_notifications: Vec::new(),
-            selection_anchor: None,
-            selection_end: None,
-            wrap_next: false,
-            sync_update: false,
-            hyperlinks: HashMap::new(),
-            active_hyperlink: 0,
-            hyperlink_next_id: 1,
-            parser: vte::Parser::new(),
+        };
+        g.reset_tabs();
+        g
+    }
+
+    /// The scroll region's first row.
+    pub fn top(&self) -> usize {
+        self.top
+    }
+
+    pub fn alt_screen(&self) -> bool {
+        self.saved_main.is_some()
+    }
+
+    fn reset_tabs(&mut self) {
+        self.tabs = (0..self.cols).map(|i| i % 8 == 0).collect();
+    }
+
+    /// The screen row `i`, or a scrollback row when the view is scrolled up.
+    pub fn viewed_row(&self, i: usize) -> &Row {
+        let back = self.view_offset.min(self.scrollback.len());
+        if i < back {
+            let idx = self.scrollback.len() - back + i;
+            &self.scrollback[idx]
+        } else {
+            &self.lines[(i - back).min(self.rows - 1)]
         }
     }
 
-    /// Process raw bytes from the PTY through the VTE parser.
-    pub fn process(&mut self, data: &[u8]) {
-        let mut parser = std::mem::replace(&mut self.parser, vte::Parser::new());
-
-        for &byte in data {
-            let mut performer = Performer { state: self };
-            parser.advance(&mut performer, byte);
-        }
-
-        self.parser = parser;
+    pub fn scroll_view(&mut self, by: isize) {
+        let max = self.scrollback.len() as isize;
+        self.view_offset = (self.view_offset as isize + by).clamp(0, max) as usize;
     }
 
-    /// Resize the terminal grid
-    pub fn resize(&mut self, new_cols: usize, new_rows: usize) {
-        if new_cols == self.cols && new_rows == self.rows {
+    /// The absolute number of viewed row `y`: stable while output scrolls,
+    /// so a selection survives new lines.
+    pub fn abs_row(&self, y: usize) -> u64 {
+        let back = self.view_offset.min(self.scrollback.len());
+        self.scrolled_off + (self.scrollback.len() - back + y) as u64
+    }
+
+    /// The row with absolute number `abs`, while it still exists.
+    pub fn row_by_abs(&self, abs: u64) -> Option<&Row> {
+        let i = usize::try_from(abs.checked_sub(self.scrolled_off)?).ok()?;
+        if i < self.scrollback.len() { Some(&self.scrollback[i]) } else { self.lines.get(i - self.scrollback.len()) }
+    }
+
+    /// The text between two cell boundaries `(absolute row, column)`, in
+    /// either order, rows joined by newlines and trailing blanks dropped.
+    pub fn text_between(&self, a: (u64, usize), b: (u64, usize)) -> String {
+        let (s, e) = if a <= b { (a, b) } else { (b, a) };
+        let mut out = String::new();
+        for abs in s.0..=e.0 {
+            if abs > s.0 {
+                out.push('\n');
+            }
+            let Some(row) = self.row_by_abs(abs) else {
+                continue;
+            };
+            let from = if abs == s.0 { s.1 } else { 0 };
+            let to = if abs == e.0 { e.1 } else { row.len() };
+            let line: String = row.iter().take(to.min(row.len())).skip(from).filter(|c| !c.spacer).map(|c| c.ch).collect();
+            out.push_str(line.trim_end());
+        }
+        out
+    }
+
+    pub fn row(&self, y: usize) -> &Row {
+        &self.lines[y.min(self.rows - 1)]
+    }
+
+    pub fn resize(&mut self, cols: usize, rows: usize) {
+        let (cols, rows) = (cols.max(1), rows.max(1));
+        if cols == self.cols && rows == self.rows {
             return;
         }
-
-        let is_alt = self.alt_grid.is_some();
-
-        // Growing: add blank rows at the bottom.
-        // Don't pull from scrollback — the shell will redraw via SIGWINCH and
-        // pulling old scrollback lines would desync cursor_row vs. what the
-        // shell expects, causing content to render in the wrong place.
-        while self.grid.len() < new_rows {
-            let def = self.default_cell();
-            self.grid.push(vec![def; new_cols]);
+        for row in self.lines.iter_mut().chain(self.scrollback.iter_mut()) {
+            row.resize(cols, Cell::default());
         }
-
-        // Shrinking: remove rows.
-        // Prefer removing from the bottom (empty rows below cursor) first,
-        // only pushing top rows to scrollback when the cursor would go out of bounds.
-        while self.grid.len() > new_rows {
-            if !is_alt {
-                if self.cursor_row + 1 < self.grid.len() {
-                    // There are rows below cursor — remove from bottom
-                    self.grid.pop();
-                } else {
-                    // Cursor is at/past last row — must remove from top
-                    let row = self.grid.remove(0);
-                    self.scrollback.push(row);
-                    self.cursor_row = self.cursor_row.saturating_sub(1);
+        if let Some((main, _)) = &mut self.saved_main {
+            for row in main.iter_mut() {
+                row.resize(cols, Cell::default());
+            }
+        }
+        // Rows lost at the bottom of a shrinking main screen go to the scrollback
+        // when the cursor sits below the new height.
+        while self.lines.len() > rows {
+            if self.cursor.y >= self.lines.len() - 1 || self.cursor.y >= rows {
+                let row = self.lines.remove(0);
+                if !self.alt_screen() {
+                    self.push_scrollback(row);
                 }
+                self.cursor.y = self.cursor.y.saturating_sub(1);
             } else {
-                self.grid.pop(); // alt screen: trim from bottom
+                self.lines.pop();
             }
         }
-
-        // Only extend rows that are too short — never truncate.
-        // Cells beyond new_cols are preserved (not rendered) so that
-        // growing the window back restores the original content.
-        let def_cell = self.default_cell();
-        for row in &mut self.grid {
-            if row.len() < new_cols {
-                row.resize(new_cols, def_cell.clone());
-            }
-        }
-
-        self.cols = new_cols;
-        self.rows = new_rows;
-        self.scroll_top = 0;
-        self.scroll_bottom = new_rows - 1;
-
-        if self.cursor_row >= new_rows {
-            self.cursor_row = new_rows - 1;
-        }
-        if self.cursor_col >= new_cols {
-            self.cursor_col = new_cols - 1;
-        }
-
-        while self.scrollback.len() > self.max_scrollback {
-            self.scrollback.remove(0);
-        }
-
-        // Snap to bottom — scroll_offset may now exceed scrollback after rows were pulled back in
-        self.scroll_offset = 0;
-    }
-
-    pub fn default_cell(&self) -> Cell {
-        Cell {
-            c: ' ',
-            fg: self.default_fg,
-            bg: Color8::TRANSPARENT,
-            bold: self.default_bold,
-            italic: false,
-            underline: false,
-            wide: Wide::No,
-            hyperlink: 0,
-        }
-    }
-
-    pub fn set_default_colors(&mut self, fg: Color8, bg: Color8, bold: bool) {
-        let old_fg = self.default_fg;
-        self.default_fg = fg;
-        self.default_bg = bg;
-        self.default_bold = bold;
-        self.attr_fg = fg;
-        self.attr_bg = bg;
-
-        for row in &mut self.grid {
-            for cell in row.iter_mut() {
-                if cell.fg == old_fg {
-                    cell.fg = fg;
-                }
-            }
-        }
-    }
-
-    pub fn scroll_up(&mut self) {
-        if self.scroll_top < self.scroll_bottom && self.scroll_bottom < self.rows {
-            let removed = self.grid.remove(self.scroll_top);
-            // Don't leak alt-screen content into the main scrollback buffer
-            if self.scroll_top == 0 && self.alt_grid.is_none() {
-                self.scrollback.push(removed);
-                if self.scrollback.len() > self.max_scrollback {
-                    self.scrollback.remove(0);
-                }
-            }
-            let def = self.default_cell();
-            self.grid.insert(self.scroll_bottom, vec![def; self.cols]);
-        }
-    }
-
-    pub fn scroll_down(&mut self) {
-        if self.scroll_top < self.scroll_bottom && self.scroll_bottom < self.rows {
-            self.grid.remove(self.scroll_bottom);
-            let def = self.default_cell();
-            self.grid.insert(self.scroll_top, vec![def; self.cols]);
-        }
-    }
-
-    pub fn enter_alt_screen(&mut self) {
-        let saved_grid = self.grid.clone();
-        self.alt_grid = Some(saved_grid);
-        self.alt_cursor = Some((self.cursor_row, self.cursor_col));
-        let def = self.default_cell();
-        self.grid = vec![vec![def; self.cols]; self.rows];
-        self.cursor_row = 0;
-        self.cursor_col = 0;
-    }
-
-    pub fn leave_alt_screen(&mut self) {
-        if let Some(grid) = self.alt_grid.take() {
-            self.grid = grid;
-        }
-        if let Some((r, c)) = self.alt_cursor.take() {
-            self.cursor_row = r;
-            self.cursor_col = c;
-        }
-    }
-
-    /// Get a display line accounting for scroll offset.
-    pub fn display_line(&self, row: usize) -> &[Cell] {
-        if self.scroll_offset == 0 {
-            if row < self.grid.len() {
-                return &self.grid[row];
-            }
-            return &[];
-        }
-
-        let scrollback_len = self.scrollback.len();
-        let scrollback_start = scrollback_len.saturating_sub(self.scroll_offset);
-        let line_idx = scrollback_start + row;
-
-        if line_idx < scrollback_len {
-            &self.scrollback[line_idx]
-        } else {
-            let grid_row = line_idx - scrollback_len;
-            if grid_row < self.grid.len() {
-                &self.grid[grid_row]
+        while self.lines.len() < rows {
+            if let Some(row) = self.scrollback.pop_back().filter(|_| !self.alt_screen()) {
+                self.lines.insert(0, row);
+                self.cursor.y += 1;
             } else {
-                &[]
+                self.lines.push(vec![Cell::default(); cols]);
             }
+        }
+        self.cols = cols;
+        self.rows = rows;
+        self.top = 0;
+        self.bottom = rows - 1;
+        self.cursor.x = self.cursor.x.min(cols - 1);
+        self.cursor.y = self.cursor.y.min(rows - 1);
+        self.pending_wrap = false;
+        self.reset_tabs();
+        self.view_offset = self.view_offset.min(self.scrollback.len());
+    }
+
+    fn push_scrollback(&mut self, row: Row) {
+        if self.scrollback_cap == 0 {
+            return;
+        }
+        if self.scrollback.len() >= self.scrollback_cap {
+            self.scrollback.pop_front();
+            self.scrolled_off += 1;
+        }
+        self.scrollback.push_back(row);
+    }
+
+    pub(super) fn blank_row(&self) -> Row {
+        vec![Cell::blank(self.pen); self.cols]
+    }
+
+    /// Scroll the region up `n` lines (new blank lines at the bottom).
+    pub fn scroll_up(&mut self, n: usize) {
+        let n = n.min(self.bottom + 1 - self.top);
+        for _ in 0..n {
+            let row = self.lines.remove(self.top);
+            if self.top == 0 && !self.alt_screen() {
+                self.push_scrollback(row);
+            }
+            let blank = self.blank_row();
+            self.lines.insert(self.bottom, blank);
         }
     }
 
-    /// Convert a visible row index (0..rows) into an absolute row index that
-    /// is stable across scrolling. Absolute 0 is the oldest line in scrollback;
-    /// the current live grid starts at `scrollback.len()`.
-    pub fn visible_to_absolute(&self, vrow: usize) -> usize {
-        let scrollback_len = self.scrollback.len();
-        let start = if self.scroll_offset == 0 {
-            scrollback_len
-        } else {
-            scrollback_len.saturating_sub(self.scroll_offset)
-        };
-        start + vrow
-    }
-
-    /// Get a line by absolute row index. Returns an empty slice if the index
-    /// is out of range (e.g. the line was evicted from scrollback).
-    pub fn absolute_line(&self, abs_row: usize) -> &[Cell] {
-        let scrollback_len = self.scrollback.len();
-        if abs_row < scrollback_len {
-            &self.scrollback[abs_row]
-        } else {
-            let grid_row = abs_row - scrollback_len;
-            if grid_row < self.grid.len() {
-                &self.grid[grid_row]
-            } else {
-                &[]
-            }
+    /// Scroll the region down `n` lines (new blank lines at the top).
+    pub fn scroll_down(&mut self, n: usize) {
+        let n = n.min(self.bottom + 1 - self.top);
+        for _ in 0..n {
+            self.lines.remove(self.bottom);
+            let blank = self.blank_row();
+            self.lines.insert(self.top, blank);
         }
     }
 
-    /// Set the selection anchor from a visible (row, col).
-    pub fn set_selection_anchor(&mut self, vrow: usize, col: usize) {
-        self.selection_anchor = Some((self.visible_to_absolute(vrow), col));
+    pub fn linefeed(&mut self) {
+        if self.cursor.y == self.bottom {
+            self.scroll_up(1);
+        } else if self.cursor.y + 1 < self.rows {
+            self.cursor.y += 1;
+        }
+        self.pending_wrap = false;
     }
 
-    /// Set the selection end from a visible (row, col).
-    pub fn set_selection_end(&mut self, vrow: usize, col: usize) {
-        self.selection_end = Some((self.visible_to_absolute(vrow), col));
+    pub fn reverse_index(&mut self) {
+        if self.cursor.y == self.top {
+            self.scroll_down(1);
+        } else if self.cursor.y > 0 {
+            self.cursor.y -= 1;
+        }
+        self.pending_wrap = false;
     }
 
-    /// Returns the normalized selection range in ABSOLUTE coordinates:
-    /// (start_abs_row, start_col, end_abs_row, end_col). Start is before end
-    /// in reading order.
-    pub fn selection_range(&self) -> Option<(usize, usize, usize, usize)> {
-        let (ar, ac) = self.selection_anchor?;
-        let (er, ec) = self.selection_end?;
-        if (ar, ac) <= (er, ec) {
-            Some((ar, ac, er, ec))
+    pub fn carriage_return(&mut self) {
+        self.cursor.x = 0;
+        self.pending_wrap = false;
+    }
+
+    pub fn backspace(&mut self) {
+        self.cursor.x = self.cursor.x.saturating_sub(1);
+        self.pending_wrap = false;
+    }
+
+    pub fn tab(&mut self) {
+        let mut x = self.cursor.x + 1;
+        while x < self.cols && !self.tabs[x] {
+            x += 1;
+        }
+        self.cursor.x = x.min(self.cols - 1);
+        self.pending_wrap = false;
+    }
+
+    pub fn back_tab(&mut self) {
+        let mut x = self.cursor.x;
+        while x > 0 {
+            x -= 1;
+            if self.tabs[x] {
+                break;
+            }
+        }
+        self.cursor.x = x;
+    }
+
+    pub fn set_tab(&mut self) {
+        self.tabs[self.cursor.x] = true;
+    }
+
+    pub fn clear_tab(&mut self, all: bool) {
+        if all {
+            self.tabs.iter_mut().for_each(|t| *t = false);
         } else {
-            Some((er, ec, ar, ac))
+            self.tabs[self.cursor.x] = false;
         }
     }
 
-    /// Check if the cell at the given VISIBLE (row, col) is inside the
-    /// current selection. Converts the visible row to its absolute index
-    /// internally so the highlight follows the text when scrolling.
-    pub fn is_selected(&self, vrow: usize, col: usize) -> bool {
-        let abs = self.visible_to_absolute(vrow);
-        if let Some((sr, sc, er, ec)) = self.selection_range() {
-            if abs < sr || abs > er {
-                return false;
-            }
-            if abs == sr && abs == er {
-                return col >= sc && col <= ec;
-            }
-            if abs == sr {
-                return col >= sc;
-            }
-            if abs == er {
-                return col <= ec;
-            }
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Extract selected text as a string. Iterates over absolute rows so
-    /// scrollback content is included even when not currently visible.
-    pub fn selected_text(&self) -> Option<String> {
-        let (sr, sc, er, ec) = self.selection_range()?;
-        let mut text = String::new();
-        for abs_row in sr..=er {
-            let line = self.absolute_line(abs_row);
-            if line.is_empty() {
-                if abs_row < er {
-                    text.push('\n');
+    pub fn print(&mut self, c: char) {
+        let c = if self.graphics_charset { graphics(c) } else { c };
+        let w = char_cells(c);
+        if w == 0 {
+            // A combining mark joins the cell before the cursor.
+            let x = self.cursor.x.saturating_sub(usize::from(!self.pending_wrap && self.cursor.x > 0));
+            let y = self.cursor.y;
+            if x < self.cols {
+                let cell = &mut self.lines[y][x];
+                if cell.ch != ' ' || x > 0 {
+                    let mut s = cell.ch.to_string();
+                    s.push(c);
+                    // Keep the base character; the mark is drawn with it
+                    // only when the font can, so store the base alone.
+                    cell.ch = s.chars().next().unwrap_or(' ');
                 }
-                continue;
             }
-            let col_start = if abs_row == sr { sc } else { 0 };
-            let col_end = if abs_row == er {
-                ec
+            return;
+        }
+        if self.pending_wrap && self.autowrap {
+            self.carriage_return();
+            self.linefeed();
+        }
+        if w == 2 && self.cursor.x + 1 >= self.cols {
+            if self.autowrap {
+                self.carriage_return();
+                self.linefeed();
             } else {
-                line.len().saturating_sub(1)
-            };
-            for col in col_start..=col_end.min(line.len().saturating_sub(1)) {
-                // Skip wide-char tail cells — the head already has the character
-                if line[col].wide == Wide::Tail {
-                    continue;
-                }
-                text.push(line[col].c);
-            }
-            // Trim trailing spaces on each line
-            let trimmed = text.trim_end_matches(' ');
-            text.truncate(trimmed.len());
-            if abs_row < er {
-                text.push('\n');
+                self.cursor.x = self.cols - 2;
             }
         }
-        if text.is_empty() {
-            None
+        let (x, y) = (self.cursor.x, self.cursor.y);
+        if self.insert_mode {
+            let row = &mut self.lines[y];
+            for _ in 0..w {
+                row.pop();
+                row.insert(x, Cell::blank(self.pen));
+            }
+        }
+        let row = &mut self.lines[y];
+        // Overwriting half of a wide character clears its other half.
+        if row[x].spacer && x > 0 {
+            row[x - 1] = Cell::blank(self.pen);
+        }
+        if row[x].wide && x + 1 < self.cols {
+            row[x + 1] = Cell::blank(self.pen);
+        }
+        row[x] = Cell { ch: c, style: self.pen, wide: w == 2, spacer: false };
+        if w == 2 {
+            row[x + 1] = Cell { ch: ' ', style: self.pen, wide: false, spacer: true };
+        }
+        if x + w >= self.cols {
+            self.cursor.x = self.cols - 1;
+            self.pending_wrap = true;
         } else {
-            Some(text)
+            self.cursor.x = x + w;
+            self.pending_wrap = false;
         }
     }
 
-    pub fn clear_selection(&mut self) {
-        self.selection_anchor = None;
-        self.selection_end = None;
+    /// Move the cursor, clamped to the screen (or the region in origin mode).
+    pub fn move_to(&mut self, x: usize, y: usize) {
+        let (lo, hi) = if self.origin_mode { (self.top, self.bottom) } else { (0, self.rows - 1) };
+        self.cursor.x = x.min(self.cols - 1);
+        let y = if self.origin_mode { y + self.top } else { y };
+        self.cursor.y = y.clamp(lo, hi);
+        self.pending_wrap = false;
     }
 
-    /// Get the hyperlink URL at the given grid cell, if any.
-    pub fn hyperlink_at(&self, row: usize, col: usize) -> Option<&str> {
-        if row >= self.rows || col >= self.cols {
-            return None;
+    pub fn move_by(&mut self, dx: isize, dy: isize) {
+        let x = (self.cursor.x as isize + dx).max(0) as usize;
+        let (lo, hi) = if self.cursor.y >= self.top && self.cursor.y <= self.bottom { (self.top as isize, self.bottom as isize) } else { (0, self.rows as isize - 1) };
+        let y = (self.cursor.y as isize + dy).clamp(lo, hi) as usize;
+        self.cursor.x = x.min(self.cols - 1);
+        self.cursor.y = y;
+        self.pending_wrap = false;
+    }
+
+    pub fn set_region(&mut self, top: usize, bottom: usize) {
+        let bottom = bottom.min(self.rows - 1);
+        if top < bottom {
+            self.top = top;
+            self.bottom = bottom;
+        } else {
+            self.top = 0;
+            self.bottom = self.rows - 1;
         }
-        let id = self.grid[row][col].hyperlink;
-        if id == 0 {
-            return None;
+        self.move_to(0, 0);
+    }
+
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text(g: &Grid, y: usize) -> String {
+        g.row(y).iter().filter(|c| !c.spacer).map(|c| c.ch).collect::<String>().trim_end().to_owned()
+    }
+
+    #[test]
+    fn printing_wraps_and_scrolls() {
+        let mut g = Grid::new(5, 2, 10);
+        for c in "abcdefg".chars() {
+            g.print(c);
         }
-        self.hyperlinks.get(&id).map(|s| s.as_str())
+        assert_eq!(text(&g, 0), "abcde");
+        assert_eq!(text(&g, 1), "fg");
+        assert_eq!(g.cursor, Cursor { x: 2, y: 1 });
+        g.carriage_return();
+        g.linefeed();
+        assert_eq!(text(&g, 0), "fg", "the top row scrolled away");
+        assert_eq!(g.scrollback.len(), 1);
+        assert_eq!(g.scrollback[0].iter().map(|c| c.ch).collect::<String>(), "abcde");
+        g.print('日');
+        g.print('本');
+        g.print('x');
+        assert_eq!(text(&g, 1), "日本x");
+        assert!(g.row(1)[0].wide && g.row(1)[1].spacer);
+        assert_eq!(g.viewed_row(0)[0].ch, 'f');
+        g.scroll_view(1);
+        assert_eq!(g.viewed_row(0)[0].ch, 'a');
+    }
+
+    #[test]
+    fn regions_and_erasing() {
+        let mut g = Grid::new(4, 4, 0);
+        for y in 0..4 {
+            g.move_to(0, y);
+            g.print(char::from(b'0' + y as u8));
+        }
+        g.set_region(1, 2);
+        g.move_to(0, 2);
+        g.linefeed();
+        assert_eq!([text(&g, 0), text(&g, 1), text(&g, 2), text(&g, 3)], ["0", "2", "", "3"]);
+        g.move_to(0, 1);
+        g.reverse_index();
+        assert_eq!([text(&g, 1), text(&g, 2)], ["", "2"]);
+        g.set_region(0, 3);
+        g.move_to(1, 3);
+        g.erase_in_line(0);
+        assert_eq!(text(&g, 3), "3");
+        g.move_to(0, 3);
+        g.erase_in_line(2);
+        assert_eq!(text(&g, 3), "");
+        g.move_to(0, 0);
+        g.print('a');
+        g.print('b');
+        g.move_to(0, 0);
+        g.insert_chars(1);
+        assert_eq!(text(&g, 0), " ab");
+        g.delete_chars(2);
+        assert_eq!(text(&g, 0), "b");
+        g.erase_in_display(2);
+        assert!((0..4).all(|y| text(&g, y).is_empty()));
+    }
+
+    #[test]
+    fn alt_screen_and_resize() {
+        let mut g = Grid::new(3, 2, 5);
+        g.print('m');
+        g.enter_alt();
+        g.print('a');
+        assert_eq!(text(&g, 0), "a");
+        g.leave_alt();
+        assert_eq!(text(&g, 0), "m");
+        assert_eq!(g.cursor.x, 1);
+        g.resize(5, 3);
+        assert_eq!((g.cols, g.rows), (5, 3));
+        assert_eq!(g.row(0).len(), 5);
+        g.resize(2, 1);
+        assert_eq!(g.rows, 1);
+        assert_eq!(g.cursor.y, 0);
+        // Resized while the alternate screen shows: the main screen comes
+        // back at the new size (this took the editor down once).
+        let mut g = Grid::new(10, 18, 5);
+        g.enter_alt();
+        g.resize(12, 19);
+        g.leave_alt();
+        assert_eq!(g.lines.len(), 19);
+        assert_eq!(g.row(18).len(), 12);
+        let _ = g.viewed_row(18);
+        g.enter_alt();
+        g.resize(8, 3);
+        g.leave_alt();
+        assert_eq!(g.lines.len(), 3);
+    }
+
+    #[test]
+    fn absolute_rows_and_selection_text() {
+        let mut g = Grid::new(6, 2, 2);
+        for line in ["one", "two", "three", "four", "five"] {
+            for c in line.chars() {
+                g.print(c);
+            }
+            g.carriage_return();
+            g.linefeed();
+        }
+        // Three rows fell off the front of a 2-row scrollback.
+        assert_eq!(g.scrollback.len(), 2);
+        assert_eq!(g.scrolled_off, 2);
+        assert_eq!(g.abs_row(0), 4, "the top screen row");
+        assert_eq!(g.row_by_abs(4).map(|r| r[0].ch), Some('f'));
+        assert_eq!(g.text_between((3, 1), (4, 3)), "our\nfiv");
+        assert_eq!(g.text_between((4, 3), (3, 1)), "our\nfiv", "either order");
+        assert_eq!(g.text_between((4, 0), (4, 6)), "five", "trailing blanks dropped");
+        g.scroll_view(2);
+        assert_eq!(g.abs_row(0), 2, "scrolled up into the scrollback");
+        assert!(g.row_by_abs(1).is_none(), "gone from the scrollback");
     }
 }

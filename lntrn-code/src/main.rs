@@ -1,679 +1,147 @@
+//! lntrn-code: the Lantern DE code editor, on Lantern UI 2. A `Host` with
+//! eight editors (Code, Files, Terminal, Problems, Preview, Diff,
+//! Preferences, Key Bindings) that the shell lays out in areas the user
+//! splits, tabs and swaps; files open into the Code area's own file tabs,
+//! and Claude Code's proposed edits into the Diff editor.
+
 mod actions;
-mod auto_pair;
-mod bracket_match;
-mod clipboard;
-mod consts;
+mod app;
+#[cfg(test)]
+mod app_tests;
+mod bridge;
+mod buffer;
+mod charwidth;
+mod code_area;
+mod commands;
+mod diff_view;
+mod doc;
 mod editor;
-mod find_bar;
-mod format;
-mod keys;
-mod lsp;
-mod markdown;
-mod minimap;
-mod mouse;
-mod render;
-mod run;
-mod scrollbar;
-mod sidebar;
-mod status_bar;
+mod editors;
+mod files;
+mod ide;
+mod json;
+mod model;
+mod pending;
+mod preview;
+mod problems;
+mod session;
+mod settings;
 mod syntax;
-mod tab_strip;
-mod tabs;
 mod term;
-mod term_panel;
-mod theme;
-mod title_bar;
-mod wrap;
+mod text_util;
+mod watch;
 
-use std::time::{Duration, Instant};
+use std::path::PathBuf;
 
-use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
-use winit::keyboard::ModifiersState;
-use winit::platform::wayland::WindowAttributesExtWayland;
-use winit::window::{CursorIcon, ResizeDirection, Window, WindowAttributes, WindowId};
+use lntrn_app::{AppConfig, run};
+use lntrn_ui::{Axis, Shell};
 
-use lntrn_render::{GpuContext, Painter, TextRenderer};
-use lntrn_ui::gpu::{FoxPalette, InteractionContext, MenuBar, MenuEvent, ScrollArea};
+use crate::app::{APP_ID, App, Editor};
+use crate::session::Session;
+use crate::settings::Settings;
 
-use clipboard::WaylandClipboard;
-use editor::Editor;
-use find_bar::FindBar;
-use keys::KeyAction;
-use sidebar::Sidebar;
-use tab_strip::TabDragState;
-use term_panel::TermPanel;
-use theme::Theme;
-
-// ── User events (sent from background reader threads) ────────────────────
-
-#[derive(Debug)]
-pub enum UserEvent {
-    PtyOutput,
-    /// Wake the main loop to drain `LspManager`'s MPSC channel. Sent from
-    /// each LSP server's reader thread when a message arrives.
-    LspMessage,
+unsafe extern "C" {
+    fn isatty(fd: i32) -> i32;
+    fn dup2(from: i32, to: i32) -> i32;
+    fn sigaction(sig: i32, act: *const SigAction, old: *mut SigAction) -> i32;
+    fn signal(sig: i32, handler: usize) -> usize;
+    fn raise(sig: i32) -> i32;
 }
 
-pub(crate) use consts::*;
+/// glibc's `struct sigaction` on x86_64.
+#[repr(C)]
+struct SigAction {
+    handler: usize,
+    mask: [u64; 16],
+    flags: i32,
+    restorer: usize,
+}
 
-// ── Main ────────────────────────────────────────────────────────────────────
+const SA_SIGINFO: i32 = 4;
+const SA_RESETHAND: i32 = 0x8000_0000_u32 as i32;
+
+/// A crash signal: write where it happened and a backtrace to the log,
+/// then die of it as before so the kernel still reports it.
+extern "C" fn on_crash(sig: i32, info: *const u8, _ctx: *const u8) {
+    // SAFETY: si_addr sits at byte 16 of siginfo_t on x86_64 Linux.
+    let addr = if info.is_null() { 0 } else { unsafe { *(info.add(16) as *const usize) } };
+    let bt = std::backtrace::Backtrace::force_capture();
+    let msg = format!("\n[signal {sig}] fault address {addr:#x} on thread {:?}\n{bt}\n", std::thread::current().name());
+    use std::io::Write;
+    let _ = std::io::stderr().write_all(msg.as_bytes());
+    let _ = std::io::stderr().flush();
+    // SAFETY: back to the default disposition and deliver again.
+    unsafe {
+        signal(sig, 0);
+        raise(sig);
+    }
+}
+
+fn catch_crashes() {
+    // SEGV, BUS, ABRT, ILL, FPE, and HUP (a stray controlling terminal).
+    for sig in [11, 7, 6, 4, 8, 1] {
+        let act = SigAction { handler: on_crash as *const () as usize, mask: [0; 16], flags: SA_SIGINFO | SA_RESETHAND, restorer: 0 };
+        // SAFETY: a well-formed sigaction for this platform.
+        unsafe {
+            sigaction(sig, &act, std::ptr::null_mut());
+        }
+    }
+}
+
+/// Panics go to `~/.lantern/log/lntrn-code.log` with a backtrace, and so
+/// does everything else written to stderr when no terminal is attached,
+/// since an app launched from the desktop has nowhere else to print.
+fn log_panics() {
+    let path = std::env::var_os("HOME").map(PathBuf::from).map(|h| h.join(".lantern/log/lntrn-code.log"));
+    // SAFETY: plain libc calls on the standard descriptors.
+    if let Some(p) = &path
+        && unsafe { isatty(2) } == 0
+        && let Some(dir) = p.parent()
+        && std::fs::create_dir_all(dir).is_ok()
+        && let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(p)
+    {
+        use std::os::fd::AsRawFd;
+        unsafe {
+            dup2(f.as_raw_fd(), 2);
+        }
+        std::mem::forget(f);
+        eprintln!("---- lntrn-code started, pid {} ----", std::process::id());
+    }
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if let Some(p) = &path {
+            let _ = std::fs::create_dir_all(p.parent().unwrap_or(p));
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            let text = format!("[{now}] {info}\n{}\n\n", std::backtrace::Backtrace::force_capture());
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
+                let _ = f.write_all(text.as_bytes());
+            }
+        }
+        default(info);
+    }));
+}
 
 fn main() {
-    let file_paths: Vec<String> = std::env::args().skip(1).collect();
-    let event_loop = EventLoop::<UserEvent>::with_user_event()
-        .build()
-        .expect("Failed to create event loop");
-    let proxy = event_loop.create_proxy();
-    let mut handler = TextHandler::new(file_paths, proxy);
-    event_loop.run_app(&mut handler).expect("Event loop failed");
-}
-
-// ── GPU resources ───────────────────────────────────────────────────────────
-
-struct Gpu {
-    ctx: GpuContext,
-    painter: Painter,
-    text: TextRenderer,
-}
-
-// ── Handler ─────────────────────────────────────────────────────────────────
-
-/// Cursor blink interval.
-const BLINK_INTERVAL: Duration = Duration::from_millis(530);
-
-pub(crate) struct TextHandler {
-    pub(crate) window: Option<Window>,
-    pub(crate) gpu: Option<Gpu>,
-    pub(crate) tabs: Vec<Editor>,
-    pub(crate) active_tab: usize,
-    pub(crate) next_tab_id: u64,
-    pub(crate) find_bar: FindBar,
-    pub(crate) sidebar: Sidebar,
-    pub(crate) input: InteractionContext,
-    pub(crate) menu_bar: MenuBar,
-    pub(crate) clipboard: Option<WaylandClipboard>,
-    pub(crate) theme: Theme,
-    pub(crate) palette: FoxPalette,
-    pub(crate) scale: f32,
-    pub(crate) needs_redraw: bool,
-    pub(crate) modifiers: ModifiersState,
-    pub(crate) cursor_visible: bool,
-    pub(crate) cursor_blink_deadline: Instant,
-    pub(crate) dragging: bool,
-    pub(crate) minimap_visible: bool,
-    pub(crate) minimap_dragging: bool,
-    /// Tab drag-reorder state (active while the user holds down on a tab).
-    pub(crate) tab_drag: Option<TabDragState>,
-    /// Cumulative x positions of tab right edges — updated each render frame.
-    pub(crate) tab_edges: Vec<f32>,
-    pub(crate) term_panel: Option<TermPanel>,
-    pub(crate) proxy: EventLoopProxy<UserEvent>,
-    /// Wall-clock of the last animation tick — used for dt-based easing.
-    pub(crate) last_anim_tick: Instant,
-    /// LSP client manager — spawns rust-analyzer / pyright / tsserver on
-    /// demand and routes diagnostics / hover / completions back to us.
-    pub(crate) lsp: lsp::LspManager,
-    /// Hover popup state (Ctrl+hover shows type info from the LSP server).
-    pub(crate) hover: lsp::HoverState,
-    /// Completion popup (Ctrl+Space).
-    pub(crate) completion: lsp::CompletionState,
-    /// Time the cursor last moved — used to debounce hover requests.
-    pub(crate) last_cursor_move: Instant,
-    /// Queued diagnostic status line — set by log messages like
-    /// "rust-analyzer: indexing…".
-    pub(crate) lsp_status: String,
-}
-
-impl TextHandler {
-    fn new(file_paths: Vec<String>, proxy: EventLoopProxy<UserEvent>) -> Self {
-        let mut next_id: u64 = 0;
-        let mut tabs: Vec<Editor> = file_paths
-            .into_iter()
-            .map(|path| {
-                let mut e = Editor::new();
-                e.tab_id = next_id;
-                next_id += 1;
-                let _ = e.load_file(std::path::PathBuf::from(path));
-                e
-            })
-            .collect();
-        if tabs.is_empty() {
-            let mut e = Editor::new();
-            e.tab_id = next_id;
-            next_id += 1;
-            tabs.push(e);
-        }
-        let theme = theme::load_active();
-        let palette = theme.palette();
-
-        // LspManager's wake closure just pokes the event loop; the actual
-        // data flows through the manager's own MPSC channel.
-        let wake_proxy = proxy.clone();
-        let lsp = lsp::LspManager::new(move || {
-            let _ = wake_proxy.send_event(UserEvent::LspMessage);
-        });
-
-        Self {
-            window: None,
-            gpu: None,
-            tabs,
-            active_tab: 0,
-            next_tab_id: next_id,
-            find_bar: FindBar::new(),
-            sidebar: Sidebar::new(),
-            input: InteractionContext::new(),
-            menu_bar: MenuBar::new(&palette),
-            clipboard: WaylandClipboard::new(),
-            theme,
-            palette,
-            scale: 1.0,
-            needs_redraw: true,
-            modifiers: ModifiersState::empty(),
-            cursor_visible: true,
-            cursor_blink_deadline: Instant::now() + BLINK_INTERVAL,
-            dragging: false,
-            minimap_visible: true,
-            minimap_dragging: false,
-            tab_drag: None,
-            tab_edges: Vec::new(),
-            term_panel: None,
-            proxy,
-            last_anim_tick: Instant::now(),
-            lsp,
-            hover: lsp::HoverState::default(),
-            completion: lsp::CompletionState::default(),
-            last_cursor_move: Instant::now(),
-            lsp_status: String::new(),
-        }
+    log_panics();
+    catch_crashes();
+    // A marker file turns on libwayland's protocol trace, for the next
+    // crash hunt: `touch ~/.lantern/log/lntrn-code.wldebug`.
+    if std::env::var_os("HOME").map(PathBuf::from).is_some_and(|h| h.join(".lantern/log/lntrn-code.wldebug").exists()) {
+        // SAFETY: before any thread exists.
+        unsafe { std::env::set_var("WAYLAND_DEBUG", "1") };
     }
-
-    /// Borrow the active editor.
-    pub(crate) fn editor(&self) -> &Editor {
-        &self.tabs[self.active_tab]
+    let settings = Settings::load(APP_ID);
+    let session = Session::load(APP_ID);
+    let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+    let mono = if settings.font_family.trim().is_empty() { "JetBrains Mono".to_owned() } else { settings.font_family.clone() };
+    let app = App::new(settings, session, args);
+    // Files on the left, code on the right; a saved layout replaces this.
+    let mut shell = Shell::new(Editor::Code);
+    if let Some(right) = shell.screen.split(0, Axis::Horizontal, 0.78, Editor::Files) {
+        shell.screen.swap(0, right);
+        shell.screen.active = Some(right);
     }
-
-    /// Borrow the active editor mutably.
-    pub(crate) fn editor_mut(&mut self) -> &mut Editor {
-        &mut self.tabs[self.active_tab]
-    }
-
-    fn edge_resize_direction(&self) -> Option<ResizeDirection> {
-        let (cx, cy) = self.input.cursor()?;
-        // Don't intercept resize when the cursor is over a scrollbar thumb
-        // or track — the user is trying to drag the scrollbar, not the
-        // window edge.
-        if let Some(zone_id) = self.input.zone_at(cx, cy) {
-            if zone_id == ZONE_EDITOR_SCROLL_THUMB
-                || zone_id == ZONE_EDITOR_SCROLL_TRACK
-                || zone_id == ZONE_SIDEBAR_SCROLL_THUMB
-                || zone_id == ZONE_SIDEBAR_SCROLL_TRACK
-            {
-                return None;
-            }
-        }
-        let gpu = self.gpu.as_ref()?;
-        let wf = gpu.ctx.width() as f32;
-        let hf = gpu.ctx.height() as f32;
-        let border = 10.0 * self.scale;
-        let left = cx < border;
-        let right = cx > wf - border;
-        let top = cy < border;
-        let bottom = cy > hf - border;
-        match (left, right, top, bottom) {
-            (true, _, true, _) => Some(ResizeDirection::NorthWest),
-            (_, true, true, _) => Some(ResizeDirection::NorthEast),
-            (true, _, _, true) => Some(ResizeDirection::SouthWest),
-            (_, true, _, true) => Some(ResizeDirection::SouthEast),
-            (true, _, _, _) => Some(ResizeDirection::West),
-            (_, true, _, _) => Some(ResizeDirection::East),
-            (_, _, true, _) => Some(ResizeDirection::North),
-            (_, _, _, true) => Some(ResizeDirection::South),
-            _ => None,
-        }
-    }
-
-    fn is_on_title_bar(&self) -> bool {
-        self.input
-            .cursor()
-            .map_or(false, |(_, cy)| cy < title_bar::TITLE_BAR_H * self.scale)
-    }
-
-    fn window_size(&self) -> (f32, f32) {
-        self.gpu.as_ref().map_or((800.0, 600.0), |g| {
-            (g.ctx.width() as f32, g.ctx.height() as f32)
-        })
-    }
-
-    /// Crate-visible alias so sibling modules (mouse.rs) can read window
-    /// dimensions without us exposing the gpu field.
-    pub(crate) fn window_size_pub(&self) -> (f32, f32) {
-        self.window_size()
-    }
-
-    fn shutdown(&mut self, event_loop: &ActiveEventLoop) {
-        self.gpu = None;
-        self.window = None;
-        event_loop.exit();
-    }
-
-    /// Compute the document (line, col) a physical-pixel point resolves to in
-    /// the active editor. Returns None if the GPU context isn't live yet or
-    /// the point sits outside the editor body.
-    pub(crate) fn doc_pos_at(&mut self, cx: f32, cy: f32) -> Option<(usize, usize)> {
-        let s = self.scale;
-        let (wf, hf) = self.window_size();
-        let font_size = editor::FONT_SIZE * s;
-        let sidebar_w = if self.sidebar.visible {
-            sidebar::SIDEBAR_W * s
-        } else {
-            0.0
-        };
-        let er = render::editor_rect(wf, hf, s, self.find_bar.height(s), sidebar_w);
-        if cx < er.x || cx > er.x + er.w || cy < er.y || cy > er.y + er.h {
-            return None;
-        }
-        let active = self.active_tab;
-        let editor = &mut self.tabs[active];
-        let (doc_line, row_start, row_end) = editor.wrap_row_at_y(cy, er, s);
-
-        let gpu = self.gpu.as_mut()?;
-        let base = render::measure_to_offset(&mut gpu.text, editor, doc_line, row_start, font_size);
-        let col = editor.col_at_x(cx, doc_line, row_start, row_end, er, s, |byte_off| {
-            render::measure_to_offset(&mut gpu.text, editor, doc_line, byte_off, font_size) - base
-        });
-        Some((doc_line, col))
-    }
-
-    /// Set cursor from a click at physical (cx, cy).
-    fn click_to_cursor(&mut self, cx: f32, cy: f32) {
-        if let Some((line, col)) = self.doc_pos_at(cx, cy) {
-            let editor = self.editor_mut();
-            editor.cursor_line = line;
-            editor.cursor_col = col;
-        }
-    }
-
-    fn reset_blink(&mut self) {
-        self.cursor_visible = true;
-        self.cursor_blink_deadline = Instant::now() + BLINK_INTERVAL;
-    }
-}
-
-// ── Application handler ──────────────────────────────────────────────────────
-
-impl ApplicationHandler<UserEvent> for TextHandler {
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {
-        match event {
-            UserEvent::PtyOutput => {
-                if let Some(panel) = &mut self.term_panel {
-                    panel.drain();
-                }
-                self.needs_redraw = true;
-            }
-            UserEvent::LspMessage => {
-                lsp::glue::drain_inbound(self);
-            }
-        }
-        if let Some(window) = &self.window {
-            window.request_redraw();
-        }
-    }
-
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() {
-            return;
-        }
-
-        let initial_size = winit::dpi::LogicalSize::new(900.0, 700.0);
-        let attrs = WindowAttributes::default()
-            .with_name("lntrn-code", "lntrn-code")
-            .with_title("lntrn-code")
-            .with_inner_size(initial_size)
-            .with_decorations(false)
-            .with_transparent(true);
-
-        let window = event_loop
-            .create_window(attrs)
-            .expect("Failed to create window");
-        // Lantern suggests `[windows] default_size_pct` in the initial
-        // configure and winit obeys it, overriding the size requested
-        // above — re-assert our deliberate compact size (the suggestion
-        // is meant for apps that don't pick their own).
-        let _ = window.request_inner_size(initial_size);
-        self.scale = window.scale_factor() as f32;
-
-        let size = window.inner_size();
-        let gpu_ctx = GpuContext::from_window(&window, size.width, size.height)
-            .expect("Failed to create GPU context");
-
-        self.gpu = Some(Gpu {
-            painter: Painter::new(&gpu_ctx),
-            text: TextRenderer::new_monospace(&gpu_ctx),
-            ctx: gpu_ctx,
-        });
-        self.window = Some(window);
-    }
-
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        match event {
-            WindowEvent::CloseRequested => self.shutdown(event_loop),
-
-            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                self.scale = scale_factor as f32;
-                self.needs_redraw = true;
-            }
-
-            WindowEvent::Resized(size) => {
-                if let Some(gpu) = &mut self.gpu {
-                    gpu.ctx.resize(size.width, size.height);
-                }
-                self.needs_redraw = true;
-            }
-
-            WindowEvent::CursorMoved { position, .. } => {
-                let (cx, cy) = (position.x as f32, position.y as f32);
-                self.input.on_cursor_moved(cx, cy);
-                self.last_cursor_move = Instant::now();
-                // Dismiss hover popup once the mouse moves meaningfully;
-                // the debounced trigger in about_to_wait will re-request it.
-                if self.hover.visible {
-                    self.hover.clear();
-                    self.needs_redraw = true;
-                }
-
-                if mouse::update_scrollbar_drag(self, cx, cy) {
-                    // scrollbar drag consumes the move
-                } else if self.minimap_dragging {
-                    mouse::update_minimap_drag(self, cy);
-                } else if let Some(ref mut drag) = self.tab_drag {
-                    // Tab drag-reorder: activate after 5px threshold, then
-                    // swap tabs when cursor crosses adjacent midpoints.
-                    const THRESHOLD: f32 = 5.0;
-                    if !drag.active && (cx - drag.start_cx).abs() > THRESHOLD {
-                        drag.active = true;
-                    }
-                    if drag.active {
-                        if let Some(w) = &self.window {
-                            w.set_cursor(CursorIcon::Grabbing);
-                        }
-                        let idx = drag.idx;
-                        let edges = &self.tab_edges;
-                        // Swap right: cursor past midpoint of next tab.
-                        if idx + 1 < self.tabs.len() && idx + 1 < edges.len() {
-                            let next_left = edges[idx];
-                            let next_right = edges[idx + 1];
-                            let mid = (next_left + next_right) * 0.5;
-                            if cx > mid {
-                                self.tabs.swap(idx, idx + 1);
-                                self.active_tab = idx + 1;
-                                self.tab_drag.as_mut().unwrap().idx = idx + 1;
-                            }
-                        }
-                        // Swap left: cursor past midpoint of previous tab.
-                        let idx = self.tab_drag.as_ref().unwrap().idx;
-                        if idx > 0 {
-                            let prev_left = if idx >= 2 { edges[idx - 2] } else { 0.0 };
-                            let prev_right = edges[idx - 1];
-                            let mid = (prev_left + prev_right) * 0.5;
-                            if cx < mid {
-                                self.tabs.swap(idx, idx - 1);
-                                self.active_tab = idx - 1;
-                                self.tab_drag.as_mut().unwrap().idx = idx - 1;
-                            }
-                        }
-                    }
-                } else if self.dragging {
-                    self.click_to_cursor(cx, cy);
-                    self.reset_blink();
-                } else if let Some(dir) = self.edge_resize_direction() {
-                    if let Some(w) = &self.window {
-                        w.set_cursor(CursorIcon::from(dir));
-                    }
-                } else if let Some(w) = &self.window {
-                    w.set_cursor(CursorIcon::Default);
-                }
-                self.needs_redraw = true;
-            }
-
-            WindowEvent::CursorLeft { .. } => {
-                self.input.on_cursor_left();
-                self.needs_redraw = true;
-            }
-
-            WindowEvent::ModifiersChanged(mods) => {
-                self.modifiers = mods.state();
-            }
-
-            WindowEvent::MouseInput { state, button, .. } => {
-                if let mouse::MouseAction::Consumed =
-                    mouse::handle_mouse_input(self, event_loop, button, state)
-                {
-                    self.needs_redraw = true;
-                }
-            }
-
-            WindowEvent::MouseWheel { delta, .. } => {
-                let scroll = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => -y * 60.0 * self.scale,
-                    MouseScrollDelta::PixelDelta(pos) => -pos.y as f32,
-                };
-                let s = self.scale;
-                let (wf, hf) = self.window_size();
-
-                // Sidebar gets the wheel when the cursor is over it.
-                if self.sidebar.visible {
-                    if let Some((cx, _)) = self.input.cursor() {
-                        if cx < sidebar::SIDEBAR_W * s {
-                            self.sidebar.handle_scroll(scroll, s);
-                            self.sidebar.scrollbar.ping();
-                            self.needs_redraw = true;
-                            return;
-                        }
-                    }
-                }
-
-                let find_h = self.find_bar.height(s);
-                let sidebar_w = if self.sidebar.visible {
-                    sidebar::SIDEBAR_W * s
-                } else {
-                    0.0
-                };
-                let editor_rect = render::editor_rect(wf, hf, s, find_h, sidebar_w);
-                let editor = self.editor_mut();
-                let total_h = editor.content_height(s);
-                // Apply scroll to the TARGET; the animation tick eases the
-                // visible offset toward it for a smooth feel.
-                ScrollArea::apply_scroll(&mut editor.scroll_target, scroll, total_h, editor_rect.h);
-                editor.scrollbar.ping();
-                self.needs_redraw = true;
-            }
-
-            WindowEvent::KeyboardInput { event, .. } => {
-                if event.state != ElementState::Pressed {
-                    return;
-                }
-                let mods = self.modifiers;
-                if let KeyAction::Consumed = keys::handle_key(self, &event.logical_key, mods) {
-                    self.reset_blink();
-                    self.needs_redraw = true;
-                }
-            }
-
-            WindowEvent::RedrawRequested => {
-                if !self.needs_redraw {
-                    return;
-                }
-                let cursor_vis = self.cursor_visible;
-                let tab_labels = self.tab_labels();
-                let active_tab = self.active_tab;
-                let scale = self.scale;
-                let palette = self.palette;
-                let theme = self.theme;
-                // Sync sidebar root with the active tab's directory.
-                if let Some(parent) = self.tabs[self.active_tab]
-                    .file_path
-                    .as_ref()
-                    .and_then(|p| p.parent())
-                {
-                    self.sidebar.set_root(parent.to_path_buf());
-                }
-
-                // Sync any preview tabs from their source tabs.
-                markdown::sync_all_previews(&mut self.tabs);
-                // Split borrow: gpu, the active editor (via tabs), find_bar,
-                // sidebar, and menu/toolbar state are all separate fields.
-                let active = self.active_tab;
-                let editor = &mut self.tabs[active];
-                let find_bar = &self.find_bar;
-                let sidebar = &mut self.sidebar;
-                let lsp_manager = &self.lsp;
-                let hover = &self.hover;
-                let completion = &self.completion;
-                let lsp_status = self.lsp_status.as_str();
-                let (event, edges) = if let Some(gpu) = self.gpu.as_mut() {
-                    render::render_frame(
-                        gpu,
-                        editor,
-                        &tab_labels,
-                        active_tab,
-                        &self.tab_drag,
-                        self.minimap_visible,
-                        &mut self.term_panel,
-                        find_bar,
-                        sidebar,
-                        &mut self.input,
-                        &mut self.menu_bar,
-                        &palette,
-                        theme,
-                        scale,
-                        cursor_vis,
-                        lsp_manager,
-                        hover,
-                        completion,
-                        lsp_status,
-                    )
-                } else {
-                    (None, Vec::new())
-                };
-                self.tab_edges = edges;
-                if let Some(evt) = event {
-                    match evt {
-                        MenuEvent::Action(MENU_NEW) => {
-                            self.new_tab();
-                            self.menu_bar.close();
-                        }
-                        MenuEvent::Action(MENU_OPEN) => {
-                            self.menu_bar.close();
-                            actions::open_file_dialog(self);
-                        }
-                        MenuEvent::Action(MENU_SAVE) => {
-                            self.menu_bar.close();
-                            actions::save_file_dialog(self);
-                        }
-                        MenuEvent::Action(MENU_SAVE_AS) => {
-                            self.menu_bar.close();
-                            actions::save_file_as_dialog(self);
-                        }
-                        MenuEvent::Action(MENU_THEME_PAPER) => {
-                            self.menu_bar.close();
-                            self.set_theme(Theme::Paper);
-                        }
-                        MenuEvent::Action(MENU_THEME_NIGHT) => {
-                            self.menu_bar.close();
-                            self.set_theme(Theme::NightSky);
-                        }
-                        MenuEvent::Action(MENU_THEME_DARK) => {
-                            self.menu_bar.close();
-                            self.set_theme(Theme::Dark);
-                        }
-                        MenuEvent::Action(MENU_TOGGLE_WRAP) => {
-                            self.menu_bar.close();
-                            let ed = &mut self.tabs[self.active_tab];
-                            ed.wrap_enabled = !ed.wrap_enabled;
-                        }
-                        MenuEvent::Action(MENU_TOGGLE_MINIMAP) => {
-                            self.menu_bar.close();
-                            self.minimap_visible = !self.minimap_visible;
-                        }
-                        MenuEvent::Action(MENU_TOGGLE_TERMINAL) => {
-                            self.menu_bar.close();
-                            term_panel::toggle_visible(&mut self.term_panel, &self.proxy);
-                        }
-                        MenuEvent::Action(MENU_RUN) => {
-                            self.menu_bar.close();
-                            run::run_active_file(self);
-                        }
-                        _ => {}
-                    }
-                    self.needs_redraw = true;
-                }
-                self.needs_redraw = false;
-            }
-
-            _ => {}
-        }
-
-        if self.needs_redraw {
-            if let Some(window) = &self.window {
-                window.request_redraw();
-            }
-        }
-    }
-
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        let now = Instant::now();
-
-        // ── LSP document sync + Ctrl+hover debounce ───────────────────
-        lsp::glue::flush_document_state(self);
-        lsp::glue::tick_ctrl_hover(self, now);
-
-        // ── Smooth scroll animation tick ──────────────────────────────
-        let dt = now.duration_since(self.last_anim_tick).as_secs_f32();
-        self.last_anim_tick = now;
-        let mut animating = false;
-        // Tick every tab so background tabs settle while not visible too.
-        for tab in &mut self.tabs {
-            let diff = tab.scroll_target - tab.scroll_offset;
-            if diff.abs() > 0.5 {
-                // Exponential decay: alpha = 1 - e^(-rate * dt). rate ~18
-                // gives a snappy ~80ms settle from a typical wheel notch.
-                let rate = 18.0;
-                let alpha = (1.0 - (-rate * dt).exp()).clamp(0.0, 1.0);
-                tab.scroll_offset += diff * alpha;
-                animating = true;
-            } else {
-                tab.scroll_offset = tab.scroll_target;
-            }
-        }
-        if animating {
-            self.needs_redraw = true;
-        }
-
-        // ── Cursor blink ──────────────────────────────────────────────
-        if now >= self.cursor_blink_deadline {
-            self.cursor_visible = !self.cursor_visible;
-            self.cursor_blink_deadline = now + BLINK_INTERVAL;
-            if let Some(panel) = &mut self.term_panel {
-                panel.cursor_visible = self.cursor_visible;
-            }
-            self.needs_redraw = true;
-        }
-
-        if self.needs_redraw {
-            if let Some(window) = &self.window {
-                window.request_redraw();
-            }
-        }
-
-        // Schedule the next wake-up. While animating we want ~60fps; the
-        // blink deadline takes over once everything has settled.
-        let next = if animating {
-            now + Duration::from_millis(16)
-        } else {
-            self.cursor_blink_deadline
-        };
-        event_loop.set_control_flow(ControlFlow::WaitUntil(next));
-    }
+    let config = AppConfig { title: "lntrn-code".into(), app_id: APP_ID.into(), mono, ..AppConfig::default() };
+    run(config, app, shell);
 }

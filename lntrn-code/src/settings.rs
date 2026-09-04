@@ -1,0 +1,93 @@
+//! The app's own preferences (beside the shell's): the code font, tabs,
+//! and the syntax colors. A `props!` struct, so the Preferences editor
+//! draws it, and it saves as tagged bytes next to the shell's file.
+
+use lntrn_math::Color;
+use lntrn_props::props;
+use lntrn_ui::persist;
+
+use crate::syntax::TokenKind;
+
+props! {
+    /// Colors of the code by what a token is.
+    pub struct SyntaxColors {
+        pub keyword: Color = Color::hex(0xC792EA) => { id: 1 },
+        pub types: Color = Color::hex(0xFFCB6B) => { id: 2, label: "Types" },
+        pub function: Color = Color::hex(0x82AAFF) => { id: 3 },
+        pub string: Color = Color::hex(0xC3E88D) => { id: 4 },
+        pub number: Color = Color::hex(0xF78C6C) => { id: 5 },
+        pub comment: Color = Color::hex(0x6B7A8F) => { id: 6 },
+        pub punct: Color = Color::hex(0x9AA7B5) => { id: 7, label: "Punctuation" },
+        pub attribute: Color = Color::hex(0x89DDFF) => { id: 8 },
+        pub constant: Color = Color::hex(0xFF8A80) => { id: 9 },
+        pub heading: Color = Color::hex(0xFFB733) => { id: 10 },
+        pub emphasis: Color = Color::hex(0xE6C08A) => { id: 11 },
+        pub link: Color = Color::hex(0x6EA6FF) => { id: 12 },
+    }
+}
+
+impl SyntaxColors {
+    /// The color of a token kind; `text` is the plain-text color.
+    pub fn of(&self, kind: TokenKind, text: Color) -> Color {
+        match kind {
+            TokenKind::Text => text,
+            TokenKind::Keyword => self.keyword,
+            TokenKind::Type => self.types,
+            TokenKind::Function => self.function,
+            TokenKind::String | TokenKind::Code => self.string,
+            TokenKind::Number => self.number,
+            TokenKind::Comment => self.comment,
+            TokenKind::Punct | TokenKind::Operator => self.punct,
+            TokenKind::Attribute => self.attribute,
+            TokenKind::Constant => self.constant,
+            TokenKind::Heading => self.heading,
+            TokenKind::Emphasis => self.emphasis,
+            TokenKind::Link => self.link,
+        }
+    }
+}
+
+props! {
+    /// Editor preferences.
+    pub struct Settings {
+        /// Monospace family for code and the terminal; empty for the default.
+        pub font_family: String = "JetBrains Mono".to_owned() => { id: 1, label: "Code Font" },
+        /// Code text size in logical pixels.
+        pub font_size: f64 = 20.0 => { id: 2, hard: 8.0..=64.0, step: 1.0, subtype: Pixels },
+        /// Cells per tab stop.
+        pub tab_width: i64 = 4 => { id: 3, hard: 1..=16 },
+        /// Tab inserts spaces up to the next stop.
+        pub insert_spaces: bool = true => { id: 4 },
+        /// Tint the line the caret is on.
+        pub highlight_line: bool = true => { id: 5 },
+        /// Strip trailing spaces from every line when saving.
+        pub trim_on_save: bool = false => { id: 6 },
+        /// Lines of terminal output kept above the screen.
+        pub scrollback: i64 = 5000 => { id: 7, hard: 100..=100000, step: 100.0 },
+        pub colors: SyntaxColors = SyntaxColors::default() => { id: 10, label: "Syntax Colors" },
+    }
+}
+
+const FILE: &str = "settings.bin";
+
+impl Settings {
+    pub fn tab(&self) -> usize {
+        self.tab_width.clamp(1, 16) as usize
+    }
+
+    pub fn load(app_id: &str) -> Self {
+        let mut s = Self::default();
+        if let Some(dir) = persist::config_dir(app_id) {
+            persist::load(&dir.join(FILE), &mut s);
+        }
+        s
+    }
+
+    pub fn save(&self, app_id: &str) {
+        if let Some(dir) = persist::config_dir(app_id)
+            && let Err(e) = persist::save(&dir.join(FILE), self)
+        {
+            lntrn_core::log_error!("saving settings: {e}");
+        }
+    }
+}

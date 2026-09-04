@@ -1,22 +1,18 @@
 [package]
 name = "lntrn-code"
-version = "0.1.0"
-description = "Code editor for Lantern DE"
-authors = ["Jca56"]
-edition = "2021"
+version = "0.2.0"
+description = "Code editor for Lantern DE, built on Lantern UI 2"
+authors = ["Alva"]
+edition = "2024"
 
 [[bin]]
 name = "lntrn-code"
 path = "src/main.rs"
 
 [dependencies]
-libc = "0.2"
-lntrn-render = { path = "../lntrn-render" }
-lntrn-ui = { path = "../lntrn-ui" }
-nix = { version = "0.29", features = ["poll", "term", "signal", "fs", "process"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-vte = "0.13"
-wayland-client = "0.31"
-wayland-protocols-wlr = { version = "0.3", features = ["client"] }
-winit = { version = "0.30", features = ["wayland"] }
+lntrn-app = { path = "../../lantern-ui-2/crates/lntrn-app" }
+lntrn-ui = { path = "../../lantern-ui-2/crates/lntrn-ui" }
+lntrn-core = { path = "../../lantern-ui-2/crates/lntrn-core" }
+lntrn-math = { path = "../../lantern-ui-2/crates/lntrn-math" }
+lntrn-props = { path = "../../lantern-ui-2/crates/lntrn-props" }
+lntrn-text = { path = "../../lantern-ui-2/crates/lntrn-text" }
