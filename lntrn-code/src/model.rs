@@ -32,6 +32,8 @@ pub enum Goto {
     Printed { line: Option<usize>, col: Option<usize> },
     /// A 0-based line, byte column and byte length to select.
     Span { line: usize, col: usize, len: usize },
+    /// A 0-based line with columns as a language server counts them.
+    Units { line: usize, col: usize, end_col: usize, utf16: bool },
 }
 
 /// What one tab of an area holds: the documents of a Code editor and

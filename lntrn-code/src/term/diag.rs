@@ -8,20 +8,7 @@ use std::path::{Path, PathBuf};
 
 use super::parser::Action;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Severity {
-    Error,
-    Warning,
-}
-
-impl Severity {
-    pub fn label(self) -> &'static str {
-        match self {
-            Severity::Error => "error",
-            Severity::Warning => "warning",
-        }
-    }
-}
+pub use crate::problems::Severity;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diag {
@@ -185,6 +172,7 @@ impl Diagnostics {
         self.version += 1;
     }
 
+    #[cfg(test)]
     pub fn count(&self, s: Severity) -> usize {
         self.items.iter().filter(|d| d.severity == s).count()
     }

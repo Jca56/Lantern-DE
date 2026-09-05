@@ -80,18 +80,10 @@ impl App {
                 false
             }
             Editor::Problems => {
-                let rows: Vec<ProblemRow> = self
-                    .diagnostics()
-                    .map(|d| {
-                        let shown = match (&d.resolved, &self.project) {
-                            (Some(p), Some(pr)) if p.starts_with(&pr.root) => pr.relative(p),
-                            _ => d.path.clone(),
-                        };
-                        ProblemRow { severity: d.severity, place: format!("{shown}:{}:{}", d.line, d.col), message: d.message.clone(), openable: d.resolved.is_some() }
-                    })
-                    .collect();
+                let all = self.problems();
+                let rows: Vec<ProblemRow> = all.iter().map(|p| ProblemRow { severity: p.severity, place: format!("{}:{}:{} · {}", p.shown, p.line, p.col, p.source), message: p.message.clone(), openable: p.path.is_some() }).collect();
                 let out = draw_problems(ui, &rows);
-                let target = out.open.and_then(|i| self.diagnostics().nth(i)).and_then(|d| d.resolved.clone().map(|p| (p, d.line, d.col)));
+                let target = out.open.and_then(|i| all.get(i)).and_then(|p| p.path.clone().map(|path| (path, p.line, p.col)));
                 if let Some((p, line, col)) = target {
                     self.pending_paths.push(p.clone());
                     self.pending_goto = Some((p, Goto::Printed { line: Some(line), col: Some(col) }));

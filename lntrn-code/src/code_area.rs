@@ -7,7 +7,9 @@ use crate::app::{App, TabState};
 use crate::commands;
 use crate::editor::find::draw_find_bar;
 use crate::editor::tabs::{TabItem, draw_tabs};
+use crate::editor::lsp_ui::LspOut;
 use crate::editor::view::{DiagMark, ViewOpts, draw_doc};
+use crate::lsp::pos::from_units;
 use lntrn_ui::Action;
 
 impl App {
@@ -37,12 +39,12 @@ impl App {
             self.focus_area = Some(area);
         }
         let finder_here = self.finder.open && self.focus_area == Some(area) && self.focus_doc == Some(doc_id);
-        let marks: Vec<DiagMark> = match self.docs.iter().find(|d| d.id == doc_id).and_then(|d| d.path.as_deref()) {
-            Some(path) => self.diagnostics().filter(|d| d.resolved.as_deref() == Some(path)).map(|d| DiagMark { line: d.line.saturating_sub(1), col: d.col.saturating_sub(1), severity: d.severity, message: d.message.clone() }).collect(),
-            None => Vec::new(),
-        };
+        let marks = self.diag_marks(doc_id);
         let gutter = self.gutter_marks(doc_id, ui.state.now);
-        let App { finder, docs, settings, last_editor_focus, .. } = self;
+        if let Some(d) = self.docs.iter().find(|d| d.id == doc_id) {
+            self.lsp_ui.utf16 = self.lsp.utf16(d.lang());
+        }
+        let App { finder, docs, settings, last_editor_focus, lsp_ui, .. } = self;
         let Some(doc) = docs.iter_mut().find(|d| d.id == doc_id) else {
             return false;
         };
@@ -93,10 +95,24 @@ impl App {
         } else {
             (&[][..], None)
         };
-        let out = draw_doc(ui, doc, settings, ViewOpts { area_active: active, matches, current_match: current, diags: &marks, git: &gutter });
+        let out = draw_doc(ui, doc, settings, ViewOpts { area_active: active, matches, current_match: current, diags: &marks, git: &gutter, lsp: lsp_ui });
         changed |= out.changed;
         if out.focused {
             *last_editor_focus = Some(editor_focus);
+        }
+        let asked = out.lsp;
+        if asked != LspOut::default()
+            && let Some(d) = self.docs.iter().find(|d| d.id == doc_id)
+        {
+            if let Some(p) = asked.hover {
+                self.lsp.hover(d, p);
+            }
+            if let Some(p) = asked.definition {
+                self.lsp.definition(d, p);
+            }
+            if let Some((p, trigger)) = asked.complete {
+                self.lsp.complete(d, p, trigger);
+            }
         }
         if out.clicked {
             self.focus_doc = Some(doc_id);
@@ -108,6 +124,37 @@ impl App {
             self.run_action(&Action::new(commands::CLOSE_TAB), &mut cx.host());
         }
         changed
+    }
+
+    /// The problems of a document as marks with byte columns.
+    fn diag_marks(&self, doc_id: crate::doc::DocId) -> Vec<DiagMark> {
+        let Some(doc) = self.docs.iter().find(|d| d.id == doc_id) else {
+            return Vec::new();
+        };
+        let Some(path) = doc.path.as_deref() else {
+            return Vec::new();
+        };
+        let n = doc.buffer.line_count();
+        let mut out = Vec::new();
+        for p in self.problems() {
+            if p.path.as_deref() != Some(path) {
+                continue;
+            }
+            let (line, col, end) = match p.span {
+                Some(s) => {
+                    let l = s.line.min(n.saturating_sub(1));
+                    let text = doc.line(l);
+                    (l, from_units(text, s.col, s.utf16), (s.end_line == s.line).then(|| from_units(text, s.end_col, s.utf16)))
+                }
+                None => {
+                    let l = p.line.saturating_sub(1).min(n.saturating_sub(1));
+                    let text = doc.line(l);
+                    (l, text.char_indices().nth(p.col.saturating_sub(1)).map(|(b, _)| b).unwrap_or(text.len()), None)
+                }
+            };
+            out.push(DiagMark { line, col, end, severity: p.severity, message: p.message });
+        }
+        out
     }
 
     fn draw_welcome(&mut self, ui: &mut Ui, cx: &mut AreaCx<TabState>) -> bool {

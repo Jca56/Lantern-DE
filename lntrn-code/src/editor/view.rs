@@ -10,6 +10,7 @@ use lntrn_ui::{CursorIcon, Sense, Ui};
 
 use crate::buffer::{Pos, Range};
 use crate::doc::Doc;
+use crate::editor::lsp_ui::{self, Geom, LspOut, LspUi};
 use crate::editor::{cell_metrics, code_style, input, ops};
 use crate::git::gutter::{LineMark, MarkKind};
 use crate::problems::severity_color;
@@ -18,11 +19,13 @@ use crate::syntax::TokenKind;
 use crate::term::diag::Severity;
 use crate::text_util::{byte_at_cell, cell_of_byte, expand_tabs};
 
-/// A problem to mark: a 0-based line and character column, and what to
-/// say about it when the pointer rests there.
+/// A problem to mark: a 0-based line and byte column (and where it
+/// ends on that line, when known), and what to say about it when the
+/// pointer rests there.
 pub struct DiagMark {
     pub line: usize,
     pub col: usize,
+    pub end: Option<usize>,
     pub severity: Severity,
     pub message: String,
 }
@@ -35,6 +38,8 @@ pub struct ViewOpts<'a> {
     pub diags: &'a [DiagMark],
     /// What git says changed, for bars in the gutter.
     pub git: &'a [LineMark],
+    /// The language server's popups.
+    pub lsp: &'a mut LspUi,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -43,6 +48,8 @@ pub struct DocOut {
     pub changed: bool,
     pub focused: bool,
     pub clicked: bool,
+    /// What to ask the language server.
+    pub lsp: LspOut,
 }
 
 /// Blink period and the part of it the caret shows.
@@ -73,8 +80,16 @@ pub fn draw_doc(ui: &mut Ui, doc: &mut Doc, settings: &Settings, opts: ViewOpts)
     let focused = ui.state.focus == Some(id);
     let page = ((inner_h / lh).floor() as usize).saturating_sub(1).max(1);
     let mut out = DocOut { focused, ..DocOut::default() };
+    let mut lsp_out = LspOut::default();
     if focused {
-        out.changed |= input::handle(ui, doc, settings, page);
+        let (picked, asked) = opts.lsp.keys(ui, doc, ui.state.now);
+        out.changed |= picked;
+        lsp_out = asked;
+        let typed = input::handle(ui, doc, settings, page);
+        out.changed |= typed;
+        if let Some(t) = opts.lsp.after_edit(doc, typed) {
+            lsp_out.complete = Some(t);
+        }
     }
     // Follow the caret when it moved (or the text changed under it).
     let now = ui.state.now;
@@ -132,6 +147,19 @@ pub fn draw_doc(ui: &mut Ui, doc: &mut Doc, settings: &Settings, opts: ViewOpts)
                 ui.state.request_rebuild = true;
             }
         }
+        // Ctrl+click goes to the definition; a resting pointer asks what is under it.
+        if r.clicked && ui.state.mods.ctrl() {
+            lsp_out.definition = Some(hit(doc, ui.state.pointer, origin, gutter_w, cell_w, lh));
+        }
+        if r.hovered && !r.dragging && ui.state.pointer.x >= vp.min.x + gutter_w {
+            let p = ui.state.pointer;
+            let line = (((p.y - origin.y) / lh).floor().max(0.0) as usize).min(n.saturating_sub(1));
+            let cell = ((p.x - text_x0) / cell_w).floor().max(0.0) as usize;
+            let under = Pos::new(line, byte_at_cell(doc.line(line), tab, cell));
+            if let Some(q) = opts.lsp.pointer(ui, doc.id, under, now) {
+                lsp_out.hover = Some(q);
+            }
+        }
         // ---- what shows ----
         let first = ((view.offset.y / lh).floor().max(0.0) as usize).min(n - 1);
         let last = (((view.offset.y + vp.height()) / lh).ceil() as usize + 1).min(n);
@@ -180,9 +208,11 @@ pub fn draw_doc(ui: &mut Ui, doc: &mut Doc, settings: &Settings, opts: ViewOpts)
                 continue;
             }
             let text = doc.line(d.line);
-            let byte = text.char_indices().nth(d.col).map(|(b, _)| b).unwrap_or(text.len());
-            let x0 = cell_x(d.line, byte);
-            let x1 = (text_x0 + doc.line_cells(d.line) as f64 * cell_w).max(x0 + cell_w);
+            let x0 = cell_x(d.line, d.col.min(text.len()));
+            let x1 = match d.end {
+                Some(e) if e > d.col => cell_x(d.line, e.min(text.len())).max(x0 + cell_w * 0.5),
+                _ => (text_x0 + doc.line_cells(d.line) as f64 * cell_w).max(x0 + cell_w),
+            };
             let y1 = row_y(d.line) + lh;
             let color = severity_color(ui, d.severity);
             ui.draw.hline(x0, x1, y1 - m.px(2.0), m.px(2.0), color);
@@ -301,8 +331,15 @@ pub fn draw_doc(ui: &mut Ui, doc: &mut Doc, settings: &Settings, opts: ViewOpts)
             ui.draw.rect(Rect::new(panel.min, Vec2::new(panel.min.x + m.px(4.0), panel.max.y)), severity_color(ui, d.severity));
             ui.text_in_rect(&text, &ts, Rect::new(Vec2::new(panel.min.x + m.pad, panel.min.y), panel.max), theme.text);
         }
+        // ---- the language server's popups, over everything ----
+        if let Some(item) = opts.lsp.draw(ui, doc, Geom { vp, text_x0, origin_y: origin.y, cell_w, lh }, &style) {
+            lsp_ui::apply(doc, &item, opts.lsp.utf16, now);
+            out.changed = true;
+            ui.state.request_rebuild = true;
+        }
         // One line of slack below the last, so the end can sit above the bottom.
         ui.space(n as f64 * lh + lh + m.gap);
     });
+    out.lsp = lsp_out;
     out
 }

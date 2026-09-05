@@ -6,6 +6,7 @@
 
 pub mod find;
 pub mod input;
+pub mod lsp_ui;
 pub mod ops;
 pub mod tabs;
 pub mod view;

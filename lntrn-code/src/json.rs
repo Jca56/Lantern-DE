@@ -47,6 +47,11 @@ impl From<usize> for Json {
         Json::Num(n as f64)
     }
 }
+impl From<u64> for Json {
+    fn from(n: u64) -> Self {
+        Json::Num(n as f64)
+    }
+}
 impl From<u32> for Json {
     fn from(n: u32) -> Self {
         Json::Num(f64::from(n))

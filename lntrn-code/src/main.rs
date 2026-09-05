@@ -21,6 +21,7 @@ mod files;
 mod git;
 mod ide;
 mod json;
+mod lsp;
 mod model;
 mod pending;
 mod preview;

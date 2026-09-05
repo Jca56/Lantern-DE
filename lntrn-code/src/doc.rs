@@ -153,6 +153,11 @@ impl Doc {
         self.buffer.version() != self.saved_version
     }
 
+    /// The buffer version last saved (or loaded).
+    pub fn saved_version(&self) -> u64 {
+        self.saved_version
+    }
+
     /// The text on disk is now this: one undoable step, then clean.
     pub fn replace_all(&mut self, text: &str, now: f64) {
         let whole = Range::new(Pos::new(0, 0), self.buffer.end());

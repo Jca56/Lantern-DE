@@ -76,7 +76,7 @@ fn terminal_area_at_runtime() {
 /// the problem is opened.
 #[test]
 fn problems_from_terminal_output() {
-    use crate::term::diag::Severity;
+    use crate::problems::Severity;
     let dir = std::env::temp_dir().join(format!("lntrn-code-problems-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -95,11 +95,12 @@ fn problems_from_terminal_output() {
     t.diags.line_done("warning: unused variable: `x`");
     t.diags.line_done("  --> src/main.rs:2:9");
     t.diags.resolve_pending(Some(&dir), &[]);
-    assert_eq!((app.problem_count(Severity::Error), app.problem_count(Severity::Warning)), (1, 1));
+    let count = |s: Severity| app.problems().iter().filter(|p| p.severity == s).count();
+    assert_eq!((count(Severity::Error), count(Severity::Warning)), (1, 1));
     let json = app.diagnostics_json(None).to_text();
     assert!(json.contains("src/main.rs") && json.contains("\"severity\":\"Error\"") && json.contains("\"line\":1") && json.contains("\"character\":17"), "{json}");
     assert_eq!(app.diagnostics_json(Some(&dir.join("nope.rs"))).to_text(), "[]");
-    let target = app.diagnostics().next().and_then(|d| d.resolved.clone()).expect("the path resolved");
+    let target = app.problems().into_iter().find_map(|p| p.path).expect("the path resolved");
     app.pending_paths.push(target.clone());
     app.pending_goto = Some((target.clone(), Goto::Printed { line: Some(2), col: Some(18) }));
     app.apply_pending(&mut shell);

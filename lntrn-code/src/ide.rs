@@ -206,8 +206,8 @@ impl App {
     /// `[{uri, diagnostics: [{message, severity, range, source}]}]`.
     pub fn diagnostics_json(&self, only: Option<&Path>) -> Json {
         let mut files: Vec<(PathBuf, Vec<Json>)> = Vec::new();
-        for d in self.diagnostics() {
-            let Some(p) = &d.resolved else {
+        for d in self.problems() {
+            let Some(p) = &d.path else {
                 continue;
             };
             if only.is_some_and(|o| o != p) {
@@ -216,9 +216,15 @@ impl App {
             let severity = match d.severity {
                 Severity::Error => "Error",
                 Severity::Warning => "Warning",
+                Severity::Info => "Information",
+                Severity::Hint => "Hint",
             };
-            let pos = obj! { "line" => d.line.saturating_sub(1), "character" => d.col.saturating_sub(1) };
-            let entry = obj! { "message" => d.message.as_str(), "severity" => severity, "range" => obj! { "start" => pos.clone(), "end" => pos }, "source" => "terminal" };
+            let start = obj! { "line" => d.line.saturating_sub(1), "character" => d.col.saturating_sub(1) };
+            let end = match d.span {
+                Some(s) => obj! { "line" => s.end_line, "character" => s.end_col },
+                None => start.clone(),
+            };
+            let entry = obj! { "message" => d.message.as_str(), "severity" => severity, "range" => obj! { "start" => start, "end" => end }, "source" => d.source.as_str() };
             match files.iter_mut().find(|(f, _)| f == p) {
                 Some((_, list)) => list.push(entry),
                 None => files.push((p.clone(), vec![entry])),

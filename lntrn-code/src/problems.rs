@@ -1,10 +1,59 @@
-//! The Problems editor: every error and warning the terminals read off
-//! their output, one row each, a click to jump to it in the code.
+//! Problems from anywhere: what the terminals read off build output and
+//! what the language servers report, as one list ([`Problem`]), and the
+//! Problems editor that shows them, a click jumping to the code.
+
+use std::path::PathBuf;
 
 use lntrn_math::{Rect, Vec2};
 use lntrn_ui::{CursorIcon, FILL, Sense, Ui};
 
-use crate::term::diag::Severity;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Severity {
+    Error,
+    Warning,
+    Info,
+    Hint,
+}
+
+impl Severity {
+    pub fn label(self) -> &'static str {
+        match self {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+            Severity::Info => "info",
+            Severity::Hint => "hint",
+        }
+    }
+}
+
+/// A span in a file as a language server gave it: 0-based lines, columns
+/// in the server's units (see [`crate::lsp::pos`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LspSpan {
+    pub line: usize,
+    pub col: usize,
+    pub end_line: usize,
+    pub end_col: usize,
+    pub utf16: bool,
+}
+
+/// One problem, wherever it came from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Problem {
+    pub severity: Severity,
+    pub message: String,
+    /// `rustc`, `rust-analyzer`, `terminal`...
+    pub source: String,
+    /// The file, when it was found.
+    pub path: Option<PathBuf>,
+    /// The path to show.
+    pub shown: String,
+    /// 1-based line and character column, for the list.
+    pub line: usize,
+    pub col: usize,
+    /// The exact span, when a server gave one.
+    pub span: Option<LspSpan>,
+}
 
 pub struct ProblemRow {
     pub severity: Severity,
@@ -26,6 +75,8 @@ pub fn severity_color(ui: &Ui, s: Severity) -> lntrn_math::Color {
     match s {
         Severity::Error => ui.theme.close,
         Severity::Warning => ui.theme.accent,
+        Severity::Info => ui.theme.focus,
+        Severity::Hint => ui.theme.text_dim,
     }
 }
 

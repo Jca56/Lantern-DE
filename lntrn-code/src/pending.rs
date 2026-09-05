@@ -12,6 +12,7 @@ use crate::app::{App, ClipOp, Editor, Goto};
 use crate::bridge::Bridge;
 use crate::buffer::{Pos, Range};
 use crate::editor::editor_id;
+use crate::lsp::pos::from_units;
 use crate::term::{TermId, Terminal};
 
 impl App {
@@ -118,6 +119,13 @@ impl App {
                         // Compilers count columns in characters, from one.
                         let byte = col.filter(|c| *c > 0).and_then(|c| text.char_indices().nth(c - 1).map(|(b, _)| b)).unwrap_or(0);
                         doc.set_cursor(Pos::new(l, byte), false);
+                    }
+                    Goto::Units { line, col, end_col, utf16 } => {
+                        let l = line.min(n.saturating_sub(1));
+                        let text = doc.line(l);
+                        let a = from_units(text, col, utf16);
+                        let b = from_units(text, end_col, utf16).max(a);
+                        doc.select(Range::new(Pos::new(l, a), Pos::new(l, b)));
                     }
                     Goto::Span { line, col, len } => {
                         let l = line.min(n.saturating_sub(1));

@@ -21,10 +21,12 @@ use crate::editor::find::Finder;
 use crate::files::Project;
 use crate::git::Git;
 use crate::git::gutter::LineMark;
+use crate::lsp::Lsp;
+use crate::editor::lsp_ui::LspUi;
 use crate::search::Search;
 use crate::session::Session;
 use crate::settings::Settings;
-use crate::term::diag::{Diag, Severity};
+use crate::problems::Severity;
 use crate::term::Terminal;
 use crate::watch::Watcher;
 use crate::text_util::cell_of_byte;
@@ -44,6 +46,9 @@ pub struct App {
     pub(crate) next_term: u64,
     pub finder: Finder,
     pub search: Search,
+    /// The language servers and their popups in the code view.
+    pub lsp: Lsp,
+    pub lsp_ui: LspUi,
     /// The project's repository, when it is in one.
     pub git: Option<Git>,
     /// Gutter marks per document: `(last edit, HEAD, marks)`.
@@ -110,6 +115,8 @@ impl App {
             next_term: 1,
             finder: Finder::default(),
             search: Search::default(),
+            lsp: Lsp::default(),
+            lsp_ui: LspUi::default(),
             git: None,
             git_marks: HashMap::new(),
             pending_git_diff: None,
@@ -218,6 +225,8 @@ impl App {
         }
         self.git = Git::find(&root, self.waker.clone());
         self.git_marks.clear();
+        self.lsp.set_root(Some(root.clone()));
+        self.lsp_ui.close_all();
         self.project = Some(Project::new(root));
         self.session_dirty = true;
     }
@@ -226,15 +235,6 @@ impl App {
     /// edits with.
     pub fn clock(&self) -> f64 {
         self.started.elapsed().as_secs_f64()
-    }
-
-    /// Every problem the terminals have read off their output.
-    pub fn diagnostics(&self) -> impl Iterator<Item = &Diag> {
-        self.terminals.iter().flat_map(|t| t.diags.items.iter())
-    }
-
-    pub fn problem_count(&self, s: Severity) -> usize {
-        self.terminals.iter().map(|t| t.diags.count(s)).sum()
     }
 
     /// The document at `path`, open or not (its canonical form too).
@@ -377,14 +377,16 @@ impl Host for App {
         let sel = if d.has_selection() { format!(" · {} selected", d.selected_text().chars().count()) } else { String::new() };
         let claude = if self.ide_connected > 0 { " · Claude ✓" } else { "" };
         let branch = self.git.as_ref().filter(|g| !g.branch.is_empty()).map(|g| format!("⎇ {} · ", g.branch)).unwrap_or_default();
-        let (errors, warnings) = (self.problem_count(Severity::Error), self.problem_count(Severity::Warning));
+        let all = self.problems();
+        let (errors, warnings) = (all.iter().filter(|p| p.severity == Severity::Error).count(), all.iter().filter(|p| p.severity == Severity::Warning).count());
         let problems = match (errors, warnings) {
             (0, 0) => String::new(),
             (e, 0) => format!(" · {e} error{}", if e == 1 { "" } else { "s" }),
             (0, w) => format!(" · {w} warning{}", if w == 1 { "" } else { "s" }),
             (e, w) => format!(" · {e} error{}, {w} warning{}", if e == 1 { "" } else { "s" }, if w == 1 { "" } else { "s" }),
         };
-        format!("{branch}Ln {}, Col {col}{sel} · {} · {}{claude}{problems}", d.cursor.line + 1, d.lang().name(), d.buffer.ending.label())
+        let server = self.lsp.status().map(|s| format!(" · {s}")).unwrap_or_default();
+        format!("{branch}Ln {}, Col {col}{sel} · {} · {}{claude}{problems}{server}", d.cursor.line + 1, d.lang().name(), d.buffer.ending.label())
     }
 
     fn title_menus(&self) -> &[(&str, &str)] {
@@ -477,6 +479,7 @@ impl Host for App {
 impl AppHost for App {
     fn waker(&mut self, waker: Waker) {
         self.ide_start(waker.clone());
+        self.lsp.set_waker(waker.clone());
         if let Some(p) = &self.project {
             self.git = Git::find(&p.root, Some(waker.clone()));
         }
@@ -493,6 +496,7 @@ impl AppHost for App {
         again |= self.ide_settle_writes(shell);
         again |= self.watch_pump(shell);
         again |= self.search.poll();
+        again |= self.lsp_pump(shell);
         if let Some(g) = self.git.as_mut() {
             again |= g.poll();
             if let Some(delay) = g.tick(shell.state.now) {
