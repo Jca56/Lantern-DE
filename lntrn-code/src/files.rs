@@ -152,7 +152,24 @@ pub struct FilesOut {
     pub open: Option<PathBuf>,
     /// A right click on an entry: its path, whether it is a folder, where.
     pub context: Option<(PathBuf, bool, Vec2)>,
+    pub new_file: bool,
+    pub open_file: bool,
     pub open_folder: bool,
+}
+
+/// New File, Open File, Open Folder in a row.
+fn file_buttons(ui: &mut Ui, out: &mut FilesOut) {
+    ui.row(|ui| {
+        if ui.button("New File").clicked {
+            out.new_file = true;
+        }
+        if ui.button("Open File…").clicked {
+            out.open_file = true;
+        }
+        if ui.button("Open Folder…").clicked {
+            out.open_folder = true;
+        }
+    });
 }
 
 pub fn draw_files(ui: &mut Ui, project: Option<&mut Project>, selected: Option<&Path>, git: Option<(&Git, &GitColors)>) -> FilesOut {
@@ -160,9 +177,7 @@ pub fn draw_files(ui: &mut Ui, project: Option<&mut Project>, selected: Option<&
     let Some(p) = project else {
         ui.heading("No folder open");
         ui.paragraph("Open a folder to browse its files here, or drop one on the window.");
-        if ui.button("Open Folder…").clicked {
-            out.open_folder = true;
-        }
+        file_buttons(ui, &mut out);
         return out;
     };
     let mut refresh = false;
@@ -185,6 +200,7 @@ pub fn draw_files(ui: &mut Ui, project: Option<&mut Project>, selected: Option<&
         p.refresh();
         ui.state.request_rebuild = true;
     }
+    file_buttons(ui, &mut out);
     let root = p.root.clone();
     ui.scroll_area("tree", None, |ui| {
         draw_dir(ui, p, &root, selected, git, &mut out);

@@ -11,6 +11,8 @@ use crate::syntax::TokenKind;
 props! {
     /// Colors of the code by what a token is.
     pub struct SyntaxColors {
+        /// Code that is no token in particular; the editor's ink, apart from the theme's.
+        pub text: Color = Color::hex(0xF2F2F4) => { id: 13, label: "Plain Text" },
         pub keyword: Color = Color::hex(0xC792EA) => { id: 1 },
         pub types: Color = Color::hex(0xFFCB6B) => { id: 2, label: "Types" },
         pub function: Color = Color::hex(0x82AAFF) => { id: 3 },
@@ -27,10 +29,10 @@ props! {
 }
 
 impl SyntaxColors {
-    /// The color of a token kind; `text` is the plain-text color.
-    pub fn of(&self, kind: TokenKind, text: Color) -> Color {
+    /// The color of a token kind.
+    pub fn of(&self, kind: TokenKind) -> Color {
         match kind {
-            TokenKind::Text => text,
+            TokenKind::Text => self.text,
             TokenKind::Keyword => self.keyword,
             TokenKind::Type => self.types,
             TokenKind::Function => self.function,

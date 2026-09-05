@@ -75,6 +75,7 @@ pub struct CodeAction {
 
 /// What an action asks of the server for the focused document.
 pub enum Ask {
+    Definition,
     Rename(String),
     References,
     CodeActions,

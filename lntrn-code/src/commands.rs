@@ -46,6 +46,7 @@ pub const CODE_ACTIONS: &str = "code.actions";
 pub const CODE_ACTION_PICK: &str = "code.action_pick";
 pub const FORMAT: &str = "code.format";
 pub const SIGNATURE: &str = "code.signature";
+pub const GOTO_DEF: &str = "code.goto_definition";
 pub const SHOW_FILES: &str = "view.files";
 pub const SHOW_TERMINAL: &str = "view.terminal";
 pub const SHOW_PROBLEMS: &str = "view.problems";
@@ -73,7 +74,8 @@ pub const IDE_SEND: &str = "ide.send_selection";
 pub const OPEN_PREFIX: &str = "open:";
 
 /// The palette's commands: (action id, label).
-pub const PALETTE: [(&str, &str); 41] = [
+pub const PALETTE: [(&str, &str); 42] = [
+    (GOTO_DEF, "Go to Definition"),
     (RENAME_SYMBOL, "Rename Symbol…"),
     (REFERENCES, "Find References"),
     (CODE_ACTIONS, "Code Actions…"),
@@ -219,6 +221,7 @@ pub fn menu(app: &App, name: &str) -> Option<Menu> {
                 MenuItem::separator(),
                 item("Go to Line…", GOTO_LINE).enabled(has_doc),
                 MenuItem::separator(),
+                item("Go to Definition", GOTO_DEF).enabled(has_doc).hint("F12"),
                 item("Rename Symbol…", RENAME_SYMBOL).enabled(has_doc),
                 item("Find References", REFERENCES).enabled(has_doc),
                 item("Code Actions…", CODE_ACTIONS).enabled(has_doc),

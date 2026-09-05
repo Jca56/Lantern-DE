@@ -37,6 +37,24 @@ fn folder_of(path: &Path) -> PathBuf {
     path.parent().map(Path::to_path_buf).unwrap_or_else(|| path.to_path_buf())
 }
 
+/// The right-click menu of the code: the clipboard, then what the
+/// language server can do when there is one.
+pub fn editor_menu(at: Vec2, lsp: bool) -> ContextMenu {
+    let a = Action::new;
+    let mut items = vec![Item::action("Cut", a(CUT)), Item::action("Copy", a(COPY)), Item::action("Paste", a(PASTE)), Item::action("Select All", a(SELECT_ALL))];
+    if lsp {
+        items.push(Item::Separator);
+        items.push(Item::action("Go to Definition", a(GOTO_DEF)));
+        items.push(Item::action("Find References", a(REFERENCES)));
+        items.push(Item::action("Rename Symbol…", a(RENAME_SYMBOL)));
+        items.push(Item::action("Code Actions…", a(CODE_ACTIONS)));
+        items.push(Item::action("Format Document", a(FORMAT)));
+    }
+    items.push(Item::Separator);
+    items.push(Item::action("Send Selection to Claude", a(IDE_SEND)));
+    ContextMenu::new("Editor", at).tab("Edit", items)
+}
+
 /// The right-click menu of a file or folder in the tree.
 pub fn file_menu(path: &Path, is_dir: bool, at: Vec2) -> ContextMenu {
     let p = |id: &str| Action::new(id).with("path", Value::Str(path.display().to_string()));
@@ -260,6 +278,7 @@ impl App {
                     self.pending_focus = Some(crate::editor::editor_id(a));
                 }
             }
+            GOTO_DEF => self.lsp_ask(Ask::Definition),
             REFERENCES => self.lsp_ask(Ask::References),
             CODE_ACTIONS => self.lsp_ask(Ask::CodeActions),
             SIGNATURE => self.lsp_ask(Ask::Signature),

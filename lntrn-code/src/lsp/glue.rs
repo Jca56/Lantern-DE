@@ -120,6 +120,7 @@ impl App {
         let d = &self.docs[i];
         let cur = d.cursor;
         match ask {
+            Ask::Definition => self.lsp.definition(d, cur),
             Ask::Rename(name) => self.lsp.rename(d, cur, &name),
             Ask::References => {
                 let r = word_range(d, cur);

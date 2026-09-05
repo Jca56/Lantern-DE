@@ -98,17 +98,11 @@ fn change_row(ui: &mut Ui, c: &Change, staged: bool, colors: &GitColors, out: &m
     let btn = (h * 0.8).round();
     let diff_rect = Rect::from_center_size(Vec2::new(rect.max.x - btn * 0.5 - m.gap, rect.center().y), Vec2::splat(btn));
     let stage_rect = Rect::from_center_size(Vec2::new(diff_rect.min.x - btn * 0.5 - m.gap, rect.center().y), Vec2::splat(btn));
-    // The buttons are hit-tested first so they win the press.
-    let (icon, tip) = if staged { (Icon::Minus, "Unstage") } else { (Icon::Plus, "Stage") };
-    if ui.icon_button_in(id.with("stage"), stage_rect, icon, None, tip).clicked {
-        let verb = if staged { vec!["reset".to_owned(), "-q".to_owned(), "--".to_owned(), c.rel.clone()] } else { vec!["add".to_owned(), "--".to_owned(), c.rel.clone()] };
-        out.run.push(verb);
-    }
-    if c.status.letter() != '?' && c.status.letter() != 'D' && ui.icon_button_in(id.with("diff"), diff_rect, Icon::Eye, None, "Diff against HEAD").clicked {
-        out.diff = Some(c.path.clone());
-    }
-    let r = ui.interact(id, rect, Sense::CLICK);
-    ui.focusable(id, rect);
+    // The row's own hit area stops where the buttons start, so neither
+    // steals the other's press; its hover fill goes under the buttons.
+    let name_area = Rect::new(rect.min, Vec2::new(stage_rect.min.x - m.gap, rect.max.y));
+    let r = ui.interact(id, name_area, Sense::CLICK);
+    ui.focusable(id, name_area);
     let theme = ui.theme;
     if r.hovered {
         ui.state.cursor_icon = CursorIcon::Pointer;
@@ -117,10 +111,18 @@ fn change_row(ui: &mut Ui, c: &Change, staged: bool, colors: &GitColors, out: &m
     if r.clicked && c.status.letter() != 'D' {
         out.open = Some(c.path.clone());
     }
+    let (icon, tip) = if staged { (Icon::Minus, "Unstage") } else { (Icon::Plus, "Stage") };
+    if ui.icon_button_in(id.with("stage"), stage_rect, icon, None, tip).clicked {
+        let verb = if staged { vec!["reset".to_owned(), "-q".to_owned(), "--".to_owned(), c.rel.clone()] } else { vec!["add".to_owned(), "--".to_owned(), c.rel.clone()] };
+        out.run.push(verb);
+    }
+    if c.status.letter() != '?' && c.status.letter() != 'D' && ui.icon_button_in(id.with("diff"), diff_rect, Icon::Eye, None, "Diff against HEAD").clicked {
+        out.diff = Some(c.path.clone());
+    }
     let letter = c.status.letter().to_string();
     let letter_w = ui.measure("W", &style) + m.pad;
     ui.text_in_rect(&letter, &style, Rect::new(Vec2::new(rect.min.x + m.pad, rect.min.y), Vec2::new(rect.min.x + m.pad + letter_w, rect.max.y)), letter_color(c.status.letter(), colors));
     let name_rect = Rect::new(Vec2::new(rect.min.x + m.pad + letter_w, rect.min.y), Vec2::new(stage_rect.min.x - m.gap, rect.max.y));
     ui.text_in_rect(&c.rel, &style, name_rect, theme.text);
-    ui.focus_ring(id, rect);
+    ui.focus_ring(id, name_area);
 }

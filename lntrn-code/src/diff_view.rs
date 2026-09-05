@@ -129,7 +129,7 @@ pub fn draw_diff(ui: &mut Ui, d: &DiffDoc, settings: &Settings) {
             expand_tabs(text, tab, &mut expanded, &mut cells);
             let tx = x0 + gutter_w;
             quads.clear();
-            ui.text.place(&expanded, &style, tx as f32, y as f32, 1.0e6, theme.text.to_gpu(), &mut quads);
+            ui.text.place(&expanded, &style, tx as f32, y as f32, 1.0e6, colors.text.to_gpu(), &mut quads);
             let mut tokens: Vec<Token> = Vec::new();
             lex_line(lang, text, LexState::Normal, &mut tokens);
             if !tokens.is_empty() {
@@ -141,7 +141,7 @@ pub fn draw_diff(ui: &mut Ui, d: &DiffDoc, settings: &Settings) {
                         ti += 1;
                     }
                     if ti < spans.len() && spans[ti].0 <= c {
-                        q.color = colors.of(spans[ti].2, theme.text).to_gpu();
+                        q.color = colors.of(spans[ti].2).to_gpu();
                     }
                 }
             }

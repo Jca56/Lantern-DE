@@ -1,7 +1,7 @@
 //! The Code editor of one area: its file tabs, the find bar when it is
 //! open here, and the document view.
 
-use lntrn_ui::{AreaCx, Key, Ui};
+use lntrn_ui::{AreaCx, Key, ShellRequest, Ui};
 
 use crate::app::{App, TabState};
 use crate::commands;
@@ -121,6 +121,12 @@ impl App {
             self.focus_doc = Some(doc_id);
             self.focus_area = Some(area);
         }
+        if let Some(at) = out.context {
+            self.focus_doc = Some(doc_id);
+            self.focus_area = Some(area);
+            let served = self.docs.iter().find(|d| d.id == doc_id).is_some_and(|d| self.lsp.serves(d.lang()));
+            cx.request(ShellRequest::ContextMenu(Box::new(crate::actions::editor_menu(at, served))));
+        }
         if let Some(id) = close_id {
             self.focus_doc = Some(id);
             self.focus_area = Some(area);
@@ -160,23 +166,9 @@ impl App {
         out
     }
 
-    fn draw_welcome(&mut self, ui: &mut Ui, cx: &mut AreaCx<TabState>) -> bool {
-        let mut action: Option<&str> = None;
-        ui.row(|ui| {
-            if ui.button("New File").clicked {
-                action = Some(commands::NEW);
-            }
-            if ui.button("Open File…").clicked {
-                action = Some(commands::OPEN);
-            }
-            if ui.button("Open Folder…").clicked {
-                action = Some(commands::OPEN_FOLDER);
-            }
-        });
-        if let Some(id) = action {
-            self.focus_area = Some(cx.area);
-            self.run_action(&Action::new(id), &mut cx.host());
-        }
+    /// An empty Code area: a pointer to where files come from.
+    fn draw_welcome(&mut self, ui: &mut Ui, _cx: &mut AreaCx<TabState>) -> bool {
+        ui.label_dim("Open a file from the Files panel, Ctrl+O, or Ctrl+P to find one by name.");
         false
     }
 }

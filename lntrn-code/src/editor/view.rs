@@ -42,7 +42,7 @@ pub struct ViewOpts<'a> {
     pub lsp: &'a mut LspUi,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct DocOut {
     /// The text changed.
     pub changed: bool,
@@ -50,6 +50,8 @@ pub struct DocOut {
     pub clicked: bool,
     /// What to ask the language server.
     pub lsp: LspOut,
+    /// A right click on the text: where the menu goes.
+    pub context: Option<Vec2>,
 }
 
 /// Blink period and the part of it the caret shows.
@@ -149,6 +151,18 @@ pub fn draw_doc(ui: &mut Ui, doc: &mut Doc, settings: &Settings, opts: ViewOpts)
                 ui.state.request_rebuild = true;
             }
         }
+        // A right click opens the editor's menu, at the caret it moves there
+        // unless it lands inside the selection.
+        if ui.state.right_pressed && vp.contains(ui.state.pointer) {
+            let p = hit(doc, ui.state.pointer, origin, gutter_w, cell_w, lh);
+            let sel = doc.selection();
+            let inside = !sel.is_empty() && (p.line, p.col) >= (sel.start.line, sel.start.col) && (p.line, p.col) <= (sel.end.line, sel.end.col);
+            if !inside {
+                doc.set_cursor(p, false);
+            }
+            out.context = Some(ui.state.pointer);
+            ui.state.request_rebuild = true;
+        }
         // Ctrl+click goes to the definition; a resting pointer asks what is under it.
         if r.clicked && ui.state.mods.ctrl() {
             lsp_out.definition = Some(hit(doc, ui.state.pointer, origin, gutter_w, cell_w, lh));
@@ -230,7 +244,8 @@ pub fn draw_doc(ui: &mut Ui, doc: &mut Doc, settings: &Settings, opts: ViewOpts)
         let mut cells: Vec<u32> = Vec::new();
         let mut quads: Vec<GlyphQuad> = Vec::new();
         let mut spans: Vec<(u32, u32, TokenKind)> = Vec::new();
-        let plain = theme.text.to_gpu();
+        // The code's own ink, apart from the theme's text color.
+        let plain = colors.text.to_gpu();
         for line in first..last {
             let text = doc.line(line);
             if text.is_empty() {
@@ -255,7 +270,7 @@ pub fn draw_doc(ui: &mut Ui, doc: &mut Doc, settings: &Settings, opts: ViewOpts)
                         ti += 1;
                     }
                     if ti < spans.len() && spans[ti].0 <= c {
-                        q.color = colors.of(spans[ti].2, theme.text).to_gpu();
+                        q.color = colors.of(spans[ti].2).to_gpu();
                     }
                 }
             }

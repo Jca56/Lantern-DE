@@ -47,6 +47,12 @@ impl App {
                     self.pending_paths.push(p);
                     cx.rebuild();
                 }
+                if out.new_file {
+                    self.run_action(&Action::new(commands::NEW), &mut cx.host());
+                }
+                if out.open_file {
+                    self.run_action(&Action::new(commands::OPEN), &mut cx.host());
+                }
                 if out.open_folder {
                     self.run_action(&Action::new(commands::OPEN_FOLDER), &mut cx.host());
                 }
