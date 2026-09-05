@@ -92,7 +92,7 @@ pub fn draw_search(ui: &mut Ui, s: &mut Search, project: Option<&Project>) -> Se
                     let theme = ui.theme;
                     if r.hovered {
                         ui.state.cursor_icon = CursorIcon::Pointer;
-                        ui.fill(rect, theme.hover(theme.panel));
+                        ui.fill(rect, theme.hover(theme.panel.mid()));
                     }
                     if r.clicked {
                         out.open = Some((f.path.clone(), hit.line, hit.col, hit.len));

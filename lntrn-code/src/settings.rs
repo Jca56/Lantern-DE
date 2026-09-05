@@ -77,6 +77,15 @@ props! {
         pub format_on_save: bool = false => { id: 8 },
         pub colors: SyntaxColors = SyntaxColors::default() => { id: 10, label: "Syntax Colors" },
         pub git: GitColors = GitColors::default() => { id: 11, label: "Git Colors" },
+        pub terminal: TerminalColors = TerminalColors::default() => { id: 14, label: "Terminal" },
+    }
+}
+
+props! {
+    /// The terminal's own well and ink, apart from the theme's fields.
+    pub struct TerminalColors {
+        pub background: Color = Color::hex(0x131315) => { id: 1 },
+        pub text: Color = Color::hex(0xF2F2F4) => { id: 2 },
     }
 }
 

@@ -173,7 +173,7 @@ pub fn draw_doc(ui: &mut Ui, doc: &mut Doc, settings: &Settings, opts: ViewOpts)
         let text_clip = Rect::new(Vec2::new(vp.min.x + gutter_w, vp.min.y), vp.max);
         ui.draw.push_clip(text_clip);
         if highlight_line && sel.is_empty() && (first..last).contains(&cur.line) {
-            ui.draw.rect(Rect::new(Vec2::new(text_clip.min.x, row_y(cur.line)), Vec2::new(vp.max.x, row_y(cur.line) + lh)), theme.panel);
+            ui.draw.rect(Rect::new(Vec2::new(text_clip.min.x, row_y(cur.line)), Vec2::new(vp.max.x, row_y(cur.line) + lh)), theme.panel.mid());
         }
         if !sel.is_empty() {
             let color = theme.selection.fade(0.45);

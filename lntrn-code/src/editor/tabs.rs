@@ -55,7 +55,7 @@ pub fn draw_tabs(ui: &mut Ui, items: &[TabItem], current: usize) -> TabsOut {
             let bar = Rect::new(Vec2::new(rect.min.x + m.border, rect.max.y - m.px(3.0)), Vec2::new(rect.max.x - m.border, rect.max.y - m.border));
             ui.draw.rect(bar, theme.accent);
         } else {
-            let base = if r.hovered { theme.hover(theme.panel) } else { theme.bottom(theme.panel) };
+            let base = if r.hovered { theme.hover(theme.panel.mid()) } else { theme.panel.bottom };
             ui.fill(rect, base);
         }
         let ink = if is_current { theme.text } else { theme.text_dim };

@@ -113,7 +113,7 @@ pub fn draw_problems(ui: &mut Ui, rows: &[ProblemRow]) -> ProblemsOut {
             let theme = ui.theme;
             if r.hovered && row.openable {
                 ui.state.cursor_icon = CursorIcon::Pointer;
-                ui.fill(rect, theme.hover(theme.panel));
+                ui.fill(rect, theme.hover(theme.panel.mid()));
             }
             if r.clicked && row.openable {
                 out.open = Some(i);

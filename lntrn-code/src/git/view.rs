@@ -112,7 +112,7 @@ fn change_row(ui: &mut Ui, c: &Change, staged: bool, colors: &GitColors, out: &m
     let theme = ui.theme;
     if r.hovered {
         ui.state.cursor_icon = CursorIcon::Pointer;
-        ui.fill(rect, theme.hover(theme.panel));
+        ui.fill(rect, theme.hover(theme.panel.mid()));
     }
     if r.clicked && c.status.letter() != 'D' {
         out.open = Some(c.path.clone());

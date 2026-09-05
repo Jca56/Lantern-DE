@@ -303,9 +303,9 @@ impl LspUi {
                 }
                 let selected = *i == c.selected;
                 if selected {
-                    ui.fill_shaded(rect, theme.selection);
+                    ui.fill_shaded(rect, theme.shaded(theme.selection));
                 } else if r.hovered {
-                    ui.fill(rect, theme.hover(theme.panel));
+                    ui.fill(rect, theme.hover(theme.panel.mid()));
                 }
                 let color = if selected { theme.selection_text } else { theme.text };
                 let dim = if selected { theme.selection_text.fade(0.75) } else { theme.text_dim };

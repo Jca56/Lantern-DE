@@ -186,7 +186,7 @@ fn toggle_button(ui: &mut Ui, label: &str, on: &mut bool, tip: &str) -> bool {
     }
     let theme = ui.theme;
     if *on {
-        ui.raised(rect, theme.accent, r.held);
+        ui.raised(rect, theme.shaded(theme.accent), r.held);
         ui.text_centered(label, &style, rect, theme.accent_text);
     } else {
         ui.button_face(rect, &r);

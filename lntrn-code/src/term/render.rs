@@ -181,8 +181,8 @@ pub fn draw_terminal(ui: &mut Ui, term: &mut Terminal, settings: &Settings, area
     }
 
     // ---- draw ----
-    let fg_default = theme.text;
-    let bg_default = theme.field;
+    let fg_default = settings.terminal.text;
+    let bg_default = settings.terminal.background;
     ui.draw.rect(rect, bg_default);
     ui.draw.push_clip(rect);
     let g = &term.grid;
