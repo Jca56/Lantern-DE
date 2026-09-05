@@ -101,9 +101,14 @@ fn problems_from_terminal_output() {
     assert_eq!(app.diagnostics_json(Some(&dir.join("nope.rs"))).to_text(), "[]");
     let target = app.diagnostics().next().and_then(|d| d.resolved.clone()).expect("the path resolved");
     app.pending_paths.push(target.clone());
-    app.pending_goto = Some((target, Some(2), Some(18)));
+    app.pending_goto = Some((target.clone(), Goto::Printed { line: Some(2), col: Some(18) }));
     app.apply_pending(&mut shell);
     let doc = app.focus_doc().expect("the file opened");
     assert_eq!((doc.cursor.line, doc.cursor.col), (1, 17), "the caret sits on the problem");
+    // A search hit selects its span.
+    app.pending_goto = Some((target, Goto::Span { line: 1, col: 8, len: 1 }));
+    app.apply_pending(&mut shell);
+    let doc = app.focus_doc().unwrap();
+    assert_eq!(doc.selected_text(), "x");
     let _ = std::fs::remove_dir_all(&dir);
 }

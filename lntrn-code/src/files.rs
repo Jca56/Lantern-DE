@@ -9,6 +9,10 @@ use std::path::{Path, PathBuf};
 use lntrn_math::Vec2;
 use lntrn_ui::{Icon, Ui, WidgetId};
 
+use crate::git::Git;
+use crate::git::view::letter_color;
+use crate::settings::GitColors;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     pub name: String,
@@ -151,7 +155,7 @@ pub struct FilesOut {
     pub open_folder: bool,
 }
 
-pub fn draw_files(ui: &mut Ui, project: Option<&mut Project>, selected: Option<&Path>) -> FilesOut {
+pub fn draw_files(ui: &mut Ui, project: Option<&mut Project>, selected: Option<&Path>, git: Option<(&Git, &GitColors)>) -> FilesOut {
     let mut out = FilesOut::default();
     let Some(p) = project else {
         ui.heading("No folder open");
@@ -183,12 +187,12 @@ pub fn draw_files(ui: &mut Ui, project: Option<&mut Project>, selected: Option<&
     }
     let root = p.root.clone();
     ui.scroll_area("tree", None, |ui| {
-        draw_dir(ui, p, &root, selected, &mut out);
+        draw_dir(ui, p, &root, selected, git, &mut out);
     });
     out
 }
 
-fn draw_dir(ui: &mut Ui, p: &mut Project, dir: &Path, selected: Option<&Path>, out: &mut FilesOut) {
+fn draw_dir(ui: &mut Ui, p: &mut Project, dir: &Path, selected: Option<&Path>, git: Option<(&Git, &GitColors)>, out: &mut FilesOut) {
     let entries = p.entries(dir).to_vec();
     if entries.is_empty() {
         ui.label_dim("Empty");
@@ -204,14 +208,25 @@ fn draw_dir(ui: &mut Ui, p: &mut Project, dir: &Path, selected: Option<&Path>, o
                 *ui.state.open(id) = false;
                 p.seen.insert(id);
             }
-            let r = ui.tree_node(&e.name, false, |ui| draw_dir(ui, p, &e.path, selected, out));
+            let r = ui.tree_node(&e.name, false, |ui| draw_dir(ui, p, &e.path, selected, git, out));
             if right && r.rect.contains(pointer) {
                 out.context = Some((e.path.clone(), true, pointer));
+            }
+            if let Some((g, _)) = git
+                && !r.open
+                && g.dirty_dirs.contains(&e.path)
+            {
+                git_dot(ui, r.rect, ui.theme.text_dim);
             }
         } else {
             let r = ui.tree_leaf(&e.name, selected == Some(e.path.as_path()));
             if r.clicked {
                 out.open = Some(e.path.clone());
+            }
+            if let Some((g, colors)) = git
+                && let Some(st) = g.status_of(&e.path)
+            {
+                git_dot(ui, r.rect, letter_color(st.letter(), colors));
             }
             if right && r.rect.contains(pointer) {
                 out.context = Some((e.path.clone(), false, pointer));
@@ -219,6 +234,12 @@ fn draw_dir(ui: &mut Ui, p: &mut Project, dir: &Path, selected: Option<&Path>, o
         }
         ui.pop_id();
     }
+}
+
+/// A dot at the end of a tree row: what git says about the entry.
+fn git_dot(ui: &mut Ui, row: lntrn_math::Rect, color: lntrn_math::Color) {
+    let r = (ui.m.widget_h * 0.12).round().max(ui.m.px(3.0));
+    ui.draw.circle(Vec2::new(row.max.x - ui.m.pad - r, row.center().y), r, color);
 }
 
 #[cfg(test)]

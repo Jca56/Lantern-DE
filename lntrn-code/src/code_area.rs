@@ -41,6 +41,7 @@ impl App {
             Some(path) => self.diagnostics().filter(|d| d.resolved.as_deref() == Some(path)).map(|d| DiagMark { line: d.line.saturating_sub(1), col: d.col.saturating_sub(1), severity: d.severity, message: d.message.clone() }).collect(),
             None => Vec::new(),
         };
+        let gutter = self.gutter_marks(doc_id, ui.state.now);
         let App { finder, docs, settings, last_editor_focus, .. } = self;
         let Some(doc) = docs.iter_mut().find(|d| d.id == doc_id) else {
             return false;
@@ -92,7 +93,7 @@ impl App {
         } else {
             (&[][..], None)
         };
-        let out = draw_doc(ui, doc, settings, ViewOpts { area_active: active, matches, current_match: current, diags: &marks });
+        let out = draw_doc(ui, doc, settings, ViewOpts { area_active: active, matches, current_match: current, diags: &marks, git: &gutter });
         changed |= out.changed;
         if out.focused {
             *last_editor_focus = Some(editor_focus);

@@ -11,6 +11,7 @@ use lntrn_ui::{CursorIcon, Sense, Ui};
 use crate::buffer::{Pos, Range};
 use crate::doc::Doc;
 use crate::editor::{cell_metrics, code_style, input, ops};
+use crate::git::gutter::{LineMark, MarkKind};
 use crate::problems::severity_color;
 use crate::settings::Settings;
 use crate::syntax::TokenKind;
@@ -32,6 +33,8 @@ pub struct ViewOpts<'a> {
     pub matches: &'a [Range],
     pub current_match: Option<usize>,
     pub diags: &'a [DiagMark],
+    /// What git says changed, for bars in the gutter.
+    pub git: &'a [LineMark],
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -252,6 +255,29 @@ pub fn draw_doc(ui: &mut Ui, doc: &mut Doc, settings: &Settings, opts: ViewOpts)
             quads.clear();
             ui.text.place(&num, &style, (right - w) as f32, row_y(line) as f32, 1.0e6, color.to_gpu(), &mut quads);
             ui.draw.glyphs(&quads);
+        }
+        // ---- git: a bar beside the lines that changed, a tick where lines went ----
+        let bar_x = gutter.max.x - m.px(6.0);
+        for mk in opts.git {
+            let color = match mk.kind {
+                MarkKind::Added => settings.git.added,
+                MarkKind::Modified => settings.git.modified,
+                MarkKind::Deleted => settings.git.deleted,
+            };
+            match mk.kind {
+                MarkKind::Deleted => {
+                    if mk.line >= first && mk.line <= last {
+                        let y = row_y(mk.line);
+                        ui.draw.rect(Rect::new(Vec2::new(bar_x - m.px(4.0), y - m.px(2.0)), Vec2::new(bar_x + m.px(3.0), y + m.px(2.0))), color);
+                    }
+                }
+                _ => {
+                    let (a, b) = (mk.line.max(first), (mk.line + mk.len).min(last));
+                    if a < b {
+                        ui.draw.rect(Rect::new(Vec2::new(bar_x, row_y(a)), Vec2::new(bar_x + m.px(3.0), row_y(b))), color);
+                    }
+                }
+            }
         }
         for d in opts.diags {
             if d.line >= first || d.line < last {

@@ -17,9 +17,22 @@ pub enum Editor {
     Diff,
     /// The errors and warnings read off the terminals' output.
     Problems,
+    /// Project-wide text search.
+    Search,
+    /// The repository: branch, changed files, staging and commits.
+    Git,
 }
 
-pub const EDITORS: [Editor; 8] = [Editor::Code, Editor::Files, Editor::Terminal, Editor::Problems, Editor::Preview, Editor::Diff, Editor::Preferences, Editor::Keys];
+pub const EDITORS: [Editor; 10] = [Editor::Code, Editor::Files, Editor::Search, Editor::Git, Editor::Terminal, Editor::Problems, Editor::Preview, Editor::Diff, Editor::Preferences, Editor::Keys];
+
+/// Where to put the caret once a file is open.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Goto {
+    /// A 1-based line and character column, as compilers print them.
+    Printed { line: Option<usize>, col: Option<usize> },
+    /// A 0-based line, byte column and byte length to select.
+    Span { line: usize, col: usize, len: usize },
+}
 
 /// What one tab of an area holds: the documents of a Code editor and
 /// which shows, or the terminal of a Terminal editor.

@@ -3,7 +3,7 @@
 //! change the layout (open a file, show the terminal) are queued here and
 //! applied once the rebuild is over ([`crate::pending`]).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use lntrn_app::lntrn_render::{Gpu, Images};
@@ -19,6 +19,9 @@ use crate::doc::{Doc, DocId};
 use crate::ide::PendingSelect;
 use crate::editor::find::Finder;
 use crate::files::Project;
+use crate::git::Git;
+use crate::git::gutter::LineMark;
+use crate::search::Search;
 use crate::session::Session;
 use crate::settings::Settings;
 use crate::term::diag::{Diag, Severity};
@@ -28,7 +31,7 @@ use crate::text_util::cell_of_byte;
 
 pub const APP_ID: &str = "lntrn-code";
 
-pub use crate::model::{ClipOp, EDITORS, Editor, TabState};
+pub use crate::model::{ClipOp, EDITORS, Editor, Goto, TabState};
 
 pub struct App {
     pub keys: KeyConfig,
@@ -40,6 +43,13 @@ pub struct App {
     pub terminals: Vec<Terminal>,
     pub(crate) next_term: u64,
     pub finder: Finder,
+    pub search: Search,
+    /// The project's repository, when it is in one.
+    pub git: Option<Git>,
+    /// Gutter marks per document: `(last edit, HEAD, marks)`.
+    pub(crate) git_marks: HashMap<DocId, (f64, String, Vec<LineMark>)>,
+    /// A file whose diff against HEAD was asked for.
+    pub pending_git_diff: Option<PathBuf>,
     /// The document actions act on: the current one of the last active
     /// Code area.
     pub focus_doc: Option<DocId>,
@@ -53,9 +63,9 @@ pub struct App {
     // ---- applied after the rebuild, with the screen in hand ----
     pub pending_paths: Vec<PathBuf>,
     pub pending_docs: Vec<DocId>,
-    /// Put the caret at a 1-based line (and column) of a file once it is
-    /// open: a path clicked in the terminal or the Problems list.
-    pub pending_goto: Option<(PathBuf, Option<usize>, Option<usize>)>,
+    /// Put the caret somewhere in a file once it is open: a path clicked
+    /// in the terminal, a problem, a search hit.
+    pub pending_goto: Option<(PathBuf, Goto)>,
     pub pending_folder: Option<PathBuf>,
     pub pending_show: Vec<Editor>,
     pub pending_new_terminal: Option<Option<PathBuf>>,
@@ -99,6 +109,10 @@ impl App {
             terminals: Vec::new(),
             next_term: 1,
             finder: Finder::default(),
+            search: Search::default(),
+            git: None,
+            git_marks: HashMap::new(),
+            pending_git_diff: None,
             focus_doc: None,
             focus_area: None,
             last_editor_focus: None,
@@ -202,6 +216,8 @@ impl App {
         if self.project.as_ref().is_some_and(|p| p.root == root) {
             return;
         }
+        self.git = Git::find(&root, self.waker.clone());
+        self.git_marks.clear();
         self.project = Some(Project::new(root));
         self.session_dirty = true;
     }
@@ -225,6 +241,17 @@ impl App {
     pub(crate) fn doc_by_path(&self, path: &Path) -> Option<usize> {
         let canon = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         self.docs.iter().position(|d| d.path.as_deref().is_some_and(|p| p == path || p == canon))
+    }
+
+    /// Run the project search for the query as it is now: over the
+    /// project's files, with unsaved documents as they are in the editor.
+    pub(crate) fn run_search(&mut self) {
+        let files = match self.project.as_mut() {
+            Some(p) => p.files().to_vec(),
+            None => Vec::new(),
+        };
+        let overrides: Vec<(PathBuf, String)> = self.docs.iter().filter(|d| d.is_dirty()).filter_map(|d| Some((d.path.clone()?, d.buffer.to_text()))).collect();
+        self.search.start(files, overrides, self.waker.clone());
     }
 
     /// The folder new things go in: the project, else home.
@@ -251,6 +278,11 @@ impl App {
         if let Some(p) = &self.project {
             wanted.extend(p.listed_dirs().map(Path::to_path_buf));
         }
+        // Commits and staging from a terminal show up as writes in .git.
+        let git_dir = self.git.as_ref().map(|g| g.root.join(".git")).filter(|d| d.is_dir());
+        if let Some(d) = &git_dir {
+            wanted.insert(d.clone());
+        }
         watcher.retain(|p| wanted.contains(p));
         for dir in &wanted {
             watcher.watch(dir);
@@ -259,6 +291,12 @@ impl App {
         let now = shell.state.now;
         for c in watcher.poll() {
             again = true;
+            if let Some(g) = self.git.as_mut() {
+                g.mark_dirty(now);
+            }
+            if git_dir.as_deref() == Some(c.dir.as_path()) {
+                continue;
+            }
             if c.is_listing()
                 && let Some(p) = self.project.as_mut()
             {
@@ -316,6 +354,8 @@ impl Host for App {
             Editor::Keys => "Key Bindings",
             Editor::Diff => "Diff",
             Editor::Problems => "Problems",
+            Editor::Search => "Search",
+            Editor::Git => "Git",
         }
     }
 
@@ -336,6 +376,7 @@ impl Host for App {
         let col = cell_of_byte(d.line(d.cursor.line), d.tab(), d.cursor.col) + 1;
         let sel = if d.has_selection() { format!(" · {} selected", d.selected_text().chars().count()) } else { String::new() };
         let claude = if self.ide_connected > 0 { " · Claude ✓" } else { "" };
+        let branch = self.git.as_ref().filter(|g| !g.branch.is_empty()).map(|g| format!("⎇ {} · ", g.branch)).unwrap_or_default();
         let (errors, warnings) = (self.problem_count(Severity::Error), self.problem_count(Severity::Warning));
         let problems = match (errors, warnings) {
             (0, 0) => String::new(),
@@ -343,7 +384,7 @@ impl Host for App {
             (0, w) => format!(" · {w} warning{}", if w == 1 { "" } else { "s" }),
             (e, w) => format!(" · {e} error{}, {w} warning{}", if e == 1 { "" } else { "s" }, if w == 1 { "" } else { "s" }),
         };
-        format!("Ln {}, Col {col}{sel} · {} · {}{claude}{problems}", d.cursor.line + 1, d.lang().name(), d.buffer.ending.label())
+        format!("{branch}Ln {}, Col {col}{sel} · {} · {}{claude}{problems}", d.cursor.line + 1, d.lang().name(), d.buffer.ending.label())
     }
 
     fn title_menus(&self) -> &[(&str, &str)] {
@@ -436,6 +477,9 @@ impl Host for App {
 impl AppHost for App {
     fn waker(&mut self, waker: Waker) {
         self.ide_start(waker.clone());
+        if let Some(p) = &self.project {
+            self.git = Git::find(&p.root, Some(waker.clone()));
+        }
         match Watcher::new(Some(waker.clone())) {
             Ok(w) => self.watcher = Some(w),
             Err(e) => lntrn_core::log_warn!("file watching off: {e}"),
@@ -448,6 +492,17 @@ impl AppHost for App {
         let mut again = self.ide_pump(shell);
         again |= self.ide_settle_writes(shell);
         again |= self.watch_pump(shell);
+        again |= self.search.poll();
+        if let Some(g) = self.git.as_mut() {
+            again |= g.poll();
+            if let Some(delay) = g.tick(shell.state.now) {
+                shell.state.request_redraw_after(delay);
+            }
+            if let Some((ok, output)) = g.last_output.take() {
+                let msg = if ok { if output.is_empty() { "Done".to_owned() } else { output } } else { format!("git: {output}") };
+                shell.request(self, ShellRequest::Toast(msg));
+            }
+        }
         again |= self.apply_pending(shell);
         if shell.title.is_none() {
             self.reap_terminals(shell);

@@ -42,6 +42,8 @@ pub const SET_LANG: &str = "code.set_lang";
 pub const SHOW_FILES: &str = "view.files";
 pub const SHOW_TERMINAL: &str = "view.terminal";
 pub const SHOW_PROBLEMS: &str = "view.problems";
+pub const SHOW_SEARCH: &str = "view.search";
+pub const SHOW_GIT: &str = "view.git";
 pub const NEW_TERMINAL: &str = "view.new_terminal";
 pub const SHOW_PREVIEW: &str = "view.preview";
 pub const SHOW_PREFS: &str = "view.prefs";
@@ -64,7 +66,7 @@ pub const IDE_SEND: &str = "ide.send_selection";
 pub const OPEN_PREFIX: &str = "open:";
 
 /// The palette's commands: (action id, label).
-pub const PALETTE: [(&str, &str); 34] = [
+pub const PALETTE: [(&str, &str); 36] = [
     (IDE_SEND, "Send Selection to Claude"),
     (IDE_ACCEPT, "Accept Claude's Diff"),
     (IDE_REJECT, "Reject Claude's Diff"),
@@ -76,6 +78,7 @@ pub const PALETTE: [(&str, &str); 34] = [
     (CLOSE_TAB, "Close Tab"),
     (FIND, "Find…"),
     (REPLACE, "Replace…"),
+    (SHOW_SEARCH, "Find in Project…"),
     (FIND_NEXT, "Find Next"),
     (FIND_PREV, "Find Previous"),
     (GOTO_LINE, "Go to Line…"),
@@ -89,6 +92,7 @@ pub const PALETTE: [(&str, &str); 34] = [
     (SHOW_TERMINAL, "Show Terminal"),
     (NEW_TERMINAL, "New Terminal"),
     (SHOW_PROBLEMS, "Show Problems"),
+    (SHOW_GIT, "Git Changes"),
     (SHOW_PREVIEW, "Markdown Preview"),
     (SHOW_PREFS, "Preferences"),
     (SHOW_KEYS, "Key Bindings"),
@@ -132,6 +136,8 @@ pub fn keymap() -> KeyConfig {
     bind(Char('`'), ctrl, SHOW_TERMINAL);
     bind(Char('`'), ctrl | shift, NEW_TERMINAL);
     bind(Char('m'), ctrl | shift, SHOW_PROBLEMS);
+    bind(Char('f'), ctrl | shift, SHOW_SEARCH);
+    bind(Char('g'), ctrl | shift, SHOW_GIT);
     bind(Char('b'), ctrl, SHOW_FILES);
     bind(Char('v'), ctrl | shift, SHOW_PREVIEW);
     bind(Char(','), ctrl, SHOW_PREFS);
@@ -186,6 +192,7 @@ pub fn menu(app: &App, name: &str) -> Option<Menu> {
                 item("Replace…", REPLACE).enabled(has_doc),
                 item("Find Next", FIND_NEXT).enabled(has_doc),
                 item("Find Previous", FIND_PREV).enabled(has_doc),
+                item("Find in Project…", SHOW_SEARCH),
                 MenuItem::separator(),
                 item("Toggle Comment", TOGGLE_COMMENT).enabled(has_doc),
                 item("Duplicate Line", DUPLICATE_LINE).enabled(has_doc),
@@ -209,6 +216,8 @@ pub fn menu(app: &App, name: &str) -> Option<Menu> {
                 "View",
                 vec![
                     item("Files", SHOW_FILES),
+                    item("Search", SHOW_SEARCH),
+                    item("Git", SHOW_GIT),
                     item("Terminal", SHOW_TERMINAL),
                     item("New Terminal", NEW_TERMINAL),
                     item("Problems", SHOW_PROBLEMS),

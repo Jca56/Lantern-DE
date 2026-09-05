@@ -8,9 +8,9 @@ use std::path::PathBuf;
 
 use lntrn_ui::{AreaId, Axis, Shell, ShellRequest};
 
-use crate::app::{App, ClipOp, Editor};
+use crate::app::{App, ClipOp, Editor, Goto};
 use crate::bridge::Bridge;
-use crate::buffer::Pos;
+use crate::buffer::{Pos, Range};
 use crate::editor::editor_id;
 use crate::term::{TermId, Terminal};
 
@@ -41,6 +41,18 @@ impl App {
                 shell.screen.swap(base, new);
                 base
             }
+            // Search and Git sit beside the file tree.
+            Editor::Search | Editor::Git => match shell.screen.target(Editor::Files) {
+                Some(a) => {
+                    shell.screen.add_tab(a, editor);
+                    a
+                }
+                None => {
+                    let new = shell.screen.split(base, Axis::Horizontal, 0.78, editor)?;
+                    shell.screen.swap(base, new);
+                    base
+                }
+            },
             Editor::Terminal => shell.screen.split(base, Axis::Vertical, 0.65, editor)?,
             // Problems sit beside the terminal whose output they came from.
             Editor::Problems => match shell.screen.target(Editor::Terminal) {
@@ -95,21 +107,48 @@ impl App {
             self.apply_pending_select();
             again = true;
         }
-        if let Some((path, line, col)) = self.pending_goto.take() {
+        if let Some((path, goto)) = self.pending_goto.take() {
             if let Some(i) = self.doc_by_path(&path) {
                 let doc = &mut self.docs[i];
                 let n = doc.buffer.line_count();
-                let l = line.unwrap_or(1).saturating_sub(1).min(n.saturating_sub(1));
-                let text = doc.line(l);
-                // Compilers count columns in characters, from one.
-                let byte = col.filter(|c| *c > 0).and_then(|c| text.char_indices().nth(c - 1).map(|(b, _)| b)).unwrap_or(0);
-                doc.set_cursor(Pos::new(l, byte), false);
+                match goto {
+                    Goto::Printed { line, col } => {
+                        let l = line.unwrap_or(1).saturating_sub(1).min(n.saturating_sub(1));
+                        let text = doc.line(l);
+                        // Compilers count columns in characters, from one.
+                        let byte = col.filter(|c| *c > 0).and_then(|c| text.char_indices().nth(c - 1).map(|(b, _)| b)).unwrap_or(0);
+                        doc.set_cursor(Pos::new(l, byte), false);
+                    }
+                    Goto::Span { line, col, len } => {
+                        let l = line.min(n.saturating_sub(1));
+                        let text = doc.line(l);
+                        let mut a = col.min(text.len());
+                        while !text.is_char_boundary(a) {
+                            a -= 1;
+                        }
+                        let mut b = (col + len).min(text.len());
+                        while !text.is_char_boundary(b) {
+                            b += 1;
+                        }
+                        doc.select(Range::new(Pos::new(l, a), Pos::new(l, b)));
+                    }
+                }
             }
             again = true;
         }
         if let Some(did) = self.pending_show_diff.take() {
             self.show_diff(shell, did);
             again = true;
+        }
+        if let Some(path) = self.pending_git_diff.take() {
+            match self.git_diff_doc(&path, shell.state.now) {
+                Some(did) => {
+                    self.show_diff(shell, did);
+                    again = true;
+                }
+                // The HEAD copy is still on its way: try again when it lands.
+                None => self.pending_git_diff = Some(path),
+            }
         }
         if std::mem::take(&mut self.pending_ide_send) {
             self.ide_send_selection(shell);

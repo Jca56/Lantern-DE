@@ -31,6 +31,8 @@ pub struct DiffDoc {
     pub lang: Language,
     /// The CLI's request, answered when the user decides.
     pub pending: Option<(ClientId, Json)>,
+    /// Just to look at (a file against HEAD): no accept or reject.
+    pub read_only: bool,
 }
 
 impl DiffDoc {
@@ -44,7 +46,7 @@ impl DiffDoc {
         };
         let (added, removed) = counts(&rows);
         let lang = Language::detect(path, new_lines.first().map_or("", String::as_str));
-        Self { id, tab_name: tab_name.to_owned(), path: path.to_path_buf(), old_lines, new_lines, new_text, rows, added, removed, lang, pending }
+        Self { id, tab_name: tab_name.to_owned(), path: path.to_path_buf(), old_lines, new_lines, new_text, rows, added, removed, lang, pending, read_only: false }
     }
 
     /// The first changed row, to scroll to.
@@ -64,6 +66,12 @@ pub fn draw_diff_header(ui: &mut Ui, d: &DiffDoc) -> DiffOut {
     let mut out = DiffOut::default();
     let name = d.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     ui.label_dim(&format!("{name}   +{} −{}", d.added, d.removed));
+    if d.read_only {
+        if ui.button("Close").clicked {
+            out.reject = true;
+        }
+        return out;
+    }
     if ui.button("Accept").clicked {
         out.accept = true;
     }

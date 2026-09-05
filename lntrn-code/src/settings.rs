@@ -48,6 +48,15 @@ impl SyntaxColors {
 }
 
 props! {
+    /// Colors of the gutter marks and file-tree dots for what git says.
+    pub struct GitColors {
+        pub added: Color = Color::hex(0x8BD17C) => { id: 1 },
+        pub modified: Color = Color::hex(0x6EA6FF) => { id: 2 },
+        pub deleted: Color = Color::hex(0xE0473A) => { id: 3 },
+    }
+}
+
+props! {
     /// Editor preferences.
     pub struct Settings {
         /// Monospace family for code and the terminal; empty for the default.
@@ -65,6 +74,7 @@ props! {
         /// Lines of terminal output kept above the screen.
         pub scrollback: i64 = 5000 => { id: 7, hard: 100..=100000, step: 100.0 },
         pub colors: SyntaxColors = SyntaxColors::default() => { id: 10, label: "Syntax Colors" },
+        pub git: GitColors = GitColors::default() => { id: 11, label: "Git Colors" },
     }
 }
 

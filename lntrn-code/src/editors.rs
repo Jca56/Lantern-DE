@@ -3,12 +3,14 @@
 
 use lntrn_ui::{Action, AreaCx, ShellRequest, Ui, prefs};
 
-use crate::app::{APP_ID, App, Editor, TabState};
+use crate::app::{APP_ID, App, Editor, Goto, TabState};
 use crate::commands;
 use crate::diff_view::{draw_diff, draw_diff_header};
 use crate::files::draw_files;
+use crate::git::view::draw_git;
 use crate::preview::draw_preview;
 use crate::problems::{ProblemRow, draw_problems};
+use crate::search::view::draw_search;
 use crate::term::draw_terminal;
 
 impl App {
@@ -39,7 +41,8 @@ impl App {
             Editor::Code => self.draw_code(ui, cx),
             Editor::Files => {
                 let selected = self.focus_doc().and_then(|d| d.path.clone());
-                let out = draw_files(ui, self.project.as_mut(), selected.as_deref());
+                let git = self.git.as_ref().map(|g| (g, &self.settings.git));
+                let out = draw_files(ui, self.project.as_mut(), selected.as_deref(), git);
                 if let Some(p) = out.open {
                     self.pending_paths.push(p);
                     cx.rebuild();
@@ -70,7 +73,7 @@ impl App {
                     }
                     if let Some((path, line, col)) = out.open {
                         self.pending_paths.push(path.clone());
-                        self.pending_goto = Some((path, line, col));
+                        self.pending_goto = Some((path, Goto::Printed { line, col }));
                         cx.rebuild();
                     }
                 }
@@ -91,13 +94,49 @@ impl App {
                 let target = out.open.and_then(|i| self.diagnostics().nth(i)).and_then(|d| d.resolved.clone().map(|p| (p, d.line, d.col)));
                 if let Some((p, line, col)) = target {
                     self.pending_paths.push(p.clone());
-                    self.pending_goto = Some((p, Some(line), Some(col)));
+                    self.pending_goto = Some((p, Goto::Printed { line: Some(line), col: Some(col) }));
                     cx.rebuild();
                 }
                 if out.clear {
                     for t in &mut self.terminals {
                         t.diags.clear();
                     }
+                    cx.rebuild();
+                }
+                false
+            }
+            Editor::Git => {
+                let Some(g) = self.git.as_mut() else {
+                    ui.heading("Git");
+                    ui.label_dim("The open folder is not in a git repository.");
+                    return false;
+                };
+                let out = draw_git(ui, g, &self.settings.git);
+                if out.refresh {
+                    g.request_status();
+                }
+                for args in out.run {
+                    g.run(args);
+                }
+                if let Some(p) = out.open {
+                    self.pending_paths.push(p);
+                    cx.rebuild();
+                }
+                if let Some(p) = out.diff {
+                    self.pending_git_diff = Some(p);
+                    cx.rebuild();
+                }
+                false
+            }
+            Editor::Search => {
+                let out = draw_search(ui, &mut self.search, self.project.as_ref());
+                if out.run {
+                    self.run_search();
+                    cx.rebuild();
+                }
+                if let Some((path, line, col, len)) = out.open {
+                    self.pending_paths.push(path.clone());
+                    self.pending_goto = Some((path, Goto::Span { line, col, len }));
                     cx.rebuild();
                 }
                 false

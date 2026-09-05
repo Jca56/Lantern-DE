@@ -234,6 +234,21 @@ impl App {
             SHOW_FILES => self.pending_show.push(Editor::Files),
             SHOW_TERMINAL => self.pending_show.push(Editor::Terminal),
             SHOW_PROBLEMS => self.pending_show.push(Editor::Problems),
+            SHOW_GIT => self.pending_show.push(Editor::Git),
+            SHOW_SEARCH => {
+                // A one-line selection becomes the query, like the find bar.
+                if let Some(d) = self.focus_doc()
+                    && d.has_selection()
+                {
+                    let sel = d.selected_text();
+                    if !sel.is_empty() && !sel.contains('\n') {
+                        self.search.query = sel;
+                        self.search.run_at = Some(0.0);
+                    }
+                }
+                self.search.want_focus = true;
+                self.pending_show.push(Editor::Search);
+            }
             NEW_TERMINAL => self.pending_new_terminal = Some(None),
             SHOW_PREVIEW => self.pending_show.push(Editor::Preview),
             SHOW_PREFS => self.pending_show.push(Editor::Preferences),
