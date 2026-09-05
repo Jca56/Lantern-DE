@@ -63,6 +63,9 @@ pub fn draw_search(ui: &mut Ui, s: &mut Search, project: Option<&Project>) -> Se
     } else {
         String::new()
     };
+    if let Some(h) = &s.heading {
+        ui.heading(h);
+    }
     if !summary.is_empty() {
         ui.label_dim(&summary);
     }

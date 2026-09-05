@@ -1,14 +1,15 @@
 //! Language-server help in the code view: the hover panel where the
-//! pointer rests, the completion list with its keys and its pick, and
-//! the requests the view asks the app to send.
+//! pointer rests, the completion list with its keys and its pick, the
+//! signature of the call being typed, and the requests the view asks the
+//! app to send.
 
 use lntrn_math::{Rect, Vec2};
 use lntrn_ui::{Key, Sense, Ui};
 
-use crate::buffer::{Pos, Range};
+use crate::buffer::Pos;
 use crate::doc::{Doc, DocId, EditKind};
-use crate::lsp::pos::from_units;
-use crate::lsp::{CompletionItem, TextEdit};
+use crate::lsp::edits::range_of;
+use crate::lsp::{CompletionItem, SignatureHelp, TextEdit};
 use crate::text_util::cell_of_byte;
 
 /// The pointer rests this long before a hover is asked for.
@@ -32,10 +33,21 @@ pub struct Completion {
     pub selected: usize,
 }
 
+/// The signature panel: for which document, above which line.
+pub struct SignaturePopup {
+    pub doc: DocId,
+    pub line: usize,
+    pub help: SignatureHelp,
+}
+
 #[derive(Default)]
 pub struct LspUi {
     pub hover: Option<Hover>,
     pub completion: Option<Completion>,
+    pub signature: Option<SignaturePopup>,
+    /// Where the caret was when the signature was asked for; moving it
+    /// without typing closes the panel.
+    pub sig_cursor: Option<Pos>,
     /// Where the pointer has been resting, and since when.
     rest: Option<(Vec2, f64)>,
     /// The hover asked for and not answered yet: document, position,
@@ -43,6 +55,8 @@ pub struct LspUi {
     pub asked: Option<(DocId, Pos, Vec2)>,
     /// The server counts columns in UTF-16 units.
     pub utf16: bool,
+    /// Under the caret on screen, where a menu for it opens.
+    pub caret_screen: Option<Vec2>,
 }
 
 /// Where the text sits on screen, for placing the popups.
@@ -61,6 +75,9 @@ pub struct LspOut {
     pub hover: Option<Pos>,
     pub definition: Option<Pos>,
     pub complete: Option<(Pos, Option<char>)>,
+    /// Signature help at a position: the trigger character typed, and
+    /// whether a panel is already up.
+    pub signature: Option<(Pos, Option<char>, bool)>,
 }
 
 fn is_word(c: char) -> bool {
@@ -84,6 +101,7 @@ impl LspUi {
     pub fn close_all(&mut self) {
         self.hover = None;
         self.completion = None;
+        self.signature = None;
         self.asked = None;
     }
 
@@ -122,8 +140,9 @@ impl LspUi {
         if ui.state.take_key(|k| k.key == Key::F(12) && k.mods.is_empty()).is_some() {
             out.definition = Some(doc.cursor);
         }
-        if self.hover.is_some() && ui.state.take_key(|k| k.key == Key::Escape && k.mods.is_empty()).is_some() {
+        if (self.hover.is_some() || self.signature.is_some()) && ui.state.take_key(|k| k.key == Key::Escape && k.mods.is_empty()).is_some() {
             self.hover = None;
+            self.signature = None;
         }
         let open = self.completion.as_ref().is_some_and(|c| c.doc == doc.id);
         if !open {
@@ -165,28 +184,49 @@ impl LspUi {
         (changed, out)
     }
 
-    /// After the editor handled its keys: the popup follows or closes,
-    /// and `.` or `::` asks for completions.
-    pub fn after_edit(&mut self, doc: &Doc, text_changed: bool) -> Option<(Pos, Option<char>)> {
-        if let Some(c) = &self.completion {
-            let cur = doc.cursor;
-            if c.doc != doc.id || cur.line != c.anchor.line || cur.col < c.anchor.col {
-                self.completion = None;
-            }
+    /// After the editor handled its keys: the popups follow or close,
+    /// `.` or `::` asks for completions, `(` or `,` for the signature.
+    pub fn after_edit(&mut self, doc: &Doc, text_changed: bool) -> LspOut {
+        let mut out = LspOut::default();
+        let cur = doc.cursor;
+        if let Some(c) = &self.completion
+            && (c.doc != doc.id || cur.line != c.anchor.line || cur.col < c.anchor.col)
+        {
+            self.completion = None;
+        }
+        if let Some(s) = &self.signature
+            && (s.doc != doc.id || cur.line != s.line)
+        {
+            self.signature = None;
         }
         if !text_changed {
-            return None;
+            // The caret moved without typing: the signature is stale.
+            if self.signature.is_some() && self.sig_cursor != Some(cur) {
+                self.signature = None;
+            }
+            return out;
         }
         self.hover = None;
-        let cur = doc.cursor;
         let before = &doc.line(cur.line)[..cur.col];
         if before.ends_with('.') {
-            return Some((cur, Some('.')));
+            out.complete = Some((cur, Some('.')));
+        } else if before.ends_with("::") {
+            out.complete = Some((cur, Some(':')));
         }
-        if before.ends_with("::") {
-            return Some((cur, Some(':')));
+        match before.chars().next_back() {
+            Some(ch @ ('(' | ',')) => {
+                out.signature = Some((cur, Some(ch), self.signature.is_some()));
+                self.sig_cursor = Some(cur);
+            }
+            Some(')') => self.signature = None,
+            _ => {
+                if self.signature.is_some() {
+                    out.signature = Some((cur, None, true));
+                    self.sig_cursor = Some(cur);
+                }
+            }
         }
-        None
+        out
     }
 
     /// The pointer over the text: a rest asks for a hover, a move away
@@ -276,6 +316,43 @@ impl LspUi {
                 }
             }
         }
+        if let Some(s) = &self.signature
+            && s.doc == doc.id
+        {
+            let h = &s.help;
+            let ts = ui.text_style();
+            let under = h.doc.clone().map(|d| if h.count > 1 { format!("{d}   ({} of {})", h.index + 1, h.count) } else { d }).or_else(|| (h.count > 1).then(|| format!("{} of {} overloads", h.index + 1, h.count)));
+            let mut w = ui.measure(&h.label, style);
+            if let Some(u) = &under {
+                w = w.max(ui.measure(u, &ts));
+            }
+            let w = (w + m.pad * 2.0).min(vp.width() - m.gap * 2.0).max(cell_w * 8.0);
+            let hgt = lh + if under.is_some() { m.widget_h } else { 0.0 } + m.pad * 2.0;
+            let row_top = origin_y + s.line as f64 * lh;
+            let line_text = doc.line(s.line);
+            let x = (text_x0 + cell_of_byte(line_text, tab, doc.cursor.col.min(line_text.len())) as f64 * cell_w - m.pad).min(vp.max.x - w - m.gap).max(vp.min.x + m.gap);
+            let above = row_top - m.gap - hgt;
+            let y = if above < vp.min.y { row_top + lh + m.gap } else { above };
+            let panel = Rect::from_min_size(Vec2::new(x.round(), y.round()), Vec2::new(w, hgt));
+            ui.floating_panel(panel, theme.header);
+            ui.draw.push_clip(panel);
+            let (lx, ly) = (panel.min.x + m.pad, panel.min.y + m.pad);
+            if let Some((a, b)) = h.active
+                && a < b
+                && b <= h.label.len()
+            {
+                let x0 = lx + ui.measure(&h.label[..a], style);
+                let x1 = lx + ui.measure(&h.label[..b], style);
+                ui.draw.rounded_rect(Rect::new(Vec2::new(x0, ly), Vec2::new(x1, ly + lh)), m.radius * 0.5, theme.accent.fade(0.35));
+            }
+            let mut quads = Vec::new();
+            ui.text.place(&h.label, style, lx as f32, ly as f32, 1.0e6, theme.text.to_gpu(), &mut quads);
+            ui.draw.glyphs(&quads);
+            if let Some(u) = &under {
+                ui.text_in_rect(u, &ts, Rect::new(Vec2::new(lx, ly + lh), Vec2::new(panel.max.x - m.pad, ly + lh + m.widget_h)), theme.text_dim);
+            }
+            ui.draw.pop_clip();
+        }
         if let Some(h) = &self.hover
             && h.doc == doc.id
         {
@@ -303,14 +380,6 @@ impl LspUi {
         ui.draw.set_layer(saved);
         picked
     }
-}
-
-/// A server's edit as a range in the document.
-fn range_of(doc: &Doc, e: &TextEdit, utf16: bool, line_shift: usize) -> Range {
-    let n = doc.buffer.line_count();
-    let l0 = (e.line + line_shift).min(n - 1);
-    let l1 = (e.end_line + line_shift).min(n - 1);
-    Range::new(Pos::new(l0, from_units(doc.line(l0), e.col, utf16)), Pos::new(l1, from_units(doc.line(l1), e.end_col, utf16)))
 }
 
 /// Put a picked completion into the document: its extra edits (imports)

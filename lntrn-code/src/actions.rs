@@ -11,7 +11,8 @@ use lntrn_ui::{Action, ContextMenu, Dialog, HostCx, Item, ShellRequest};
 use crate::app::{App, ClipOp, Editor};
 use crate::buffer::Pos;
 use crate::commands::*;
-use crate::editor::ops;
+use crate::editor::{input, ops};
+use crate::lsp::Ask;
 use crate::syntax::Language;
 
 fn arg_str(action: &Action, name: &str) -> Option<String> {
@@ -63,23 +64,42 @@ impl App {
         cx.request(ShellRequest::Dialog(dialog));
     }
 
-    fn save_doc(&mut self, cx: &mut HostCx) {
+    /// Write document `i` to its file. Returns a line for a toast, or
+    /// what went wrong.
+    pub(crate) fn save_index(&mut self, i: usize, now: f64) -> Result<String, String> {
         let trim = self.settings.trim_on_save;
-        let now = cx_now();
-        let Some(doc) = self.focus_doc_mut() else {
-            return;
-        };
-        if doc.path.is_none() {
-            self.run_action(&Action::new(SAVE_AS), cx);
-            return;
-        }
+        let doc = &mut self.docs[i];
         match doc.save(trim, now) {
             Ok(()) => {
                 let msg = format!("Saved {}", doc.title);
                 self.session_dirty = true;
-                cx.toast(&msg);
+                Ok(msg)
             }
-            Err(e) => cx.request(ShellRequest::Dialog(Dialog::notice("Could not save", &e.to_string()))),
+            Err(e) => Err(format!("Could not save: {e}")),
+        }
+    }
+
+    /// Save the focused document: after the server formats it when that
+    /// is on (with a deadline, so a silent server never blocks a save).
+    fn save_doc(&mut self, cx: &mut HostCx) {
+        let now = cx_now();
+        let Some(i) = self.focus_doc.and_then(|id| self.docs.iter().position(|d| d.id == id)) else {
+            return;
+        };
+        if self.docs[i].path.is_none() {
+            self.run_action(&Action::new(SAVE_AS), cx);
+            return;
+        }
+        if self.settings.format_on_save && self.lsp.serves(self.docs[i].lang()) {
+            let id = self.docs[i].id;
+            self.lsp_ask(Ask::Format { then_save: true });
+            self.pending_saves.retain(|(d, _)| *d != id);
+            self.pending_saves.push((id, std::time::Instant::now() + std::time::Duration::from_secs(2)));
+            return;
+        }
+        match self.save_index(i, now) {
+            Ok(msg) => cx.toast(&msg),
+            Err(e) => cx.request(ShellRequest::Dialog(Dialog::notice("Could not save", &e))),
         }
     }
 
@@ -224,6 +244,33 @@ impl App {
             }
             NEXT_FILE => self.pending_cycle = Some(1),
             PREV_FILE => self.pending_cycle = Some(-1),
+            RENAME_SYMBOL => {
+                if let Some(d) = self.focus_doc() {
+                    let r = input::word_range(d, d.cursor);
+                    self.dialog_text = d.line(d.cursor.line)[r.start.col..r.end.col].to_owned();
+                    self.dialog_with_field("Rename Symbol", "Everywhere the language server knows of it.", "Rename", RENAME_SYMBOL_GO, "text", cx);
+                }
+            }
+            RENAME_SYMBOL_GO => {
+                let name = self.dialog_text.trim().to_owned();
+                if !name.is_empty() {
+                    self.lsp_ask(Ask::Rename(name));
+                }
+                if let Some(a) = self.focus_area {
+                    self.pending_focus = Some(crate::editor::editor_id(a));
+                }
+            }
+            REFERENCES => self.lsp_ask(Ask::References),
+            CODE_ACTIONS => self.lsp_ask(Ask::CodeActions),
+            SIGNATURE => self.lsp_ask(Ask::Signature),
+            FORMAT => self.lsp_ask(Ask::Format { then_save: false }),
+            CODE_ACTION_PICK => {
+                if let Some(i) = arg_i64(action, "i")
+                    && let Some(msg) = self.pick_code_action(i as usize, now)
+                {
+                    cx.toast(&msg);
+                }
+            }
             SET_LANG => {
                 if let Some(i) = arg_i64(action, "lang").and_then(|i| Language::ALL.get(i as usize).copied())
                     && let Some(d) = self.focus_doc_mut()
@@ -306,16 +353,7 @@ impl App {
                 {
                     let to = parent.join(&name);
                     match std::fs::rename(&from, &to) {
-                        Ok(()) => {
-                            for d in &mut self.docs {
-                                if d.path.as_deref() == Some(from.as_path()) {
-                                    d.set_path(to.clone());
-                                } else if let Some(rest) = d.path.as_ref().and_then(|p| p.strip_prefix(&from).ok()).map(Path::to_path_buf) {
-                                    d.set_path(to.join(rest));
-                                }
-                            }
-                            self.session_dirty = true;
-                        }
+                        Ok(()) => self.retarget_docs(&from, &to),
                         Err(e) => cx.request(ShellRequest::Dialog(Dialog::notice("Could not rename", &e.to_string()))),
                     }
                     if let Some(p) = self.project.as_mut() {

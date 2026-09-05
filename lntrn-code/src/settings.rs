@@ -73,6 +73,8 @@ props! {
         pub trim_on_save: bool = false => { id: 6 },
         /// Lines of terminal output kept above the screen.
         pub scrollback: i64 = 5000 => { id: 7, hard: 100..=100000, step: 100.0 },
+        /// Have the language server format the file on every save.
+        pub format_on_save: bool = false => { id: 8 },
         pub colors: SyntaxColors = SyntaxColors::default() => { id: 10, label: "Syntax Colors" },
         pub git: GitColors = GitColors::default() => { id: 11, label: "Git Colors" },
     }

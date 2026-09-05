@@ -239,8 +239,17 @@ impl Git {
     }
 }
 
+/// A git command in `root`. Optional locks are off so a status never
+/// rewrites the index: the app watches `.git`, and its own status
+/// touching the index would ask for another status, forever.
+fn command(root: &Path) -> Command {
+    let mut c = Command::new("git");
+    c.arg("-C").arg(root).env("GIT_OPTIONAL_LOCKS", "0");
+    c
+}
+
 fn git(root: &Path, args: &[&str]) -> Result<String, String> {
-    let out = Command::new("git").arg("-C").arg(root).args(args).output().map_err(|e| format!("git: {e}"))?;
+    let out = command(root).args(args).output().map_err(|e| format!("git: {e}"))?;
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
     if out.status.success() { Ok(text) } else { Err(String::from_utf8_lossy(&out.stderr).trim().to_owned()) }
 }
@@ -271,7 +280,7 @@ fn status_reply(root: &Path) -> Reply {
         _ => git(root, &["rev-parse", "--short", "HEAD"]).map(|h| format!("detached {}", h.trim())).unwrap_or_else(|_| "no commits".to_owned()),
     };
     let head = git(root, &["rev-parse", "HEAD"]).map(|h| h.trim().to_owned()).unwrap_or_default();
-    let out = Command::new("git").arg("-C").arg(root).args(["status", "--porcelain=v1", "-z", "--untracked-files=all"]).output();
+    let out = command(root).args(["status", "--porcelain=v1", "-z", "--untracked-files=all"]).output();
     let (changes, error) = match out {
         Ok(o) if o.status.success() => (parse_status(&o.stdout), None),
         Ok(o) => (Vec::new(), Some(String::from_utf8_lossy(&o.stderr).trim().to_owned())),

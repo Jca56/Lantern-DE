@@ -87,9 +87,11 @@ pub fn draw_doc(ui: &mut Ui, doc: &mut Doc, settings: &Settings, opts: ViewOpts)
         lsp_out = asked;
         let typed = input::handle(ui, doc, settings, page);
         out.changed |= typed;
-        if let Some(t) = opts.lsp.after_edit(doc, typed) {
-            lsp_out.complete = Some(t);
+        let more = opts.lsp.after_edit(doc, typed);
+        if more.complete.is_some() {
+            lsp_out.complete = more.complete;
         }
+        lsp_out.signature = more.signature;
     }
     // Follow the caret when it moved (or the text changed under it).
     let now = ui.state.now;
@@ -268,6 +270,7 @@ pub fn draw_doc(ui: &mut Ui, doc: &mut Doc, settings: &Settings, opts: ViewOpts)
                 ui.draw.rect(caret, theme.accent);
             }
             ui.state.ime_rect = Some(caret);
+            opts.lsp.caret_screen = Some(Vec2::new(caret.min.x, caret.max.y));
             if opts.area_active && !ui.state.reduce_motion {
                 ui.state.request_redraw_after(if t < BLINK_ON { BLINK_ON - t } else { BLINK_PERIOD - t } + 0.01);
             }

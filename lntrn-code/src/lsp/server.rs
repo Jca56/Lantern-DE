@@ -30,6 +30,30 @@ enum Pending {
     Hover(PathBuf, Pos),
     Definition,
     Completion(PathBuf, Pos),
+    Rename,
+    References(String),
+    CodeActions(PathBuf),
+    Signature(PathBuf, Pos),
+    Formatting(PathBuf, bool),
+    Execute,
+}
+
+impl Pending {
+    /// The request's method, for asking again.
+    fn method(&self) -> Option<&'static str> {
+        Some(match self {
+            Pending::Init => return None,
+            Pending::Hover(..) => "textDocument/hover",
+            Pending::Definition => "textDocument/definition",
+            Pending::Completion(..) => "textDocument/completion",
+            Pending::Rename => "textDocument/rename",
+            Pending::References(_) => "textDocument/references",
+            Pending::CodeActions(_) => "textDocument/codeAction",
+            Pending::Signature(..) => "textDocument/signatureHelp",
+            Pending::Formatting(..) => "textDocument/formatting",
+            Pending::Execute => "workspace/executeCommand",
+        })
+    }
 }
 
 struct Synced {
@@ -120,9 +144,26 @@ impl Server {
                     "hover" => obj! { "contentFormat" => vec![Json::from("markdown"), Json::from("plaintext")] },
                     "completion" => obj! { "completionItem" => obj! { "snippetSupport" => false, "insertReplaceSupport" => true }, "contextSupport" => true },
                     "definition" => obj! { "linkSupport" => true },
+                    "references" => obj! {},
+                    "rename" => obj! { "prepareSupport" => false },
+                    "codeAction" => obj! {
+                        "codeActionLiteralSupport" => obj! { "codeActionKind" => obj! { "valueSet" => ["", "quickfix", "refactor", "refactor.extract", "refactor.inline", "refactor.rewrite", "source", "source.organizeImports"].iter().map(|k| Json::from(*k)).collect::<Vec<_>>() } },
+                        "isPreferredSupport" => true,
+                    },
+                    "signatureHelp" => obj! {
+                        "signatureInformation" => obj! { "documentationFormat" => vec![Json::from("plaintext"), Json::from("markdown")], "parameterInformation" => obj! { "labelOffsetSupport" => true }, "activeParameterSupport" => true },
+                        "contextSupport" => true,
+                    },
+                    "formatting" => obj! {},
                 },
                 "window" => obj! { "workDoneProgress" => true },
-                "workspace" => obj! { "workspaceFolders" => true, "configuration" => true },
+                "workspace" => obj! {
+                    "workspaceFolders" => true,
+                    "configuration" => true,
+                    "applyEdit" => true,
+                    "workspaceEdit" => obj! { "documentChanges" => true, "resourceOperations" => vec![Json::from("create"), Json::from("rename"), Json::from("delete")] },
+                    "executeCommand" => obj! {},
+                },
             },
         }
     }
@@ -220,8 +261,72 @@ impl Server {
         }
     }
 
+    /// Send a request for an open document and remember what it was for.
+    fn ask(&mut self, path: &Path, method: &'static str, params: Json, pending: Pending) {
+        if !self.ready() || !self.open.contains_key(path) {
+            return;
+        }
+        if let Some(c) = self.client.as_mut() {
+            let id = c.request(method, params.clone());
+            self.pending.insert(id, (pending, params, 0));
+        }
+    }
+
+    /// Position parameters with one more field.
+    fn with(&self, path: &Path, line_text: &str, pos: Pos, key: &str, value: Json) -> Json {
+        let mut params = self.position_params(path, line_text, pos);
+        if let Json::Obj(pairs) = &mut params {
+            pairs.push((key.to_owned(), value));
+        }
+        params
+    }
+
+    pub fn rename(&mut self, path: &Path, line_text: &str, pos: Pos, new_name: &str) {
+        let params = self.with(path, line_text, pos, "newName", Json::from(new_name));
+        self.ask(path, "textDocument/rename", params, Pending::Rename);
+    }
+
+    pub fn references(&mut self, path: &Path, line_text: &str, pos: Pos, name: &str) {
+        let params = self.with(path, line_text, pos, "context", obj! { "includeDeclaration" => true });
+        self.ask(path, "textDocument/references", params, Pending::References(name.to_owned()));
+    }
+
+    pub fn code_actions(&mut self, path: &Path, start: (Pos, &str), end: (Pos, &str), diagnostics: Vec<Json>) {
+        let position = |(p, text): (Pos, &str)| obj! { "line" => p.line, "character" => to_units(text, p.col, self.utf16) };
+        let params = obj! {
+            "textDocument" => Self::text_document(path),
+            "range" => obj! { "start" => position(start), "end" => position(end) },
+            "context" => obj! { "diagnostics" => diagnostics, "triggerKind" => 1 },
+        };
+        self.ask(path, "textDocument/codeAction", params, Pending::CodeActions(path.to_path_buf()));
+    }
+
+    pub fn signature(&mut self, path: &Path, line_text: &str, pos: Pos, trigger: Option<char>, retrigger: bool) {
+        let mut context = obj! { "triggerKind" => if trigger.is_some() { 2 } else { 1 }, "isRetrigger" => retrigger };
+        if let (Some(ch), Json::Obj(pairs)) = (trigger, &mut context) {
+            pairs.push(("triggerCharacter".to_owned(), Json::from(ch.to_string())));
+        }
+        let params = self.with(path, line_text, pos, "context", context);
+        self.ask(path, "textDocument/signatureHelp", params, Pending::Signature(path.to_path_buf(), pos));
+    }
+
+    pub fn format(&mut self, path: &Path, tab: usize, spaces: bool, then_save: bool) {
+        let params = obj! { "textDocument" => Self::text_document(path), "options" => obj! { "tabSize" => tab, "insertSpaces" => spaces } };
+        self.ask(path, "textDocument/formatting", params, Pending::Formatting(path.to_path_buf(), then_save));
+    }
+
+    pub fn execute(&mut self, command: &str, args: Json) {
+        if !self.ready() {
+            return;
+        }
+        let params = obj! { "command" => command, "arguments" => args };
+        if let Some(c) = self.client.as_mut() {
+            let id = c.request("workspace/executeCommand", params.clone());
+            self.pending.insert(id, (Pending::Execute, params, 0));
+        }
+    }
+
     /// Whether the server answers requests.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn serving(&self) -> bool {
         self.ready()
     }
@@ -249,6 +354,11 @@ impl Server {
                     let result = match method.as_str() {
                         "workspace/configuration" => Json::Arr(vec![Json::Null; params.get("items").and_then(Json::arr).map_or(1, <[Json]>::len)]),
                         "workspace/workspaceFolders" => vec![obj! { "uri" => path_to_uri(&self.root), "name" => self.root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default() }].into(),
+                        "workspace/applyEdit" => {
+                            let edit = parse::workspace_edit(params.get("edit").unwrap_or(&Json::Null), self.utf16);
+                            events.push(Event::ApplyEdit(edit));
+                            obj! { "applied" => true }
+                        }
                         _ => Json::Null,
                     };
                     c.respond(&id, result);
@@ -288,18 +398,13 @@ impl Server {
                         continue;
                     };
                     // "Content modified": the server moved on under the request; ask again.
-                    if error.as_deref().is_some_and(|e| e.contains("content modified")) && tries < 3 {
-                        let method = match &p {
-                            Pending::Init => None,
-                            Pending::Hover(..) => Some("textDocument/hover"),
-                            Pending::Definition => Some("textDocument/definition"),
-                            Pending::Completion(..) => Some("textDocument/completion"),
-                        };
-                        if let Some(m) = method {
-                            let id = c.request(m, params.clone());
-                            self.pending.insert(id, (p, params, tries + 1));
-                            continue;
-                        }
+                    if error.as_deref().is_some_and(|e| e.contains("content modified"))
+                        && tries < 3
+                        && let Some(m) = p.method()
+                    {
+                        let id = c.request(m, params.clone());
+                        self.pending.insert(id, (p, params, tries + 1));
+                        continue;
                     }
                     match p {
                         Pending::Init => {
@@ -326,6 +431,35 @@ impl Server {
                         Pending::Completion(path, pos) => {
                             let items = result.as_ref().map(parse::completions).unwrap_or_default();
                             events.push(Event::Completion { path, pos, items });
+                        }
+                        Pending::Rename => match (result, error) {
+                            (Some(r), None) if r != Json::Null => events.push(Event::Rename(parse::workspace_edit(&r, self.utf16))),
+                            (_, Some(e)) => events.push(Event::Message(format!("Rename: {e}"))),
+                            _ => events.push(Event::Message("Nothing to rename here".into())),
+                        },
+                        Pending::References(name) => {
+                            let locs = result.as_ref().map(parse::locations).unwrap_or_default();
+                            events.push(Event::References { name, locs, utf16: self.utf16 });
+                        }
+                        Pending::CodeActions(path) => {
+                            let actions = result.as_ref().map(|r| parse::code_actions(r, self.utf16)).unwrap_or_default();
+                            events.push(Event::CodeActions { path, actions });
+                        }
+                        Pending::Signature(path, pos) => {
+                            let help = result.as_ref().and_then(|r| parse::signature_help(r, self.utf16));
+                            events.push(Event::Signature { path, pos, help });
+                        }
+                        Pending::Formatting(path, then_save) => {
+                            if let Some(e) = error {
+                                events.push(Event::Message(format!("Format: {e}")));
+                            }
+                            let edits = result.as_ref().map(parse::text_edits).unwrap_or_default();
+                            events.push(Event::Formatted { path, edits, utf16: self.utf16, then_save });
+                        }
+                        Pending::Execute => {
+                            if let Some(e) = error {
+                                events.push(Event::Message(format!("{}: {e}", self.name)));
+                            }
                         }
                     }
                 }

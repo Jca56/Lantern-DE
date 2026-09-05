@@ -1,10 +1,11 @@
 //! The shapes a language server sends, read into ours: diagnostics,
-//! hover text, definition locations, completion items, progress.
+//! hover text, locations, completion items, workspace edits, code
+//! actions, signature help, progress.
 
 use std::path::PathBuf;
 
-use super::pos::uri_to_path;
-use super::{CompletionItem, LspDiag, TextEdit};
+use super::pos::{from_units, uri_to_path};
+use super::{Change, CodeAction, CompletionItem, Loc, LspDiag, SignatureHelp, TextEdit, WorkspaceEdit};
 use crate::json::Json;
 use crate::problems::{LspSpan, Severity};
 
@@ -43,9 +44,118 @@ pub fn diagnostics(params: &Json, utf16: bool) -> Option<(PathBuf, Vec<LspDiag>)
         };
         let message = d.field_str("message").to_owned();
         let source = d.field_str("source").to_owned();
-        out.push(LspDiag { span: LspSpan { line, col, end_line, end_col, utf16 }, severity, message, source });
+        out.push(LspDiag { span: LspSpan { line, col, end_line, end_col, utf16 }, severity, message, source, raw: d.clone() });
     }
     Some((path, out))
+}
+
+/// `TextEdit[]` (a formatting result), or nothing.
+pub fn text_edits(result: &Json) -> Vec<TextEdit> {
+    result.arr().map(|a| a.iter().filter_map(text_edit).collect()).unwrap_or_default()
+}
+
+/// A `WorkspaceEdit`: `documentChanges` (edits and file operations, in
+/// order) or the older `changes` map.
+pub fn workspace_edit(j: &Json, utf16: bool) -> WorkspaceEdit {
+    let mut changes = Vec::new();
+    if let Some(list) = j.get("documentChanges").and_then(Json::arr) {
+        for c in list {
+            if let Some(uri) = c.get("textDocument").and_then(|t| t.get("uri")).and_then(Json::str) {
+                if let Some(path) = uri_to_path(uri) {
+                    changes.push(Change::Edits(path, text_edits(c.get("edits").unwrap_or(&Json::Null))));
+                }
+                continue;
+            }
+            let path = |key: &str| c.get(key).and_then(Json::str).and_then(uri_to_path);
+            match (c.field_str("kind"), path("uri"), path("oldUri"), path("newUri")) {
+                ("create", Some(p), _, _) => changes.push(Change::Create(p)),
+                ("delete", Some(p), _, _) => changes.push(Change::Delete(p)),
+                ("rename", _, Some(a), Some(b)) => changes.push(Change::Rename(a, b)),
+                _ => {}
+            }
+        }
+    } else if let Some(Json::Obj(pairs)) = j.get("changes") {
+        for (uri, edits) in pairs {
+            if let Some(path) = uri_to_path(uri) {
+                changes.push(Change::Edits(path, text_edits(edits)));
+            }
+        }
+    }
+    WorkspaceEdit { changes, utf16 }
+}
+
+/// `Location[]` (or `LocationLink[]`), as references come.
+pub fn locations(result: &Json) -> Vec<Loc> {
+    let items = match result {
+        Json::Arr(a) => a.as_slice(),
+        Json::Null => &[],
+        one => std::slice::from_ref(one),
+    };
+    items
+        .iter()
+        .filter_map(|it| {
+            let (uri, r) = match it.get("targetUri").and_then(Json::str) {
+                Some(u) => (u, it.get("targetSelectionRange").or_else(|| it.get("targetRange"))?),
+                None => (it.get("uri")?.str()?, it.get("range")?),
+            };
+            let (line, col, end_line, end_col) = range(r)?;
+            Some(Loc { path: uri_to_path(uri)?, line, col, end_line, end_col })
+        })
+        .collect()
+}
+
+/// `(Command | CodeAction)[]`, preferred ones first.
+pub fn code_actions(result: &Json, utf16: bool) -> Vec<CodeAction> {
+    let mut out = Vec::new();
+    for it in result.arr().unwrap_or(&[]) {
+        let title = it.field_str("title").to_owned();
+        if title.is_empty() || it.get("disabled").is_some() {
+            continue;
+        }
+        let edit = it.get("edit").map(|e| workspace_edit(e, utf16)).filter(|e| !e.changes.is_empty());
+        let command = match it.get("command") {
+            // A bare Command has the name at the top; a CodeAction nests it.
+            Some(Json::Str(name)) => Some((name.clone(), it.get("arguments").cloned().unwrap_or(Json::Null))),
+            Some(c) => c.get("command").and_then(Json::str).map(|n| (n.to_owned(), c.get("arguments").cloned().unwrap_or(Json::Null))),
+            None => None,
+        };
+        if edit.is_none() && command.is_none() {
+            continue;
+        }
+        out.push(CodeAction { title, preferred: it.get("isPreferred").and_then(Json::bool).unwrap_or(false), edit, command });
+    }
+    let (mut preferred, rest): (Vec<CodeAction>, Vec<CodeAction>) = out.into_iter().partition(|a| a.preferred);
+    preferred.extend(rest);
+    preferred
+}
+
+/// The first line of a `string | MarkupContent`.
+fn doc_line(j: &Json) -> Option<String> {
+    let text = j.str().or_else(|| j.get("value").and_then(Json::str))?;
+    text.lines().map(str::trim).find(|l| !l.is_empty() && !l.starts_with("```")).map(str::to_owned)
+}
+
+/// `SignatureHelp`: the active signature with its active parameter.
+pub fn signature_help(result: &Json, utf16: bool) -> Option<SignatureHelp> {
+    let sigs = result.get("signatures")?.arr()?;
+    if sigs.is_empty() {
+        return None;
+    }
+    let index = (result.get("activeSignature").and_then(Json::num).unwrap_or(0.0) as usize).min(sigs.len() - 1);
+    let sig = &sigs[index];
+    let label = sig.field_str("label").to_owned();
+    let params = sig.get("parameters").and_then(Json::arr).unwrap_or(&[]);
+    let active_param = sig.get("activeParameter").or_else(|| result.get("activeParameter")).and_then(Json::num).map(|n| n as usize);
+    let active = active_param.and_then(|i| params.get(i)).and_then(|p| match p.get("label")? {
+        Json::Str(s) => label.find(s.as_str()).map(|a| (a, a + s.len())),
+        Json::Arr(pair) if pair.len() == 2 => {
+            let (a, b) = (pair[0].num()? as usize, pair[1].num()? as usize);
+            Some((from_units(&label, a, utf16), from_units(&label, b, utf16)))
+        }
+        _ => None,
+    });
+    let doc = active_param.and_then(|i| params.get(i)).and_then(|p| p.get("documentation")).and_then(doc_line).or_else(|| sig.get("documentation").and_then(doc_line));
+    Some(SignatureHelp { label, active, doc, index, count: sigs.len() })
 }
 
 /// The text of a hover result: markup or marked strings, code fences
@@ -230,5 +340,33 @@ mod tests {
         assert_eq!(progress(&p).unwrap(), ("rustAnalyzer/Indexing".into(), "3/10 crates 30%".into(), false));
         assert!(!wants_utf16(&Json::parse(r#"{"capabilities":{"positionEncoding":"utf-8"}}"#).unwrap()));
         assert!(wants_utf16(&Json::parse(r#"{"capabilities":{}}"#).unwrap()));
+    }
+
+    #[test]
+    fn edits_actions_and_signatures() {
+        let we = Json::parse(r#"{"documentChanges":[{"textDocument":{"uri":"file:///p/a.rs","version":3},"edits":[{"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":3}},"newText":"bar"}]},{"kind":"rename","oldUri":"file:///p/foo.rs","newUri":"file:///p/bar.rs"},{"kind":"create","uri":"file:///p/new.rs"}]}"#).unwrap();
+        let e = workspace_edit(&we, false);
+        assert_eq!(e.changes.len(), 3);
+        assert_eq!(e.changes[0], Change::Edits(PathBuf::from("/p/a.rs"), vec![TextEdit { line: 1, col: 0, end_line: 1, end_col: 3, text: "bar".into() }]));
+        assert_eq!(e.changes[1], Change::Rename(PathBuf::from("/p/foo.rs"), PathBuf::from("/p/bar.rs")));
+        assert_eq!(e.changes[2], Change::Create(PathBuf::from("/p/new.rs")));
+        let old = Json::parse(r#"{"changes":{"file:///p/b.rs":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"newText":"x"}]}}"#).unwrap();
+        assert_eq!(workspace_edit(&old, true).changes.len(), 1);
+        let refs = Json::parse(r#"[{"uri":"file:///p/a.rs","range":{"start":{"line":4,"character":2},"end":{"line":4,"character":5}}}]"#).unwrap();
+        assert_eq!(locations(&refs), vec![Loc { path: PathBuf::from("/p/a.rs"), line: 4, col: 2, end_line: 4, end_col: 5 }]);
+        assert!(locations(&Json::Null).is_empty());
+        let acts = Json::parse(r#"[{"title":"Remove unused","kind":"quickfix","edit":{"changes":{"file:///p/a.rs":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}},"newText":""}]}}},{"title":"Import it","kind":"quickfix","isPreferred":true,"command":{"title":"x","command":"rust-analyzer.applyImport","arguments":[1]}},{"title":"Nothing","kind":"refactor"}]"#).unwrap();
+        let a = code_actions(&acts, false);
+        assert_eq!(a.len(), 2, "an action with neither edit nor command is dropped");
+        assert_eq!((a[0].title.as_str(), a[0].preferred, a[0].edit.is_none()), ("Import it", true, true), "preferred first");
+        assert_eq!(a[0].command.as_ref().map(|(n, _)| n.as_str()), Some("rust-analyzer.applyImport"));
+        assert!(a[1].edit.is_some());
+        let sh = Json::parse(r#"{"signatures":[{"label":"fn push(&mut self, value: T)","documentation":{"kind":"markdown","value":"Appends an element.\n\nMore."},"parameters":[{"label":"&mut self"},{"label":[19,27]}]}],"activeSignature":0,"activeParameter":1}"#).unwrap();
+        let s = signature_help(&sh, false).unwrap();
+        assert_eq!(s.active, Some((19, 27)));
+        assert_eq!(&s.label[19..27], "value: T");
+        assert_eq!(s.doc.as_deref(), Some("Appends an element."));
+        assert_eq!((s.index, s.count), (0, 1));
+        assert!(signature_help(&Json::parse(r#"{"signatures":[]}"#).unwrap(), false).is_none());
     }
 }

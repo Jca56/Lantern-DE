@@ -39,6 +39,13 @@ pub const DELETE_LINE: &str = "code.delete_line";
 pub const NEXT_FILE: &str = "code.next_file";
 pub const PREV_FILE: &str = "code.prev_file";
 pub const SET_LANG: &str = "code.set_lang";
+pub const RENAME_SYMBOL: &str = "code.rename_symbol";
+pub const RENAME_SYMBOL_GO: &str = "code.rename_symbol_go";
+pub const REFERENCES: &str = "code.references";
+pub const CODE_ACTIONS: &str = "code.actions";
+pub const CODE_ACTION_PICK: &str = "code.action_pick";
+pub const FORMAT: &str = "code.format";
+pub const SIGNATURE: &str = "code.signature";
 pub const SHOW_FILES: &str = "view.files";
 pub const SHOW_TERMINAL: &str = "view.terminal";
 pub const SHOW_PROBLEMS: &str = "view.problems";
@@ -66,7 +73,12 @@ pub const IDE_SEND: &str = "ide.send_selection";
 pub const OPEN_PREFIX: &str = "open:";
 
 /// The palette's commands: (action id, label).
-pub const PALETTE: [(&str, &str); 36] = [
+pub const PALETTE: [(&str, &str); 41] = [
+    (RENAME_SYMBOL, "Rename Symbol…"),
+    (REFERENCES, "Find References"),
+    (CODE_ACTIONS, "Code Actions…"),
+    (FORMAT, "Format Document"),
+    (SIGNATURE, "Signature Help"),
     (IDE_SEND, "Send Selection to Claude"),
     (IDE_ACCEPT, "Accept Claude's Diff"),
     (IDE_REJECT, "Reject Claude's Diff"),
@@ -146,6 +158,11 @@ pub fn keymap() -> KeyConfig {
     bind(Tab, ctrl | shift, actions::PREV_TAB);
     bind(PageDown, ctrl, NEXT_FILE);
     bind(PageUp, ctrl, PREV_FILE);
+    bind(F(2), none, RENAME_SYMBOL);
+    bind(F(12), shift, REFERENCES);
+    bind(Char('.'), ctrl, CODE_ACTIONS);
+    bind(Char('i'), ctrl | shift, FORMAT);
+    bind(Space, ctrl | shift, SIGNATURE);
     let alt = Modifiers::ALT;
     bind(Char('k'), ctrl | alt, IDE_SEND);
     bind(Char('a'), alt, IDE_ACCEPT);
@@ -201,6 +218,11 @@ pub fn menu(app: &App, name: &str) -> Option<Menu> {
                 item("Move Line Down", "").disabled().hint("Alt+Down"),
                 MenuItem::separator(),
                 item("Go to Line…", GOTO_LINE).enabled(has_doc),
+                MenuItem::separator(),
+                item("Rename Symbol…", RENAME_SYMBOL).enabled(has_doc),
+                item("Find References", REFERENCES).enabled(has_doc),
+                item("Code Actions…", CODE_ACTIONS).enabled(has_doc),
+                item("Format Document", FORMAT).enabled(has_doc),
                 MenuItem::separator(),
                 item("Send Selection to Claude", IDE_SEND).enabled(has_doc),
             ],

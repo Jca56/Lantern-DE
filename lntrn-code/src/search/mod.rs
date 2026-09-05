@@ -70,13 +70,16 @@ pub struct Search {
     pub run_at: Option<f64>,
     /// What the shown results were searched for.
     pub shown_for: Option<Query>,
+    /// A line above the results when they are not a text search's
+    /// (references from the language server).
+    pub heading: Option<String>,
     rx: Option<Receiver<Msg>>,
     generation: Arc<AtomicU64>,
 }
 
 impl Default for Search {
     fn default() -> Self {
-        Self { query: String::new(), match_case: false, whole_word: false, results: Vec::new(), total: 0, capped: false, running: false, files_seen: 0, collapsed: HashSet::new(), want_focus: false, run_at: None, shown_for: None, rx: None, generation: Arc::new(AtomicU64::new(0)) }
+        Self { query: String::new(), match_case: false, whole_word: false, results: Vec::new(), total: 0, capped: false, running: false, files_seen: 0, collapsed: HashSet::new(), want_focus: false, run_at: None, shown_for: None, heading: None, rx: None, generation: Arc::new(AtomicU64::new(0)) }
     }
 }
 
@@ -96,6 +99,7 @@ impl Search {
         self.files_seen = 0;
         self.collapsed.clear();
         self.run_at = None;
+        self.heading = None;
         self.shown_for = Some(query.clone());
         if query.text.is_empty() {
             self.running = false;
@@ -256,7 +260,7 @@ pub fn find_in(text: &str, q: &Query) -> Vec<Hit> {
 
 /// The line for the list: whole when short, else a window around the
 /// match. Leading whitespace is dropped either way.
-fn preview_of(line: &str, col: usize, len: usize) -> (String, usize) {
+pub(crate) fn preview_of(line: &str, col: usize, len: usize) -> (String, usize) {
     let lead = line.len() - line.trim_start().len();
     let start = lead.min(col);
     if line.len() - start <= PREVIEW_AROUND * 3 {

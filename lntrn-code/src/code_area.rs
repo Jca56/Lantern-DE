@@ -113,6 +113,9 @@ impl App {
             if let Some((p, trigger)) = asked.complete {
                 self.lsp.complete(d, p, trigger);
             }
+            if let Some((p, trigger, retrigger)) = asked.signature {
+                self.lsp.signature(d, p, trigger, retrigger);
+            }
         }
         if out.clicked {
             self.focus_doc = Some(doc_id);

@@ -1,10 +1,13 @@
 //! Language servers for the project: one per language that has one on
 //! the machine ([`server`]), spoken to over stdio ([`client`],
 //! [`framing`]) in our own JSON, with their diagnostics kept by file and
-//! their answers (hover, definition, completion) handed to the app as
-//! events. Columns go through [`pos`] because servers count UTF-16 units.
+//! their answers (hover, definition, completion, rename, references,
+//! code actions, signature help, formatting) handed to the app as
+//! events. Columns go through [`pos`] because servers count UTF-16 units;
+//! what they want changed is applied through [`edits`].
 
 pub mod client;
+pub mod edits;
 pub mod framing;
 mod glue;
 mod parse;
@@ -17,17 +20,78 @@ use std::path::{Path, PathBuf};
 use lntrn_app::Waker;
 
 use self::server::{Server, State};
-use crate::buffer::Pos;
+use crate::buffer::{Pos, Range};
 use crate::doc::Doc;
+use crate::json::Json;
 use crate::problems::{LspSpan, Problem, Severity};
 use crate::syntax::Language;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LspDiag {
     pub span: LspSpan,
     pub severity: Severity,
     pub message: String,
     pub source: String,
+    /// As the server sent it, handed back when asking for its fixes.
+    pub raw: Json,
+}
+
+/// What a workspace edit does to one file, in the server's order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Change {
+    Edits(PathBuf, Vec<TextEdit>),
+    Create(PathBuf),
+    Rename(PathBuf, PathBuf),
+    Delete(PathBuf),
+}
+
+/// Changes across files, as a rename or a code action makes them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WorkspaceEdit {
+    pub changes: Vec<Change>,
+    /// The columns are UTF-16 units.
+    pub utf16: bool,
+}
+
+/// A place in a file, in the server's columns.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Loc {
+    pub path: PathBuf,
+    pub line: usize,
+    pub col: usize,
+    pub end_line: usize,
+    pub end_col: usize,
+}
+
+/// A fix or refactoring the server offers.
+#[derive(Clone, Debug)]
+pub struct CodeAction {
+    pub title: String,
+    pub preferred: bool,
+    pub edit: Option<WorkspaceEdit>,
+    /// A command to run on the server instead: name and arguments.
+    pub command: Option<(String, Json)>,
+}
+
+/// What an action asks of the server for the focused document.
+pub enum Ask {
+    Rename(String),
+    References,
+    CodeActions,
+    Signature,
+    Format { then_save: bool },
+}
+
+/// The signature being typed: its label, the active parameter's byte
+/// range in it, its first line of documentation, and which of how many
+/// overloads it is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignatureHelp {
+    pub label: String,
+    pub active: Option<(usize, usize)>,
+    pub doc: Option<String>,
+    pub index: usize,
+    pub count: usize,
 }
 
 /// A replacement in the server's columns.
@@ -59,6 +123,13 @@ pub enum Event {
     Hover { path: PathBuf, pos: Pos, text: String },
     Definition { path: PathBuf, line: usize, col: usize, end_line: usize, end_col: usize, utf16: bool },
     Completion { path: PathBuf, pos: Pos, items: Vec<CompletionItem> },
+    Rename(WorkspaceEdit),
+    References { name: String, locs: Vec<Loc>, utf16: bool },
+    CodeActions { path: PathBuf, actions: Vec<CodeAction> },
+    Signature { path: PathBuf, pos: Pos, help: Option<SignatureHelp> },
+    Formatted { path: PathBuf, edits: Vec<TextEdit>, utf16: bool, then_save: bool },
+    /// The server asks for changes of its own (after a command ran).
+    ApplyEdit(WorkspaceEdit),
     /// Something to tell the user.
     Message(String),
 }
@@ -98,7 +169,6 @@ impl Lsp {
     }
 
     /// Whether `lang` has a running server.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn serves(&self, lang: Language) -> bool {
         self.servers.iter().any(|s| s.lang == lang && s.serving())
     }
@@ -139,6 +209,51 @@ impl Lsp {
     pub fn complete(&mut self, doc: &Doc, pos: Pos, trigger: Option<char>) {
         if let (Some(path), Some(s)) = (doc.path.clone(), self.server_mut(doc.lang())) {
             s.complete(&path, doc.line(pos.line), pos, trigger);
+        }
+    }
+
+    pub fn rename(&mut self, doc: &Doc, pos: Pos, new_name: &str) {
+        if let (Some(path), Some(s)) = (doc.path.clone(), self.server_mut(doc.lang())) {
+            s.rename(&path, doc.line(pos.line), pos, new_name);
+        }
+    }
+
+    /// Every use of the symbol at `pos`; `name` labels the answer.
+    pub fn references(&mut self, doc: &Doc, pos: Pos, name: &str) {
+        if let (Some(path), Some(s)) = (doc.path.clone(), self.server_mut(doc.lang())) {
+            s.references(&path, doc.line(pos.line), pos, name);
+        }
+    }
+
+    /// The fixes for `range`, with the diagnostics there handed back so
+    /// the server can attach their quick fixes.
+    pub fn code_actions(&mut self, doc: &Doc, range: Range) {
+        let Some(path) = doc.path.clone() else {
+            return;
+        };
+        let raws: Vec<Json> = self.diags.get(&path).map(|list| list.iter().filter(|d| d.span.line <= range.end.line && d.span.end_line >= range.start.line).map(|d| d.raw.clone()).collect()).unwrap_or_default();
+        if let Some(s) = self.server_mut(doc.lang()) {
+            s.code_actions(&path, (range.start, doc.line(range.start.line)), (range.end, doc.line(range.end.line)), raws);
+        }
+    }
+
+    pub fn signature(&mut self, doc: &Doc, pos: Pos, trigger: Option<char>, retrigger: bool) {
+        if let (Some(path), Some(s)) = (doc.path.clone(), self.server_mut(doc.lang())) {
+            s.signature(&path, doc.line(pos.line), pos, trigger, retrigger);
+        }
+    }
+
+    /// Format the whole document; `then_save` saves it once the edits are in.
+    pub fn format(&mut self, doc: &Doc, tab: usize, spaces: bool, then_save: bool) {
+        if let (Some(path), Some(s)) = (doc.path.clone(), self.server_mut(doc.lang())) {
+            s.format(&path, tab, spaces, then_save);
+        }
+    }
+
+    /// Run a server command (a code action without an edit of its own).
+    pub fn execute(&mut self, lang: Language, command: &str, args: Json) {
+        if let Some(s) = self.server_mut(lang) {
+            s.execute(command, args);
         }
     }
 
@@ -247,6 +362,36 @@ mod tests {
         assert_eq!(defined.unwrap(), (path.clone(), 0), "helper is defined on the first line");
         let problems = lsp.problems(|p| p.display().to_string(), |_, _| None);
         assert!(problems.iter().any(|p| p.line == 3 && p.severity == Severity::Error), "{problems:?}");
+        // Round two: references, formatting, signature help, code
+        // actions and a rename, all in flight at once.
+        lsp.references(&doc, Pos::new(0, 3), "helper");
+        lsp.format(&doc, 4, true, false);
+        lsp.signature(&doc, Pos::new(3, 19), Some('('), false);
+        lsp.code_actions(&doc, Range::new(Pos::new(2, 4), Pos::new(2, 4)));
+        lsp.rename(&doc, Pos::new(0, 3), "helper2");
+        let (mut refs, mut formatted, mut signature, mut actions, mut renamed) = (None, None, None, None, None);
+        while refs.is_none() || formatted.is_none() || signature.is_none() || actions.is_none() || renamed.is_none() {
+            assert!(std::time::Instant::now() < deadline, "round two timed out: refs {} fmt {} sig {} act {} ren {}", refs.is_some(), formatted.is_some(), signature.is_some(), actions.is_some(), renamed.is_some());
+            lsp.sync(std::slice::from_ref(&doc));
+            for e in lsp.poll().1 {
+                match e {
+                    Event::References { locs, .. } => refs = Some(locs),
+                    Event::Formatted { edits, .. } => formatted = Some(edits),
+                    Event::Signature { help, .. } => signature = Some(help),
+                    Event::CodeActions { actions: a, .. } => actions = Some(a),
+                    Event::Rename(edit) => renamed = Some(edit),
+                    _ => {}
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert_eq!(refs.unwrap().len(), 2, "the definition and the call");
+        assert!(!formatted.unwrap().is_empty(), "rustfmt spreads the one-line body");
+        assert!(signature.unwrap().is_some_and(|s| s.label.contains("helper")), "the call's signature");
+        let edit = renamed.unwrap();
+        let edits: usize = edit.changes.iter().map(|c| if let Change::Edits(_, e) = c { e.len() } else { 0 }).sum();
+        assert_eq!(edits, 2, "both mentions renamed: {edit:?}");
+        let _ = actions.unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

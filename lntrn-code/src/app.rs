@@ -21,7 +21,7 @@ use crate::editor::find::Finder;
 use crate::files::Project;
 use crate::git::Git;
 use crate::git::gutter::LineMark;
-use crate::lsp::Lsp;
+use crate::lsp::{CodeAction, Lsp};
 use crate::editor::lsp_ui::LspUi;
 use crate::search::Search;
 use crate::session::Session;
@@ -49,6 +49,10 @@ pub struct App {
     /// The language servers and their popups in the code view.
     pub lsp: Lsp,
     pub lsp_ui: LspUi,
+    /// The fixes on offer while their menu is up.
+    pub code_actions: Vec<CodeAction>,
+    /// Saves waiting on a format from the server, and when to stop waiting.
+    pub pending_saves: Vec<(DocId, std::time::Instant)>,
     /// The project's repository, when it is in one.
     pub git: Option<Git>,
     /// Gutter marks per document: `(last edit, HEAD, marks)`.
@@ -117,6 +121,8 @@ impl App {
             search: Search::default(),
             lsp: Lsp::default(),
             lsp_ui: LspUi::default(),
+            code_actions: Vec::new(),
+            pending_saves: Vec::new(),
             git: None,
             git_marks: HashMap::new(),
             pending_git_diff: None,
@@ -291,10 +297,15 @@ impl App {
         let now = shell.state.now;
         for c in watcher.poll() {
             again = true;
+            let in_git = git_dir.as_deref() == Some(c.dir.as_path());
+            // Lock files come and go with every git command; they say nothing.
+            if in_git && c.name.as_deref().is_some_and(|n| n.ends_with(".lock")) {
+                continue;
+            }
             if let Some(g) = self.git.as_mut() {
                 g.mark_dirty(now);
             }
-            if git_dir.as_deref() == Some(c.dir.as_path()) {
+            if in_git {
                 continue;
             }
             if c.is_listing()
@@ -497,6 +508,7 @@ impl AppHost for App {
         again |= self.watch_pump(shell);
         again |= self.search.poll();
         again |= self.lsp_pump(shell);
+        again |= self.settle_saves(shell);
         if let Some(g) = self.git.as_mut() {
             again |= g.poll();
             if let Some(delay) = g.tick(shell.state.now) {
