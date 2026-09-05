@@ -324,7 +324,10 @@ impl PerOutputWorkspaces {
     /// output isn't registered.
     pub fn output_geometry(&self, output: &Output) -> Option<Rectangle<i32, Logical>> {
         // Prefer a per-workspace Space (handles output transforms uniformly).
-        for ow in self.per_output.values() {
+        // Every output is mapped into every workspace Space, so the output's
+        // own entry answers directly — this is on the pointer-motion path
+        // (5-8 calls per event) and used to scan every output × workspace.
+        if let Some(ow) = self.per_output.get(&output.name()) {
             for ws in ow.workspaces.values() {
                 if let Some(geo) = ws.space.output_geometry(output) {
                     return Some(geo);
@@ -1043,6 +1046,16 @@ impl Lantern {
                 }
             }
         }
+        for (id, fd) in self.workspace_ipc.take_new_clients() {
+            crate::ipc_source::register_client(
+                self,
+                fd,
+                "workspaces",
+                id,
+                Self::poll_workspace_ipc,
+                |s: &Self, id: u64| s.workspace_ipc.has_client(id),
+            );
+        }
     }
 }
 
@@ -1243,11 +1256,24 @@ impl Lantern {
         out
     }
 
-    /// `Space::refresh` on every per-workspace Space. Replaces the global
-    /// `space.refresh()` call site.
-    pub fn refresh_all_spaces(&mut self) {
-        for (_out, ow) in self.workspaces.iter_mut() {
-            for ws in ow.workspaces.values_mut() {
+    /// `Space::refresh` only the workspaces that are about to be rendered on
+    /// `output_name`: its active workspace plus both ends of an in-flight
+    /// switch transition. The render path used to refresh every workspace of
+    /// every output on every output's frame (outputs × workspaces × Hz);
+    /// hidden workspaces don't need per-frame output-overlap bookkeeping and
+    /// dead windows are purged explicitly by `reap_dead_windows`.
+    pub fn refresh_visible_spaces(&mut self, output_name: &str, transition: Option<(u32, u32)>) {
+        let Some(ow) = self.workspaces.output_workspaces_mut(output_name) else {
+            return;
+        };
+        let active = ow.active;
+        let mut ids = [Some(active), None, None];
+        if let Some((from, to)) = transition {
+            ids[1] = Some(from);
+            ids[2] = Some(to);
+        }
+        for id in ids.into_iter().flatten() {
+            if let Some(ws) = ow.workspaces.get_mut(&id) {
                 ws.space.refresh();
             }
         }

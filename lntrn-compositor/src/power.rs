@@ -186,6 +186,26 @@ impl PowerState {
     }
 }
 
+/// Drive [`PowerState::tick`] from its own 1s event-loop timer. It used to
+/// piggyback on the render path's 30-frame counter — but the render loop is
+/// demand-driven and goes fully idle when nothing on screen changes, which
+/// is exactly when dim-after-idle, idle lock/suspend and the critical-battery
+/// action need to fire.
+pub fn install_tick_timer(state: &mut crate::Lantern) {
+    use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+    let period = Duration::from_secs(1);
+    let res = state.loop_handle.insert_source(
+        Timer::from_duration(period),
+        move |_, _, state: &mut crate::Lantern| {
+            state.power.tick();
+            TimeoutAction::ToDuration(period)
+        },
+    );
+    if let Err(e) = res {
+        tracing::warn!(?e, "failed to install power tick timer");
+    }
+}
+
 // ── sysfs helpers ───────────────────────────────────────────────────────────
 
 fn find_backlight() -> Option<BacklightDevice> {

@@ -130,9 +130,8 @@ impl Lantern {
         if self.is_locked() {
             return;
         }
-        tracing::info!(
+        tracing::debug!(
             focused = surface.is_some(),
-            mapped_windows = self.space.elements().count(),
             mru_len = self.window_mru.len(),
             "Updating keyboard focus"
         );

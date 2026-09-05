@@ -6,7 +6,10 @@ use smithay::{
     backend::{
         allocator::Fourcc,
         renderer::{
-            element::{texture::TextureRenderElement, Element, Id, Kind, RenderElement},
+            element::{
+                texture::{TextureRenderBuffer, TextureRenderElement},
+                Element, Kind, RenderElement,
+            },
             gles::{GlesError, GlesRenderer, GlesTexProgram, GlesTexture, Uniform},
             Bind, Color32F, Frame, Offscreen, Renderer,
         },
@@ -32,6 +35,12 @@ pub struct BlurState {
     /// shared result would alias to the last window's blur. Grown on demand
     /// by `ensure_textures`; reused frame-to-frame when the blur is throttled.
     pub results: Vec<GlesTexture>,
+    /// One render buffer per `results` texture. Backdrop elements are built
+    /// from these so their element Id stays stable frame to frame (a fresh
+    /// `Id::new()` per frame read as brand-new damage over every transparent
+    /// window every frame); `render_and_blur` bumps the buffer's commit with
+    /// full damage whenever it actually rewrites the pixels.
+    pub result_buffers: Vec<TextureRenderBuffer<GlesTexture>>,
     pub full_size: Size<i32, Physical>,
     pub passes: usize,
     /// Time of last full blur. Used to throttle blur to ~10Hz when nothing
@@ -60,11 +69,14 @@ pub fn ensure_textures<K: std::hash::Hash + Eq + Copy>(
     let result_w = (phys_size.w / 2).max(1);
     let result_h = (phys_size.h / 2).max(1);
     let alloc_result = |renderer: &mut GlesRenderer| {
-        Offscreen::<GlesTexture>::create_buffer(
+        let tex = Offscreen::<GlesTexture>::create_buffer(
             renderer,
             Fourcc::Abgr8888,
             Size::from((result_w, result_h)),
-        )
+        )?;
+        let buffer =
+            TextureRenderBuffer::from_texture(renderer, tex.clone(), 1, Transform::Normal, None);
+        Ok::<_, GlesError>((tex, buffer))
     };
 
     if let Some(state) = states.get_mut(&key) {
@@ -73,7 +85,10 @@ pub fn ensure_textures<K: std::hash::Hash + Eq + Copy>(
             // current number of stacked transparent windows.
             while state.results.len() < result_count {
                 match alloc_result(renderer) {
-                    Ok(t) => state.results.push(t),
+                    Ok((t, b)) => {
+                        state.results.push(t);
+                        state.result_buffers.push(b);
+                    }
                     Err(e) => {
                         tracing::warn!("blur: result texture failed: {:?}", e);
                         return false;
@@ -120,9 +135,13 @@ pub fn ensure_textures<K: std::hash::Hash + Eq + Copy>(
     // One half-res result texture per stacked transparent window (same size
     // as textures[0]). Always allocate at least one.
     let mut results = Vec::with_capacity(result_count.max(1));
+    let mut result_buffers = Vec::with_capacity(result_count.max(1));
     for _ in 0..result_count.max(1) {
         match alloc_result(renderer) {
-            Ok(t) => results.push(t),
+            Ok((t, b)) => {
+                results.push(t);
+                result_buffers.push(b);
+            }
             Err(e) => {
                 tracing::warn!("blur: result texture failed: {:?}", e);
                 return false;
@@ -136,6 +155,7 @@ pub fn ensure_textures<K: std::hash::Hash + Eq + Copy>(
             scene,
             textures,
             results,
+            result_buffers,
             full_size: phys_size,
             passes,
             last_blur: None,
@@ -305,6 +325,16 @@ pub fn render_and_blur(
         let _ = frame.finish();
     }
 
+    // The result pixels changed: bump the render buffer's commit with full
+    // damage so the (stable-Id) backdrop element repaints — see
+    // `BlurState::result_buffers`.
+    if let Some(buffer) = state.result_buffers.get_mut(result_idx) {
+        let full = Rectangle::<i32, BufferCoords>::from_size(Size::from((half_size.w, half_size.h)));
+        let _ = buffer
+            .render()
+            .draw(|_| -> Result<Vec<Rectangle<i32, BufferCoords>>, GlesError> { Ok(vec![full]) });
+    }
+
     Ok(())
 }
 
@@ -343,20 +373,19 @@ pub fn create_backdrop(
 
     let dst_size = Size::from((win_log_rect.size.w, win_log_rect.size.h));
 
-    TextureRenderElement::from_static_texture(
-        Id::new(),
-        ctx_id,
+    // Stable per-result Id via the render buffer (see `BlurState`); the
+    // context id is carried by the buffer.
+    let _ = ctx_id;
+    let idx = result_idx.min(state.result_buffers.len().saturating_sub(1));
+    TextureRenderElement::from_texture_render_buffer(
         loc,
-        state.results[result_idx.min(state.results.len().saturating_sub(1))].clone(),
-        1,
-        Transform::Normal,
+        &state.result_buffers[idx],
         Some(alpha.clamp(0.0, 1.0)),
         Some(Rectangle::new(
             Point::from((src_x, src_y)),
             Size::from((src_w, src_h)),
         )),
         Some(dst_size),
-        None,
         Kind::Unspecified,
     )
 }

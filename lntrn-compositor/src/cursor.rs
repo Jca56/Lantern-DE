@@ -1,5 +1,6 @@
-use std::collections::VecDeque;
-use std::time::Instant;
+use std::collections::{HashMap, VecDeque};
+use std::path::Path;
+use std::time::{Instant, SystemTime};
 
 use smithay::{
     backend::{
@@ -17,6 +18,26 @@ use smithay::{
 };
 use xcursor::{parser::parse_xcursor, CursorTheme};
 
+/// One rasterized cursor image, keyed in `CursorState::pixmap_cache` by the
+/// artwork it came FROM (`lantern:<file>`, `custom:<theme>`, `xcursor:<icon>`)
+/// rather than the shape that asked for it. Shapes without their own SVG
+/// (pointer, text, grab…) all resolve to the default arrow; before this cache
+/// every hover in/out of a link re-read and re-rasterized that same file
+/// (20k+ reloads in one session's log).
+#[derive(Clone)]
+struct CachedCursor {
+    buffer: MemoryRenderBuffer,
+    hotspot: (i32, i32),
+    size: (i32, i32),
+    /// mtime of the on-disk source at rasterize time (None = embedded /
+    /// no file). Re-checked on lookup so runtime SVG tweaks still land.
+    mtime: Option<SystemTime>,
+}
+
+fn file_mtime(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path).ok().and_then(|m| m.modified().ok())
+}
+
 pub struct CursorState {
     pub status: CursorImageStatus,
     buffer: MemoryRenderBuffer,
@@ -26,6 +47,9 @@ pub struct CursorState {
     cursor_size: u32,
     theme_name: String,
     loaded_icon_key: Option<&'static str>,
+    /// Rasterized images by source artwork — see [`CachedCursor`]. Cleared
+    /// whenever the pixels would change (size, recolor palette, outline).
+    pixmap_cache: HashMap<String, CachedCursor>,
     /// "default", "custom1", "custom2" — from lantern.toml [input] cursor_theme
     custom_theme: String,
     custom_loaded: bool,
@@ -76,6 +100,7 @@ impl CursorState {
             cursor_size,
             theme_name,
             loaded_icon_key: None,
+            pixmap_cache: HashMap::new(),
             custom_theme: "default".into(),
             custom_loaded: false,
             last_recolor_body_light: crate::input::read_input_setting(
@@ -133,10 +158,9 @@ impl CursorState {
             // whatever the fallback gives us) so Progress reads as
             // "arrow + spinner" and Wait reads as "the cursor is busy".
             let want_spinner = matches!(icon, CursorIcon::Wait | CursorIcon::Progress);
-            let color = parse_hex_color(&crate::input::read_input_setting(
-                "cursor_body_light",
-                "#ffffff",
-            ));
+            // `tick_colors` keeps this in sync with lantern.toml every frame;
+            // no need to re-parse the config on every client set_cursor.
+            let color = parse_hex_color(&self.last_recolor_body_light);
             self.loading_anim.set_active(want_spinner, color);
 
             let icon_key = cursor_icon_key(icon);
@@ -174,6 +198,40 @@ impl CursorState {
         }
     }
 
+    // ── Pixmap cache ───────────────────────────────────────────────────
+
+    /// Install a cached image as the current cursor if `key` is present and
+    /// (when `source` is a file) the file hasn't changed on disk since it
+    /// was rasterized. One stat() instead of read + recolor + resvg.
+    fn cache_lookup(&mut self, key: &str, source: Option<&Path>) -> bool {
+        let Some(entry) = self.pixmap_cache.get(key) else {
+            return false;
+        };
+        if let Some(path) = source {
+            if entry.mtime != file_mtime(path) {
+                return false;
+            }
+        }
+        self.buffer = entry.buffer.clone();
+        self.hotspot = entry.hotspot;
+        self.size = entry.size;
+        self.loaded = true;
+        true
+    }
+
+    /// Remember the image that was just rasterized into `self`.
+    fn cache_store(&mut self, key: String, mtime: Option<SystemTime>) {
+        self.pixmap_cache.insert(
+            key,
+            CachedCursor {
+                buffer: self.buffer.clone(),
+                hotspot: self.hotspot,
+                size: self.size,
+                mtime,
+            },
+        );
+    }
+
     // ── Theme selection & SVG loading ──────────────────────────────────
 
     /// Rasterize the user's currently-active custom cursor theme SVG
@@ -188,11 +246,20 @@ impl CursorState {
         let svg_path = crate::lantern_home()
             .join("config/cursors")
             .join(format!("{}.svg", self.custom_theme));
+        let key = format!(
+            "custom:{}:{}:{}",
+            self.custom_theme, hotspot_viewbox.0, hotspot_viewbox.1
+        );
+        if self.cache_lookup(&key, Some(&svg_path)) {
+            self.loaded_icon_key = Some(icon_key);
+            return true;
+        }
         let Ok(data) = std::fs::read(&svg_path) else {
             return false;
         };
         if self.rasterize_svg(&data, hotspot_viewbox).is_some() {
             self.loaded_icon_key = Some(icon_key);
+            self.cache_store(key, file_mtime(&svg_path));
             true
         } else {
             false
@@ -218,16 +285,25 @@ impl CursorState {
             "nwse-resize" => "lntrn-cursor-nwse.svg",
             _ => return false,
         };
-        let hot = hotspot_for_icon(icon_key);
 
         // Runtime override: ~/.lantern/icons/cursors/<file>. Recolour is
         // applied to the bundled-default SVGs only — custom themes loaded
         // via `set_custom_theme` keep their authored palette.
         let runtime_path = crate::lantern_home().join("icons/cursors").join(svg_file);
+        // Keyed by FILE, not icon: "pointer"/"text"/… all resolve to the
+        // default arrow and must share its pixmap.
+        let key = format!("lantern:{svg_file}");
+        if self.cache_lookup(&key, Some(&runtime_path)) {
+            self.loaded_icon_key = Some(icon_key);
+            return true;
+        }
+        let hot = hotspot_for_icon(icon_key);
+
         if let Ok(data) = std::fs::read(&runtime_path) {
             let recolored = recolor_cursor_svg(&data, icon_key);
             if self.rasterize_svg(&recolored, hot).is_some() {
                 self.loaded_icon_key = Some(icon_key);
+                self.cache_store(key, file_mtime(&runtime_path));
                 tracing::info!("Loaded Lantern cursor: {}", runtime_path.display());
                 return true;
             }
@@ -244,6 +320,8 @@ impl CursorState {
         let recolored = recolor_cursor_svg(data, icon_key);
         if self.rasterize_svg(&recolored, hot).is_some() {
             self.loaded_icon_key = Some(icon_key);
+            // mtime None: a runtime file appearing later reads as a change.
+            self.cache_store(key, None);
             tracing::info!("Loaded embedded Lantern cursor: {}", svg_file);
             true
         } else {
@@ -279,12 +357,14 @@ impl CursorState {
 
         match std::fs::read(&svg_path) {
             Ok(data) => {
-                if self
-                    .rasterize_svg(&data, hotspot_for_icon("default"))
-                    .is_some()
-                {
+                let hot = hotspot_for_icon("default");
+                if self.rasterize_svg(&data, hot).is_some() {
                     tracing::info!("Loaded custom SVG cursor: {}", svg_path.display());
                     self.custom_loaded = true;
+                    self.cache_store(
+                        format!("custom:{}:{}:{}", theme, hot.0, hot.1),
+                        file_mtime(&svg_path),
+                    );
                 } else {
                     tracing::warn!("Failed to rasterize SVG cursor: {}", svg_path.display());
                     self.custom_loaded = false;
@@ -334,7 +414,9 @@ impl CursorState {
         self.last_recolor_scale = scale;
         self.last_recolor_radius = radius;
         // Force the next set_status to rebuild the buffer. We snapshot status
-        // first so a `Named(Default)` cursor immediately re-rasterizes.
+        // first so a `Named(Default)` cursor immediately re-rasterizes. Every
+        // cached pixmap was drawn with the old palette — drop them all.
+        self.pixmap_cache.clear();
         let cur = self.status.clone();
         self.loaded_icon_key = None;
         self.set_status(cur);
@@ -348,6 +430,7 @@ impl CursorState {
         }
         self.cursor_size = size;
         // Force the next set_status to re-rasterize at the new size.
+        self.pixmap_cache.clear();
         self.loaded_icon_key = None;
         self.custom_loaded = false;
         if self.custom_theme != "default" {
@@ -423,6 +506,11 @@ impl CursorState {
 
     fn load_xcursor(&mut self, icon: CursorIcon) {
         let icon_key = cursor_icon_key(icon);
+        let cache_key = format!("xcursor:{}:{}", self.theme_name, icon_key);
+        if self.cache_lookup(&cache_key, None) {
+            self.loaded_icon_key = Some(icon_key);
+            return;
+        }
         let theme = CursorTheme::load(&self.theme_name);
         let icon_path = cursor_icon_names(icon)
             .iter()
@@ -492,6 +580,7 @@ impl CursorState {
         );
         self.loaded = true;
         self.loaded_icon_key = Some(icon_key);
+        self.cache_store(cache_key, None);
     }
 
     fn load_fallback(&mut self, size: u32) {

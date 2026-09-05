@@ -11,6 +11,7 @@ use smithay::{
     utils::{Logical, Physical, Point, Rectangle, Size},
 };
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 
 use crate::snap::SnapZone;
 
@@ -19,22 +20,38 @@ use crate::snap::SnapZone;
 /// Window control button width.
 const BTN_W: i32 = 46;
 
-/// Titlebar height in logical pixels — read from [window_manager].titlebar_height,
-/// default 34. Config reads are mtime-cached so this is essentially free.
-pub fn bar_height_px() -> i32 {
-    crate::read_config("window_manager", "titlebar_height", "34")
+// The two SSD geometry settings, cached as atomics. `bar_height_px` and
+// `corner_radius` run per SSD window per frame AND on every pointer motion
+// over a titlebar; each used to be a full line-scan of the cached
+// lantern.toml text. `reload_config` refreshes them from the render path's
+// half-second housekeeping (and once at startup).
+static BAR_HEIGHT: AtomicI32 = AtomicI32::new(34);
+static CORNER_RADIUS_BITS: AtomicU32 = AtomicU32::new(0x4190_0000); // 18.0f32
+
+/// Re-read `[window_manager].titlebar_height` / `.corner_radius`.
+pub fn reload_config() {
+    let bar = crate::read_config("window_manager", "titlebar_height", "34")
         .parse::<i32>()
         .unwrap_or(34)
-        .clamp(20, 60)
-}
-
-/// Corner radius for floating (non-tiled) windows — from
-/// [window_manager].corner_radius, default 18.
-pub fn corner_radius() -> f32 {
-    crate::read_config("window_manager", "corner_radius", "18")
+        .clamp(20, 60);
+    BAR_HEIGHT.store(bar, Ordering::Relaxed);
+    let radius = crate::read_config("window_manager", "corner_radius", "18")
         .parse::<f32>()
         .unwrap_or(18.0)
-        .clamp(0.0, 32.0)
+        .clamp(0.0, 32.0);
+    CORNER_RADIUS_BITS.store(radius.to_bits(), Ordering::Relaxed);
+}
+
+/// Titlebar height in logical pixels — [window_manager].titlebar_height,
+/// default 34 (see `reload_config`).
+pub fn bar_height_px() -> i32 {
+    BAR_HEIGHT.load(Ordering::Relaxed)
+}
+
+/// Corner radius for floating (non-tiled) windows —
+/// [window_manager].corner_radius, default 18 (see `reload_config`).
+pub fn corner_radius() -> f32 {
+    f32::from_bits(CORNER_RADIUS_BITS.load(Ordering::Relaxed))
 }
 
 /// Corner radius for tiled windows — derived from the configured radius
@@ -90,11 +107,30 @@ impl RoundedCorners {
     }
 }
 
+/// Everything `render_decoration` derives its elements from. While this is
+/// unchanged frame to frame the cached elements (and their Ids) are reused,
+/// so a static titlebar is genuinely undamaged instead of being repainted
+/// every frame — the same fix the window chrome cache got for shadows.
+#[derive(Clone, Copy, PartialEq)]
+struct DecorKey {
+    win_loc_phys: (i32, i32),
+    win_loc_logical: (i32, i32),
+    win_size: (i32, i32),
+    scale_bits: u64,
+    corners_top: (bool, bool),
+    radius_bits: u32,
+    hovered: Option<SsdButton>,
+    bar_h: i32,
+    shaders: (bool, bool),
+}
+
 /// Per-window SSD state with pre-allocated color buffers.
 pub struct SsdState {
     pub hovered_button: Option<SsdButton>,
+    #[allow(dead_code)]
     close_hover_buf: SolidColorBuffer,
     btn_hover_buf: SolidColorBuffer,
+    decor_cache: Option<(DecorKey, Vec<SolidColorRenderElement>, Vec<PixelShaderElement>)>,
 }
 
 impl SsdState {
@@ -106,6 +142,7 @@ impl SsdState {
             hovered_button: None,
             close_hover_buf: SolidColorBuffer::new((1, 1), close_hover),
             btn_hover_buf: SolidColorBuffer::new((1, 1), btn_hover),
+            decor_cache: None,
         }
     }
 }
@@ -215,12 +252,29 @@ pub fn render_decoration(
     corners: RoundedCorners,
     radius_logical: f32,
 ) -> (Vec<SolidColorRenderElement>, Vec<PixelShaderElement>) {
+    let bar_h = bar_height_px();
+    let key = DecorKey {
+        win_loc_phys: (win_loc_phys.x, win_loc_phys.y),
+        win_loc_logical: (win_loc_logical.x, win_loc_logical.y),
+        win_size: (win_size.w, win_size.h),
+        scale_bits: scale.to_bits(),
+        corners_top: (corners.tl, corners.tr),
+        radius_bits: radius_logical.to_bits(),
+        hovered: state.hovered_button,
+        bar_h,
+        shaders: (icon_shader.is_some(), header_shader.is_some()),
+    };
+    if let Some((cached_key, solids, shaders)) = &state.decor_cache {
+        if *cached_key == key {
+            return (solids.clone(), shaders.clone());
+        }
+    }
+
     let mut solids = Vec::with_capacity(2);
     let mut shaders = Vec::with_capacity(4);
     let kind = smithay::backend::renderer::element::Kind::Unspecified;
 
     let bar_w = win_size.w;
-    let bar_h = bar_height_px();
     let phys_bar_h = (bar_h as f64 * scale).round() as i32;
     let bar_px = win_loc_phys.x;
     let bar_py = win_loc_phys.y - phys_bar_h; // bar sits above the window
@@ -339,6 +393,7 @@ pub fn render_decoration(
         }
     }
 
+    state.decor_cache = Some((key, solids.clone(), shaders.clone()));
     (solids, shaders)
 }
 

@@ -123,7 +123,8 @@ impl LoadingAnimState {
                 Some(alpha),
                 None,
                 Some(Size::from((dot_size_i, dot_size_i))),
-                Kind::Cursor,
+                // Not Kind::Cursor — see cursor_click.rs.
+                Kind::Unspecified,
             ) {
                 out.push(elem);
             }

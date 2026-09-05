@@ -24,9 +24,11 @@ use smithay::backend::renderer::{
 use smithay::desktop::space::SpaceRenderElements;
 
 mod helpers;
+pub(crate) mod scanout;
 pub(crate) mod surface;
 
 pub use crate::layer_position::layer_surface_position_logical;
+pub use helpers::{SlowRenderStats, WindowSnapshot};
 pub use surface::render_surface;
 
 // Combined render element enum: space windows + cursor overlay

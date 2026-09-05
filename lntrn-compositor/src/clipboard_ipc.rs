@@ -19,7 +19,7 @@
 //!    "pinned":bool,"image_path":"/run/user/UID/lntrn-clipboard/N.png"|null}
 
 use std::io::{BufRead, BufReader, ErrorKind, Write};
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -82,9 +82,13 @@ struct ListResponse {
 pub struct ClipboardIpc {
     listener: Option<UnixListener>,
     clients: Vec<ClientConn>,
+    next_client_id: u64,
+    /// Clients accepted since the last `take_new_clients` (see `ipc_source`).
+    new_clients: Vec<(u64, OwnedFd)>,
 }
 
 struct ClientConn {
+    id: u64,
     reader: BufReader<UnixStream>,
     writer: UnixStream,
 }
@@ -112,13 +116,29 @@ impl ClipboardIpc {
         Self {
             listener,
             clients: Vec::new(),
+            next_client_id: 1,
+            new_clients: Vec::new(),
         }
+    }
+
+    // ── Event-loop hooks (see `ipc_source`) ──────────────────────────────
+
+    pub fn listener_fd(&self) -> Option<OwnedFd> {
+        self.listener.as_ref().and_then(crate::ipc_source::dup_fd)
+    }
+
+    pub fn take_new_clients(&mut self) -> Vec<(u64, OwnedFd)> {
+        std::mem::take(&mut self.new_clients)
+    }
+
+    pub fn has_client(&self, id: u64) -> bool {
+        self.clients.iter().any(|c| c.id == id)
     }
 }
 
 /// Drain pending IPC traffic — accept new clients, read requests, dispatch
-/// against the live `ClipboardManager`, write responses. Called once per
-/// compositor render tick.
+/// against the live `ClipboardManager`, write responses. Driven by the
+/// event-loop sources registered in `ipc_source` (listener + one per client).
 pub fn poll(state: &mut Lantern) {
     // Accept new connections first.
     if let Some(listener) = &state.clipboard_ipc.listener {
@@ -140,7 +160,13 @@ pub fn poll(state: &mut Lantern) {
                         Ok(w) => w,
                         Err(_) => continue,
                     };
+                    let id = state.clipboard_ipc.next_client_id;
+                    state.clipboard_ipc.next_client_id += 1;
+                    if let Some(fd) = crate::ipc_source::dup_fd(&stream) {
+                        state.clipboard_ipc.new_clients.push((id, fd));
+                    }
                     state.clipboard_ipc.clients.push(ClientConn {
+                        id,
                         reader: BufReader::new(stream),
                         writer,
                     });
@@ -179,6 +205,16 @@ pub fn poll(state: &mut Lantern) {
     }
     for idx in to_drop.into_iter().rev() {
         state.clipboard_ipc.clients.remove(idx);
+    }
+    for (id, fd) in state.clipboard_ipc.take_new_clients() {
+        crate::ipc_source::register_client(
+            state,
+            fd,
+            "clipboard",
+            id,
+            poll,
+            |s: &Lantern, id: u64| s.clipboard_ipc.has_client(id),
+        );
     }
 }
 

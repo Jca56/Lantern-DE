@@ -633,6 +633,16 @@ impl Lantern {
     /// Reload the Lantern layer config when `lantern.toml` changes on disk so
     /// edits from System Settings take effect without a compositor restart.
     fn reload_layer_if_changed(&mut self) {
+        // One stat() per half second, not one per key event (press AND
+        // release, plus every autorepeat).
+        let now = std::time::Instant::now();
+        if self
+            .layer_config_checked
+            .is_some_and(|t| now.duration_since(t) < std::time::Duration::from_millis(500))
+        {
+            return;
+        }
+        self.layer_config_checked = Some(now);
         let path = crate::lantern_config_path();
         let mtime = std::fs::metadata(&path)
             .ok()

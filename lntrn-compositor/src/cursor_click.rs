@@ -200,7 +200,10 @@ impl ClickAnimState {
                     Some(alpha),
                     None,
                     None,
-                    Kind::Cursor,
+                    // Not Kind::Cursor: with the hardware cursor plane enabled the
+                    // DRM compositor would otherwise try to put a ripple ring on
+                    // the plane whenever the real cursor didn't fit there.
+                    Kind::Unspecified,
                 ) {
                     out.push(elem);
                 }

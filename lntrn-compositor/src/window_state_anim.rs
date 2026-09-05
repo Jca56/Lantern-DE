@@ -6,7 +6,7 @@
 //! rect — so e.g. spamming maximize/unmaximize never visually snaps.
 
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use smithay::{
     reexports::wayland_server::protocol::wl_surface::WlSurface,
@@ -39,7 +39,18 @@ pub struct SmoothHold {
     /// the per-frame configure stream and as the held-visual rect during
     /// the brief post-anim gap.
     pub target: Rectangle<i32, Logical>,
+    /// When the rect animation finished (None while it's still running).
+    /// Bounds the post-anim hold — see `HOLD_TIMEOUT`.
+    finished_at: Option<Instant>,
 }
+
+/// How long a smooth-hold may outlive its rect animation. The hold is
+/// normally retired by the client's matching commit 1-2 frames later; a
+/// client that hangs, dies mid-resize, or clamps to a different size (min
+/// size, cell rounding) never commits at `target.size`. Without this cap
+/// `has_smooth_holds()` stayed true forever and the whole render pipeline
+/// ran at refresh rate until the next state change on that surface.
+const HOLD_TIMEOUT: Duration = Duration::from_millis(750);
 
 pub struct WindowStateAnimState {
     animations: HashMap<WlSurface, RectAnim>,
@@ -133,6 +144,25 @@ impl WindowStateAnimState {
     /// the rect anim by 1-2 frames so the client has time to catch up.
     pub fn tick(&mut self) -> bool {
         self.animations.retain(|_, a| !a.is_finished());
+        // Expire smooth-holds whose client never caught up (HOLD_TIMEOUT).
+        let animations = &self.animations;
+        let now = Instant::now();
+        self.smooth_holds.retain(|surface, hold| {
+            if animations.contains_key(surface) {
+                hold.finished_at = None;
+                return true;
+            }
+            let finished = *hold.finished_at.get_or_insert(now);
+            if now.duration_since(finished) > HOLD_TIMEOUT {
+                tracing::debug!(
+                    ?surface,
+                    "smooth-resize hold expired without a matching commit"
+                );
+                false
+            } else {
+                true
+            }
+        });
         !self.animations.is_empty()
     }
 
@@ -171,8 +201,13 @@ impl WindowStateAnimState {
         target: Rectangle<i32, Logical>,
     ) {
         self.animate(surface, start, target, state_duration(), state_curve());
-        self.smooth_holds
-            .insert(surface.clone(), SmoothHold { target });
+        self.smooth_holds.insert(
+            surface.clone(),
+            SmoothHold {
+                target,
+                finished_at: None,
+            },
+        );
     }
 
     /// Drain the next batch of per-frame configures to send. For each

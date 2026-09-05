@@ -576,17 +576,21 @@ impl Lantern {
             // Diagnostic for X11/Steam click-position bug: log the cursor
             // position, the window we hit, where the compositor mapped that
             // window, and (if X11) where the X11 surface thinks it is.
-            if let Some((window, win_loc)) = self.visible_element_under(pos) {
-                if let Some(x11) = window.x11_surface() {
-                    let x11_geo = x11.geometry();
-                    tracing::info!(
-                        cursor = format!("({:.1}, {:.1})", pos.x, pos.y),
-                        win_compositor_loc = format!("({}, {})", win_loc.x, win_loc.y),
-                        x11_logical_loc = format!("({}, {})", x11_geo.loc.x, x11_geo.loc.y),
-                        x11_size = format!("{}x{}", x11_geo.size.w, x11_geo.size.h),
-                        class = x11.class(),
-                        "click on X11 window — position diagnostic"
-                    );
+            // Debug level: at info it was one log line (and a synchronous
+            // file flush) per click on any X11 window.
+            if tracing::enabled!(tracing::Level::DEBUG) {
+                if let Some((window, win_loc)) = self.visible_element_under(pos) {
+                    if let Some(x11) = window.x11_surface() {
+                        let x11_geo = x11.geometry();
+                        tracing::debug!(
+                            cursor = format!("({:.1}, {:.1})", pos.x, pos.y),
+                            win_compositor_loc = format!("({}, {})", win_loc.x, win_loc.y),
+                            x11_logical_loc = format!("({}, {})", x11_geo.loc.x, x11_geo.loc.y),
+                            x11_size = format!("{}x{}", x11_geo.size.w, x11_geo.size.h),
+                            class = x11.class(),
+                            "click on X11 window — position diagnostic"
+                        );
+                    }
                 }
             }
             if let Some((window, _loc)) = self.visible_element_under(pos) {

@@ -20,6 +20,7 @@ mod hdr_ipc;
 mod hot_corners;
 pub mod hover_preview;
 mod input;
+mod ipc_source;
 mod keyboard_focus;
 mod layer_position;
 mod minimize_anim;
@@ -671,6 +672,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::warn!("clipboard recheck source install failed: {e}");
     }
     crate::window_query_ipc::install_source(&mut state);
+    // Every other IPC socket is fd-driven too — accept/read only when the
+    // event loop says a socket is readable, never polled from the render path.
+    crate::ipc_source::install_all(&mut state);
+    // Idle / battery actions on their own 1s timer, independent of rendering.
+    crate::power::install_tick_timer(&mut state);
+    // Prime the SSD geometry cache (refreshed every 500ms from the render path).
+    crate::ssd::reload_config();
 
     // Generate the Lantern Xcursor theme on disk before XWayland spawns so
     // X11 clients see our cursor instead of falling back to Adwaita / the

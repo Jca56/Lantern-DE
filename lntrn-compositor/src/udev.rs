@@ -5,7 +5,7 @@ use std::{
 
 use smithay::backend::drm::{DrmEventMetadata, DrmEventTime};
 use smithay::backend::input::InputEvent;
-use smithay::desktop::utils::{send_frames_surface_tree, OutputPresentationFeedback};
+use smithay::desktop::utils::OutputPresentationFeedback;
 use smithay::reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback;
 use smithay::utils::{Monotonic, Time};
 use smithay::wayland::presentation::Refresh;
@@ -88,6 +88,9 @@ pub(crate) struct OutputSurface {
     /// Whether direct scanout was allowed on the previous frame. Used purely to
     /// log engage/disengage transitions (not every frame).
     pub scanout_active: bool,
+    /// Whether the cursor sat on the hardware cursor plane last frame. Logs
+    /// engage/disengage transitions only.
+    pub cursor_plane_active: bool,
     /// Presentation-time feedback collected when this frame was submitted, fired
     /// at the next vblank (`frame_finish`) with the real scanout timestamp +
     /// sequence. `None` between vblanks / for idle surfaces.
@@ -401,6 +404,17 @@ pub fn init_udev(
             }
         })?;
 
+    // Reap zombie children on a slow timer (spawn sites also reap inline).
+    // Was a waitpid() syscall on every dispatch round.
+    let reap_period = Duration::from_secs(2);
+    event_loop.handle().insert_source(
+        Timer::from_duration(reap_period),
+        move |_, _, _| {
+            crate::reap_zombies();
+            TimeoutAction::ToDuration(reap_period)
+        },
+    )?;
+
     event_loop.run(None, state, |state| {
         let loop_start = if state.debug_counters.enabled {
             state.debug_counters.loop_iters += 1;
@@ -408,22 +422,28 @@ pub fn init_udev(
         } else {
             None
         };
-        // Reap dead windows: animate client-initiated closes, clean up the
-        // rest. xdg toplevels are handled deterministically in
-        // toplevel_destroyed; this poll catches X11 windows and abrupt
-        // client disconnects (and is idempotent with the handler path).
-        state.reap_dead_windows();
-        // NOTE: the unconditional Space::refresh (global + per-workspace)
-        // moved into render_surface. This callback fires after EVERY
-        // dispatch round — at 1000Hz mouse polling that was ~7000 refresh
-        // sweeps/sec; the render path runs it at most once per output frame,
-        // and the dead-window purge above covers the one case that needed
-        // dispatch-time refresh semantics.
+        // This callback fires after EVERY dispatch round — thousands of
+        // times per second under a 1000Hz mouse — so nothing here may scan
+        // the window or layer-surface lists unconditionally. Each sweep is
+        // gated on the event that can make it necessary:
+        state.loop_epoch = state.loop_epoch.wrapping_add(1);
+        // Dead-window sweep (X11 windows, abrupt client disconnects) only
+        // after a client actually disconnected — `ClientData::disconnected`
+        // raises the flag and wakes the loop. The render path keeps its own
+        // sweep as the safety net before `Space::refresh`.
+        if crate::state::take_client_disconnected() {
+            state.reap_dead_windows();
+            state.schedule_render();
+        }
+        // Work-area (exclusive zone) recompute only after a layer surface
+        // was mapped, committed or destroyed.
+        if state.exclusive_zones_dirty {
+            state.exclusive_zones_dirty = false;
+            state.layer_surfaces.retain(|ls| ls.alive());
+            state.check_exclusive_zone_change();
+        }
         state.popups.cleanup();
-        state.layer_surfaces.retain(|ls| ls.alive());
-        state.check_exclusive_zone_change();
         state.tick_audio_repeat();
-        crate::reap_zombies();
         let flush_start = if state.debug_counters.enabled {
             Some(std::time::Instant::now())
         } else {
@@ -523,39 +543,11 @@ pub(crate) fn frame_finish(
 
         // Frame callbacks fire HERE (at vblank), not at render-submit — so a
         // client wakes the instant its frame is on screen, with a full refresh
-        // interval of budget. throttle = half the frame interval: it passes on
-        // every real vblank (even with jitter) but still dedupes a surface that
-        // happens to span two outputs.
-        let throttle = Some(frame_callback_interval(&output) / 2);
-        for window in state.space.elements() {
-            window.send_frame(&output, present_time, throttle, |_, _| Some(output.clone()));
-        }
-        for ls in &state.layer_surfaces {
-            if ls.alive() {
-                send_frames_surface_tree(
-                    ls.wl_surface(),
-                    &output,
-                    present_time,
-                    throttle,
-                    |_, _| Some(output.clone()),
-                );
-            }
-        }
-        // Lock surfaces need vsync pacing too, or the lock client never
-        // repaints (clock stops, password dots lag).
-        if let Some(data) = state.session_lock.as_ref() {
-            for ls in data.surfaces.values() {
-                if ls.alive() {
-                    send_frames_surface_tree(
-                        ls.wl_surface(),
-                        &output,
-                        present_time,
-                        throttle,
-                        |_, _| Some(output.clone()),
-                    );
-                }
-            }
-        }
+        // interval of budget. Only surfaces whose primary scan-out output is
+        // THIS output are answered (windows, layer + lock surfaces, client
+        // cursor); anything on the other monitor / a hidden workspace /
+        // fully occluded gets the 1Hz trickle — see `render::scanout`.
+        crate::render::scanout::send_frame_callbacks(state, &output, present_time);
         state.last_callback_render = Instant::now();
     } else if let Some(mut fb) = feedback {
         // Output vanished mid-flight (hotplug) — don't strand the clients.

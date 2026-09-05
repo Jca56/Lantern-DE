@@ -3,7 +3,6 @@
 
 use std::time::{Duration, Instant};
 
-use smithay::desktop::utils::send_frames_surface_tree;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::{
     backend::{
@@ -32,7 +31,13 @@ use crate::shaders::{
 use crate::udev::{UdevOutputId, BG_COLOR};
 use crate::Lantern;
 
-use super::helpers::{capture_window_snapshot, collect_presentation_feedback};
+use super::helpers::{
+    capture_window_snapshot, snapshot_is_stale, window_content_key, SlowRenderBreakdown,
+    SlowRenderReport,
+};
+use super::scanout::{
+    collect_presentation_feedback, send_frame_callbacks, update_primary_scanout_outputs,
+};
 use super::CustomRenderElements;
 
 /// Inputs that parameterize a cached window-chrome shader element (shadow
@@ -117,9 +122,15 @@ pub fn render_surface(
         state.schedule_render();
     }
 
-    // Live-reload monitor positions from config (must run before any udev borrows)
-    // Uses wallpaper_frame_counter which is incremented later in this function.
-    if state.wallpaper_frame_counter == 0 {
+    // Half-second housekeeping (monitor-position reload here, before any udev
+    // borrow; wallpaper + config re-reads further down). Time-based rather
+    // than frame-counted: a 30-frame counter ran 8×/s at 240Hz and never at
+    // idle.
+    let periodic_due = state
+        .last_periodic_tick
+        .map_or(true, |t| t.elapsed() >= Duration::from_millis(500));
+    if periodic_due {
+        state.last_periodic_tick = Some(Instant::now());
         crate::udev_device::reload_monitor_positions(state);
     }
 
@@ -142,15 +153,9 @@ pub fn render_surface(
         surface.pending_render = false;
     }
 
-    // Space refresh (dead-element cleanup, output-presence updates) moved
-    // here from the calloop post-dispatch callback — there it ran after
-    // EVERY dispatch round (≈7000 sweeps/sec under 1000Hz mouse polling);
-    // here it runs at most once per output frame.
     // Reap dead windows FIRST: refresh() silently purges dead elements, and
     // losing the race meant forget_window never ran (stale dock entries).
     state.reap_dead_windows();
-    state.space.refresh();
-    state.refresh_all_spaces();
 
     let output = match state.workspaces.outputs_iter().find(|o| {
         o.user_data()
@@ -161,6 +166,24 @@ pub fn render_surface(
         Some(o) => o.clone(),
         None => return,
     };
+
+    // Space refresh (dead-element cleanup, output-presence updates): the
+    // global mirror at most once per event-loop iteration, and only the
+    // workspace Spaces this frame actually draws — the active one plus both
+    // ends of a switch transition. It used to refresh every workspace of
+    // every output on every output's frame.
+    if state.space_refreshed_epoch != state.loop_epoch {
+        state.space_refreshed_epoch = state.loop_epoch;
+        state.space.refresh();
+    }
+    {
+        let name = output.name();
+        let transition = state
+            .workspace_anim
+            .get(&name)
+            .map(|t| (t.from_ws, t.to_ws));
+        state.refresh_visible_spaces(&name, transition);
+    }
 
     // Direct scanout gate (computed before any udev borrow; it's a Copy bool
     // used much later at the render_frame call). Only bypass compositing when a
@@ -217,10 +240,8 @@ pub fn render_surface(
     for surface in &finished_minimizes {
         state.finish_minimize_animation(surface);
     }
-    state.poll_workspace_ipc();
-    state.poll_hdr_ipc();
-    state.poll_gaming_ipc();
-    crate::clipboard_ipc::poll(state);
+    // (IPC sockets are no longer polled here — each one is an event-loop
+    // source, see `ipc_source`.)
 
     // Get cursor position relative to this output (logical -> physical)
     let pointer_location = state
@@ -248,10 +269,9 @@ pub fn render_surface(
     } else {
         Vec::new()
     };
-    // Process Command-Center IPC early so any focus-at requests
-    // (click-outside-CC → focus underlying window) commit before we
-    // take the long-lived immutable borrows below.
-    state.cc_thumbs.poll();
+    // Drain Command-Center requests (queued by the IPC source) early so any
+    // focus-at requests (click-outside-CC → focus underlying window) commit
+    // before we take the long-lived immutable borrows below.
     let focus_at_points = state.cc_thumbs.take_focus_at();
     for (px, py) in focus_at_points {
         let pos =
@@ -349,7 +369,6 @@ pub fn render_surface(
     };
 
     // ── Hover preview pre-computation ────────────────────────────────
-    state.hover_preview.poll();
     let pointer_pos = state
         .seat
         .get_pointer()
@@ -905,15 +924,23 @@ pub fn render_surface(
         // animation if the client dies mid-resize). Smooth-resize path
         // doesn't read this snapshot during rendering — it's only kept
         // updated as a close-anim fallback.
-        if !is_fullscreen
-            && !is_opening
-            && !resize_animating
-            && state.wallpaper_frame_counter % 6 == 0
-        {
-            if let Some(snap) =
-                capture_window_snapshot(renderer, window, win_geo.size, output_scale)
-            {
-                state.window_snapshots.insert(surface.clone(), snap);
+        // Capture only when the window's buffers actually changed since the
+        // last snapshot, at most every SNAPSHOT_MIN_INTERVAL, reusing the
+        // texture when the size is unchanged. A static window costs nothing.
+        if !is_fullscreen && !is_opening && !resize_animating {
+            let content_key = window_content_key(window);
+            let previous = state.window_snapshots.get(&surface);
+            if snapshot_is_stale(previous, content_key) {
+                if let Some(snap) = capture_window_snapshot(
+                    renderer,
+                    window,
+                    win_geo.size,
+                    output_scale,
+                    previous,
+                    content_key,
+                ) {
+                    state.window_snapshots.insert(surface.clone(), snap);
+                }
             }
         }
 
@@ -961,7 +988,11 @@ pub fn render_surface(
         //    Crossfade path only — smooth path renders the live buffer
         //    directly at every step.
         if !is_smooth && resize_animating && snap_alpha > 0.01 {
-            if let Some((snap_tex, snap_phys)) = state.window_snapshots.get(&surface).cloned() {
+            if let Some((snap_tex, snap_phys)) = state
+                .window_snapshots
+                .get(&surface)
+                .map(|s| (s.texture.clone(), s.size))
+            {
                 let ctx_id = renderer.context_id();
                 let snap_loc = Point::<f64, Physical>::from((
                     (rel_x * output_scale).round(),
@@ -1208,7 +1239,7 @@ pub fn render_surface(
             let anim_alpha = params.alpha;
             let anim_scale = params.scale;
             let (snap_tex, snap_phys_size) = match state.window_snapshots.get(&cw.surface) {
-                Some(s) => s,
+                Some(s) => (&s.texture, &s.size),
                 None => continue,
             };
 
@@ -1995,23 +2026,15 @@ pub fn render_surface(
 
     let t_after_chrome = Instant::now();
 
-    // Check for wallpaper config changes ~2x per second. `reload_if_changed`
-    // is cheap when the path hasn't changed (path-compare only, no decode),
-    // so we can poll often. Was 300 frames (~5s) which made theme switches
-    // feel laggy — the decode-every-tick stall this counter originally
-    // guarded against is long gone.
-    state.wallpaper_frame_counter += 1;
-    if state.wallpaper_frame_counter >= 30 {
-        state.wallpaper_frame_counter = 0;
+    // Half-second housekeeping (see `periodic_due` at the top): wallpaper
+    // config check (`reload_if_changed` is a path compare, no decode) and the
+    // input / window-manager / display settings re-read. Reads are
+    // mtime-cached so this is mostly a stat() — kept at 500ms so System
+    // Settings changes feel instant.
+    if periodic_due {
         state.wallpaper.reload_if_changed();
-    }
-
-    // Periodically reload input config (mouse speed, cursor theme).
-    // ~0.5s at 60Hz; reads are mtime-cached so this is just a stat() most of
-    // the time — keep snappy so System Settings changes feel instant.
-    state.input_config_counter += 1;
-    if state.input_config_counter >= 30 {
-        state.input_config_counter = 0;
+        crate::ssd::reload_config();
+        state.hardware_cursor = crate::read_config("display", "hardware_cursor", "true") == "true";
         state.mouse_speed = crate::input::read_input_setting_f64("mouse_speed", 0.0);
         state.scroll_speed = crate::input::read_input_setting_f64("scroll_speed", 1.0);
         let new_accel = crate::input::read_input_setting("pointer_acceleration", "true") == "true";
@@ -2031,7 +2054,7 @@ pub fn render_surface(
             state.cursor.set_cursor_size(new_size);
         }
         state.power.reload_from_config();
-        state.power.tick();
+        // (power.tick() runs on its own 1s timer — see power::install_tick_timer.)
         // Pick up gap changes from settings; values are read on demand by
         // snap/zone-move/axis-resize so no relayout pass is needed.
         let _ = state.workspaces.sync_gaps_from_config();
@@ -2338,11 +2361,19 @@ pub fn render_surface(
     // drawn — which is exactly why it's gated on a hidden cursor + fullscreen
     // surface, where there's nothing to draw on top. All other frames
     // composite normally so nothing is dropped (the old Firefox cursor-freeze).
-    let frame_flags = if allow_scanout {
+    let mut frame_flags = if allow_scanout {
         FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT
     } else {
         FrameFlags::empty()
     };
+    // Hardware cursor plane: the DRM compositor lifts the (Kind::Cursor)
+    // cursor element onto the cursor plane, so a mouse move becomes a plane
+    // position update instead of a full 4K composite pass. Elements too big
+    // for the plane (spin-to-grow) fall back to compositing automatically.
+    // Kill switch: `[display] hardware_cursor = false`.
+    if state.hardware_cursor {
+        frame_flags |= FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT;
+    }
     if surface.scanout_active != allow_scanout {
         surface.scanout_active = allow_scanout;
         tracing::info!(
@@ -2359,13 +2390,32 @@ pub fn render_surface(
         .render_frame(renderer, &elements, BG_COLOR, frame_flags);
     let render_elapsed = t_render.elapsed();
 
-    let (rendered, frame_is_empty) = match result {
-        Ok(result) => (!result.is_empty, result.is_empty),
+    // Keep the per-element render states: they say which surfaces were
+    // actually presented on this output (vs. skipped as occluded / absent),
+    // which routes frame callbacks + presentation feedback below.
+    let (rendered, frame_is_empty, render_states, cursor_on_plane) = match result {
+        Ok(mut result) => {
+            let states = std::mem::take(&mut result.states);
+            (
+                !result.is_empty,
+                result.is_empty,
+                states,
+                result.cursor_element.is_some(),
+            )
+        }
         Err(err) => {
             warn!("Render error: {:?}", err);
             return;
         }
     };
+    if surface.cursor_plane_active != cursor_on_plane {
+        surface.cursor_plane_active = cursor_on_plane;
+        tracing::info!(
+            output = %output.name(),
+            "hardware cursor plane {}",
+            if cursor_on_plane { "engaged" } else { "disengaged" }
+        );
+    }
 
     // Deliver the PREVIOUS frame's async screencopy readback first — the
     // GPU has had a full frame interval to finish it, so mapping the PBO
@@ -2388,7 +2438,13 @@ pub fn render_surface(
             .partition(|p| p.output == output && (rendered || !p.with_damage));
         state.pending_screencopy = remaining;
         if !matching.is_empty() {
-            if nocapture_indices.is_empty() && rendered {
+            // With the cursor on its own plane the primary framebuffer has
+            // no cursor in it; a request that asked for `overlay_cursor`
+            // must go through the offscreen composite, which draws the
+            // cursor element like everything else.
+            let needs_cursor_composite =
+                cursor_on_plane && matching.iter().any(|p| p.overlay_cursor);
+            if nocapture_indices.is_empty() && rendered && !needs_cursor_composite {
                 // Nothing to hide → cheap direct-framebuffer readback, and
                 // any leftover offscreen target from a finished recording
                 // can be freed.
@@ -2450,8 +2506,13 @@ pub fn render_surface(
     // the next vblank with the true scanout time + sequence. (The `surface`
     // borrow above has ended by here — `arm_vblank_watchdog(state)` below took
     // `&mut state` already in the original code.)
+    // Fold this frame's render states into every surface's primary scan-out
+    // output FIRST — the feedback collection and the frame-callback fan-out
+    // (here on no-flip, in `udev::frame_finish` on vblank) both key off it.
+    update_primary_scanout_outputs(state, &output, &render_states);
+
     if queued {
-        let feedback = collect_presentation_feedback(&state.space, &state.layer_surfaces, &output);
+        let feedback = collect_presentation_feedback(state, &output, &render_states);
         if let Some(udev) = state.udev.as_mut() {
             if let Some(s) = udev
                 .backends
@@ -2470,8 +2531,7 @@ pub fn render_surface(
         // No flip this frame — drain any queued presentation feedback for these
         // surfaces and discard it so clients aren't left waiting on a
         // `presented` that will never come.
-        let mut feedback =
-            collect_presentation_feedback(&state.space, &state.layer_surfaces, &output);
+        let mut feedback = collect_presentation_feedback(state, &output, &render_states);
         feedback.discarded();
 
         // A no-flip frame produces no vblank, so `frame_finish` (where callbacks
@@ -2490,33 +2550,14 @@ pub fn render_surface(
         // fresh commit → flag stays false → no callback → the loop cannot sustain
         // itself. Firefox's answered frame carries real content next time, which
         // damages → normal flip → vblank callback resumes.
+        //
+        // Scoped to surfaces presented on THIS output. A client on a hidden
+        // workspace committing into an idle output used to get answered here
+        // instantly, every time — the storm above, just one client wide.
         if state.pending_client_frame_callbacks {
             state.pending_client_frame_callbacks = false;
             let now: Duration = Duration::from(state.clock.now());
-            let throttle = Some(crate::udev::frame_callback_interval(&output) / 2);
-            for window in state.space.elements() {
-                window.send_frame(&output, now, throttle, |_, _| Some(output.clone()));
-            }
-            for ls in &state.layer_surfaces {
-                if ls.alive() {
-                    send_frames_surface_tree(ls.wl_surface(), &output, now, throttle, |_, _| {
-                        Some(output.clone())
-                    });
-                }
-            }
-            if let Some(data) = state.session_lock.as_ref() {
-                for ls in data.surfaces.values() {
-                    if ls.alive() {
-                        send_frames_surface_tree(
-                            ls.wl_surface(),
-                            &output,
-                            now,
-                            throttle,
-                            |_, _| Some(output.clone()),
-                        );
-                    }
-                }
-            }
+            send_frame_callbacks(state, &output, now);
         }
     }
 
@@ -2552,21 +2593,51 @@ pub fn render_surface(
     }
 
     let total_elapsed = render_start.elapsed();
-    if total_elapsed > Duration::from_millis(4) {
-        let prelude_ms = (t_elements - render_start).as_secs_f64() * 1000.0;
-        let chrome_ms = (t_after_chrome - t_post_loop).as_secs_f64() * 1000.0;
-        let config_ms = (t_after_config - t_after_chrome).as_secs_f64() * 1000.0;
-        let blur_ms = (t_render - t_after_config).as_secs_f64() * 1000.0;
-        warn!(
-            total_ms = total_elapsed.as_secs_f64() * 1000.0,
-            prelude_ms,
-            elements_ms = elements_elapsed.as_secs_f64() * 1000.0,
-            chrome_ms, // cursor + switcher + layer surfaces
-            config_ms, // wallpaper reload + config reread
-            blur_ms,   // blur pipeline + element list assembly
-            render_ms = render_elapsed.as_secs_f64() * 1000.0,
-            "Slow render detected"
-        );
+    let total_ms = total_elapsed.as_secs_f64() * 1000.0;
+    // Over budget = more than 1.5× this output's frame interval (6.25ms at
+    // 240Hz, 25ms at 60Hz), floored at 4ms. The old flat 4ms threshold sat
+    // below the 4.17ms budget of a 4K@240 frame and fired on nearly every
+    // frame — 64k log lines, each a synchronous flush from the render path.
+    // `SlowRenderStats` additionally folds a burst into one line per second.
+    let budget_ms = crate::udev::frame_callback_interval(&output).as_secs_f64() * 1000.0;
+    if total_ms > (budget_ms * 1.5).max(4.0) {
+        let breakdown = SlowRenderBreakdown {
+            prelude_ms: (t_elements - render_start).as_secs_f64() * 1000.0,
+            elements_ms: elements_elapsed.as_secs_f64() * 1000.0,
+            chrome_ms: (t_after_chrome - t_post_loop).as_secs_f64() * 1000.0, // cursor + switcher + layers
+            config_ms: (t_after_config - t_after_chrome).as_secs_f64() * 1000.0, // wallpaper + config reread
+            blur_ms: (t_render - t_after_config).as_secs_f64() * 1000.0, // blur + element assembly
+            render_ms: render_elapsed.as_secs_f64() * 1000.0,
+        };
+        match state.slow_render_stats.record(total_ms, breakdown) {
+            Some(SlowRenderReport::Single(total, b)) => warn!(
+                output = %output.name(),
+                budget_ms,
+                total_ms = total,
+                prelude_ms = b.prelude_ms,
+                elements_ms = b.elements_ms,
+                chrome_ms = b.chrome_ms,
+                config_ms = b.config_ms,
+                blur_ms = b.blur_ms,
+                render_ms = b.render_ms,
+                "Slow render detected"
+            ),
+            Some(SlowRenderReport::Summary(frames, window_s, worst, b)) => warn!(
+                output = %output.name(),
+                budget_ms,
+                frames,
+                window_s,
+                worst_total_ms = worst,
+                worst_prelude_ms = b.prelude_ms,
+                worst_elements_ms = b.elements_ms,
+                worst_chrome_ms = b.chrome_ms,
+                worst_config_ms = b.config_ms,
+                worst_blur_ms = b.blur_ms,
+                worst_render_ms = b.render_ms,
+                "Slow renders (folded)"
+            ),
+            None => {}
+        }
     }
     if state.debug_counters.enabled {
         state.debug_counters.render_micros += total_elapsed.as_micros() as u64;

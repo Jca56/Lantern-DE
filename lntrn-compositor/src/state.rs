@@ -35,7 +35,7 @@ use smithay::{
             Display, DisplayHandle,
         },
     },
-    utils::{Logical, Physical, Point, Rectangle, Size},
+    utils::{Logical, Point, Rectangle},
     wayland::{
         compositor::{CompositorClientState, CompositorState},
         cursor_shape::CursorShapeManagerState,
@@ -85,7 +85,6 @@ use crate::window_state_anim::WindowStateAnimState;
 use crate::workspace_anim::WorkspaceAnimState;
 use crate::workspace_ipc::WorkspaceIpc;
 use crate::workspaces::PerOutputWorkspaces;
-use smithay::backend::renderer::gles::GlesTexture;
 
 const COUNTER_REPORT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
@@ -391,8 +390,9 @@ pub struct Lantern {
     pub animations: AnimationState,
     /// Windows that died (client-initiated close) but still have a close animation playing.
     pub closing_windows: Vec<ClosingWindow>,
-    /// Per-window snapshot textures captured each render frame for close animations.
-    pub window_snapshots: HashMap<WlSurface, (GlesTexture, Size<i32, Physical>)>,
+    /// Per-window content snapshots for close / resize animations. Refreshed
+    /// only when a window's buffers change (see `render::helpers`).
+    pub window_snapshots: HashMap<WlSurface, crate::render::WindowSnapshot>,
     pub workspaces: PerOutputWorkspaces,
     pub window_state_anim: WindowStateAnimState,
     pub minimize_anim: MinimizeAnimState,
@@ -450,9 +450,15 @@ pub struct Lantern {
     /// mtime of lantern.toml at last layer reload, so we hot-reload the layer
     /// map when the user edits keybinds in System Settings.
     pub layer_config_mtime: Option<std::time::SystemTime>,
+    /// When the layer-config mtime was last stat()ed (throttled to 500ms —
+    /// it used to be one stat per key press AND release).
+    pub layer_config_checked: Option<std::time::Instant>,
 
     // Cached exclusive zone offsets — reconfigure maximized windows when these change
     pub last_exclusive_offsets: (i32, i32, i32, i32),
+    /// Raised by layer-surface map / commit / destroy; the event loop's
+    /// post-dispatch callback recomputes the work area only when set.
+    pub exclusive_zones_dirty: bool,
 
     // Server-side decorations
     pub ssd: SsdManager,
@@ -462,7 +468,22 @@ pub struct Lantern {
     pub scroll_speed: f64,
     pub pointer_acceleration: bool,
     pub cursor_theme_name: String,
-    pub input_config_counter: u32,
+    /// Last run of the render path's half-second housekeeping (config
+    /// re-reads, wallpaper / monitor-position reload). Time-based: a frame
+    /// counter ran 8×/s at 240Hz and never at idle.
+    pub last_periodic_tick: Option<std::time::Instant>,
+    /// Bumped once per event-loop iteration (post-dispatch). Lets the render
+    /// path refresh the global Space at most once per iteration even when
+    /// several outputs render in the same one.
+    pub loop_epoch: u64,
+    pub space_refreshed_epoch: u64,
+    /// `[display] hardware_cursor` — let the DRM compositor put the cursor on
+    /// the hardware cursor plane so moving the mouse doesn't recomposite
+    /// the whole output. Default on; set to false to force the software
+    /// cursor (e.g. if the driver's cursor plane misbehaves).
+    pub hardware_cursor: bool,
+    /// Rate limiter for the "slow render" warning (one line per second).
+    pub slow_render_stats: crate::render::SlowRenderStats,
     /// Tracked libinput devices, used to re-apply config on live setting changes.
     pub libinput_devices: Vec<smithay::reexports::input::Device>,
 
@@ -694,14 +715,20 @@ impl Lantern {
             layer_inject: Vec::new(),
             layer_active_keys: std::collections::HashMap::new(),
             layer_config_mtime: None,
+            layer_config_checked: None,
             last_exclusive_offsets: (0, 0, 0, 0),
+            exclusive_zones_dirty: true,
             ssd: SsdManager::new(),
             mouse_speed: crate::input::read_input_setting_f64("mouse_speed", 0.0),
             scroll_speed: crate::input::read_input_setting_f64("scroll_speed", 1.0),
             pointer_acceleration: crate::input::read_input_setting("pointer_acceleration", "true")
                 == "true",
             cursor_theme_name: crate::input::read_input_setting("cursor_theme", "default"),
-            input_config_counter: 0,
+            last_periodic_tick: None,
+            loop_epoch: 1,
+            space_refreshed_epoch: 0,
+            hardware_cursor: crate::read_config("display", "hardware_cursor", "true") == "true",
+            slow_render_stats: Default::default(),
             libinput_devices: Vec::new(),
             power: crate::power::PowerState::new(),
             border_width: crate::read_config("window_manager", "border_width", "0")
@@ -1372,9 +1399,19 @@ pub struct ClientState {
     pub exe: Option<std::path::PathBuf>,
 }
 
+/// Raised from `ClientData::disconnected` (which only has `&self`); the
+/// event loop's post-dispatch callback consumes it to run the dead-window
+/// sweep once per disconnect instead of on every dispatch round.
+static CLIENT_DISCONNECTED: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn take_client_disconnected() -> bool {
+    CLIENT_DISCONNECTED.swap(false, Ordering::Relaxed)
+}
+
 impl ClientData for ClientState {
     fn initialized(&self, _client_id: ClientId) {}
     fn disconnected(&self, client_id: ClientId, reason: DisconnectReason) {
+        CLIENT_DISCONNECTED.store(true, Ordering::Relaxed);
         // The backend kills clients without logging (protocol error posted,
         // write failure, connection closed) — this callback is the ONLY
         // place the reason ever surfaces, so log every disconnect.

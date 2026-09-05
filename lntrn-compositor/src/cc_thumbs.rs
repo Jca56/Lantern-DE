@@ -21,7 +21,7 @@
 //! staged and live.
 
 use std::io::{BufRead, BufReader, ErrorKind};
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -117,6 +117,11 @@ fn build_x_glyph(size: usize, thickness: f32) -> MemoryRenderBuffer {
 pub struct CcThumbnails {
     listener: Option<UnixListener>,
     client: Option<BufReader<UnixStream>>,
+    /// Id of the live `client`; lets its event-loop source notice it was
+    /// replaced or dropped (see `ipc_source`).
+    client_id: u64,
+    next_client_id: u64,
+    new_clients: Vec<(u64, OwnedFd)>,
     /// Currently-applied slots (rendered each frame).
     live: Vec<ThumbSlot>,
     /// Buffer for the in-flight `begin` … `commit` batch.
@@ -163,6 +168,9 @@ impl CcThumbnails {
         Self {
             listener,
             client: None,
+            client_id: 0,
+            next_client_id: 1,
+            new_clients: Vec::new(),
             live: Vec::new(),
             staged: None,
             pending_focus_at: Vec::new(),
@@ -187,7 +195,25 @@ impl CcThumbnails {
         std::mem::take(&mut self.pending_type)
     }
 
-    pub fn poll(&mut self) {
+    // ── Event-loop hooks (see `ipc_source`) ──────────────────────────────
+
+    pub fn listener_fd(&self) -> Option<OwnedFd> {
+        self.listener.as_ref().and_then(crate::ipc_source::dup_fd)
+    }
+
+    pub fn take_new_clients(&mut self) -> Vec<(u64, OwnedFd)> {
+        std::mem::take(&mut self.new_clients)
+    }
+
+    pub fn has_client(&self, id: u64) -> bool {
+        self.client.is_some() && self.client_id == id
+    }
+
+    /// Accept a connection / drain the client. Returns true when anything
+    /// arrived (or the client went away) — i.e. the thumbnails changed and
+    /// a frame should be scheduled.
+    pub fn poll(&mut self) -> bool {
+        let mut activity = false;
         if let Some(ref listener) = self.listener {
             match listener.accept() {
                 Ok((stream, _)) => {
@@ -195,9 +221,16 @@ impl CcThumbnails {
                     match peer_uid(&stream) {
                         Some(uid) if uid == our_uid => {
                             stream.set_nonblocking(true).ok();
+                            let id = self.next_client_id;
+                            self.next_client_id += 1;
+                            if let Some(fd) = crate::ipc_source::dup_fd(&stream) {
+                                self.new_clients.push((id, fd));
+                            }
+                            self.client_id = id;
                             self.client = Some(BufReader::new(stream));
                             self.live.clear();
                             self.staged = None;
+                            activity = true;
                         }
                         other => {
                             tracing::warn!(?other, "rejecting cc-thumbs from foreign uid");
@@ -211,7 +244,7 @@ impl CcThumbnails {
 
         let client = match &mut self.client {
             Some(c) => c,
-            None => return,
+            None => return activity,
         };
         let mut line = String::new();
         loop {
@@ -221,9 +254,11 @@ impl CcThumbnails {
                     self.client = None;
                     self.live.clear();
                     self.staged = None;
+                    activity = true;
                     break;
                 }
                 Ok(_) => {
+                    activity = true;
                     let msg = line.trim();
                     if msg == "begin" {
                         self.staged = Some(Vec::new());
@@ -263,9 +298,33 @@ impl CcThumbnails {
                     self.client = None;
                     self.live.clear();
                     self.staged = None;
+                    activity = true;
                     break;
                 }
             }
+        }
+        activity
+    }
+}
+
+impl crate::Lantern {
+    /// Event-loop entry: drain the CC thumbnails socket, register any new
+    /// client with the loop, and schedule a frame if the slots changed.
+    /// (`take_focus_at` / `take_type` are still consumed by the render path.)
+    pub fn poll_cc_thumbs_ipc(&mut self) {
+        let activity = self.cc_thumbs.poll();
+        for (id, fd) in self.cc_thumbs.take_new_clients() {
+            crate::ipc_source::register_client(
+                self,
+                fd,
+                "cc-thumbs",
+                id,
+                Self::poll_cc_thumbs_ipc,
+                |s: &Self, id: u64| s.cc_thumbs.has_client(id),
+            );
+        }
+        if activity {
+            self.schedule_render();
         }
     }
 }

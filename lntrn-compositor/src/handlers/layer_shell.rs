@@ -72,6 +72,7 @@ impl WlrLayerShellHandler for Lantern {
         self.layer_surface_namespaces
             .insert(surface.wl_surface().clone(), namespace);
         self.layer_surfaces.push(surface);
+        self.exclusive_zones_dirty = true;
         self.schedule_render();
     }
 
@@ -80,6 +81,7 @@ impl WlrLayerShellHandler for Lantern {
         self.layer_surface_outputs.remove(surface.wl_surface());
         self.layer_surface_namespaces.remove(surface.wl_surface());
         self.layer_surfaces.retain(|ls| ls != &surface);
+        self.exclusive_zones_dirty = true;
         self.schedule_render();
     }
 }

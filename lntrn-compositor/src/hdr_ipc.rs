@@ -24,7 +24,7 @@
 //! startup; this socket only carries *live* changes + capability discovery.
 
 use std::io::{BufRead, BufReader, ErrorKind, Write};
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -77,9 +77,13 @@ pub struct HdrIpc {
     clients: Vec<ClientConn>,
     /// Latest per-output capability snapshot, replayed to new clients.
     caps: Vec<OutputCaps>,
+    next_client_id: u64,
+    /// Clients accepted since the last `take_new_clients` (see `ipc_source`).
+    new_clients: Vec<(u64, OwnedFd)>,
 }
 
 struct ClientConn {
+    id: u64,
     reader: BufReader<UnixStream>,
     writer: UnixStream,
     needs_caps: bool,
@@ -109,7 +113,23 @@ impl HdrIpc {
             listener,
             clients: Vec::new(),
             caps: Vec::new(),
+            next_client_id: 1,
+            new_clients: Vec::new(),
         }
+    }
+
+    // ── Event-loop hooks (see `ipc_source`) ──────────────────────────────
+
+    pub fn listener_fd(&self) -> Option<OwnedFd> {
+        self.listener.as_ref().and_then(crate::ipc_source::dup_fd)
+    }
+
+    pub fn take_new_clients(&mut self) -> Vec<(u64, OwnedFd)> {
+        std::mem::take(&mut self.new_clients)
+    }
+
+    pub fn has_client(&self, id: u64) -> bool {
+        self.clients.iter().any(|c| c.id == id)
     }
 
     /// Update (or insert) the cached capability for an output and push it to any
@@ -152,7 +172,13 @@ impl HdrIpc {
                             Ok(w) => w,
                             Err(_) => continue,
                         };
+                        let id = self.next_client_id;
+                        self.next_client_id += 1;
+                        if let Some(fd) = crate::ipc_source::dup_fd(&stream) {
+                            self.new_clients.push((id, fd));
+                        }
                         self.clients.push(ClientConn {
+                            id,
                             reader: BufReader::new(stream),
                             writer,
                             needs_caps: true,

@@ -14,7 +14,7 @@
 //! staying in lock-step with the Super+G keybind.
 
 use std::io::{BufRead, BufReader, ErrorKind, Write};
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -52,9 +52,13 @@ pub struct GamingIpc {
     clients: Vec<ClientConn>,
     /// Current gaming-mode state, replayed to newly-connecting clients.
     state: bool,
+    next_client_id: u64,
+    /// Clients accepted since the last `take_new_clients` (see `ipc_source`).
+    new_clients: Vec<(u64, OwnedFd)>,
 }
 
 struct ClientConn {
+    id: u64,
     reader: BufReader<UnixStream>,
     writer: UnixStream,
     needs_state: bool,
@@ -84,7 +88,23 @@ impl GamingIpc {
             listener,
             clients: Vec::new(),
             state: false,
+            next_client_id: 1,
+            new_clients: Vec::new(),
         }
+    }
+
+    // ── Event-loop hooks (see `ipc_source`) ──────────────────────────────
+
+    pub fn listener_fd(&self) -> Option<OwnedFd> {
+        self.listener.as_ref().and_then(crate::ipc_source::dup_fd)
+    }
+
+    pub fn take_new_clients(&mut self) -> Vec<(u64, OwnedFd)> {
+        std::mem::take(&mut self.new_clients)
+    }
+
+    pub fn has_client(&self, id: u64) -> bool {
+        self.clients.iter().any(|c| c.id == id)
     }
 
     /// Record the new state and push it to all connected clients.
@@ -130,7 +150,13 @@ impl GamingIpc {
                             Ok(w) => w,
                             Err(_) => continue,
                         };
+                        let id = self.next_client_id;
+                        self.next_client_id += 1;
+                        if let Some(fd) = crate::ipc_source::dup_fd(&stream) {
+                            self.new_clients.push((id, fd));
+                        }
                         self.clients.push(ClientConn {
+                            id,
                             reader: BufReader::new(stream),
                             writer,
                             needs_state: true,
@@ -199,6 +225,16 @@ impl crate::state::Lantern {
             match cmd {
                 GamingCommand::Toggle => self.toggle_gaming_mode(),
             }
+        }
+        for (id, fd) in self.gaming_ipc.take_new_clients() {
+            crate::ipc_source::register_client(
+                self,
+                fd,
+                "gaming",
+                id,
+                Self::poll_gaming_ipc,
+                |s: &Self, id: u64| s.gaming_ipc.has_client(id),
+            );
         }
     }
 }

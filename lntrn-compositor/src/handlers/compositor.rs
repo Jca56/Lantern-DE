@@ -183,6 +183,9 @@ impl CompositorHandler for Lantern {
             if ls.wl_surface() == surface {
                 use smithay::wayland::compositor::with_states;
                 use smithay::wayland::shell::wlr_layer::LayerSurfaceCachedState;
+                // A layer commit may change its exclusive zone / anchor —
+                // the event loop re-derives the work area on the next round.
+                self.exclusive_zones_dirty = true;
 
                 let output_geo = self
                     .layer_surface_outputs

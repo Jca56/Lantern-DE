@@ -522,6 +522,7 @@ pub(crate) fn connector_connected(
             frame_pending_since: None,
             pending_render: false,
             scanout_active: false,
+            cursor_plane_active: false,
             pending_feedback: None,
         },
     );

@@ -45,6 +45,10 @@ pub struct ResizeSurfaceGrab {
     initial_rect: Rectangle<i32, Logical>,
     last_window_size: Size<i32, Logical>,
     grab_button: u32,
+    /// When the last configure went out. Motion events arrive at mouse
+    /// polling rate (1000Hz); the client only needs one configure per frame,
+    /// so sends are coalesced to the fastest output's refresh interval.
+    last_configure: Option<std::time::Instant>,
 }
 
 impl ResizeSurfaceGrab {
@@ -73,6 +77,7 @@ impl ResizeSurfaceGrab {
             initial_rect,
             last_window_size: initial_rect.size,
             grab_button,
+            last_configure: None,
         }
     }
 
@@ -158,10 +163,26 @@ impl PointerGrab<Lantern> for ResizeSurfaceGrab {
             max_size.h
         };
 
-        self.last_window_size = Size::from((
+        let new_size = Size::from((
             new_window_width.max(min_width).min(max_width),
             new_window_height.max(min_height).min(max_height),
         ));
+        if new_size == self.last_window_size {
+            return;
+        }
+        self.last_window_size = new_size;
+
+        // One configure per frame, not per motion event. A pending size that
+        // gets skipped here is picked up by the next motion or by the final
+        // configure on button release.
+        let interval = crate::udev::fastest_output_interval(data);
+        if self
+            .last_configure
+            .is_some_and(|t| t.elapsed() < interval)
+        {
+            return;
+        }
+        self.last_configure = Some(std::time::Instant::now());
 
         if let Some(xdg) = self.window.toplevel() {
             xdg.with_pending_state(|state| {

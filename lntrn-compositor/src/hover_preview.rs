@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, ErrorKind};
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -71,6 +71,10 @@ const UNHOVER_GRACE_MS: u64 = 400;
 pub struct HoverPreview {
     listener: Option<UnixListener>,
     client: Option<BufReader<UnixStream>>,
+    /// Id of the live `client` (see `ipc_source`).
+    client_id: u64,
+    next_client_id: u64,
+    new_clients: Vec<(u64, OwnedFd)>,
     /// Currently hovered app_id (None = no hover).
     hovered_app_id: Option<String>,
     /// Center X of the hovered icon in logical output pixels.
@@ -131,6 +135,9 @@ impl HoverPreview {
         Self {
             listener,
             client: None,
+            client_id: 0,
+            next_client_id: 1,
+            new_clients: Vec::new(),
             hovered_app_id: None,
             icon_center_x: 0.0,
             icon_w: 0.0,
@@ -151,8 +158,24 @@ impl HoverPreview {
         self.tray_icons.get(app_id).copied()
     }
 
-    /// Poll for incoming IPC messages. Non-blocking.
-    pub fn poll(&mut self) {
+    // ── Event-loop hooks (see `ipc_source`) ──────────────────────────────
+
+    pub fn listener_fd(&self) -> Option<OwnedFd> {
+        self.listener.as_ref().and_then(crate::ipc_source::dup_fd)
+    }
+
+    pub fn take_new_clients(&mut self) -> Vec<(u64, OwnedFd)> {
+        std::mem::take(&mut self.new_clients)
+    }
+
+    pub fn has_client(&self, id: u64) -> bool {
+        self.client.is_some() && self.client_id == id
+    }
+
+    /// Poll for incoming IPC messages. Non-blocking. Returns true when a
+    /// message arrived (or the client went away) so a frame gets scheduled.
+    pub fn poll(&mut self) -> bool {
+        let mut activity = false;
         // Accept new connection (replaces previous)
         if let Some(ref listener) = self.listener {
             match listener.accept() {
@@ -161,6 +184,12 @@ impl HoverPreview {
                     match peer_uid(&stream) {
                         Some(uid) if uid == our_uid => {
                             stream.set_nonblocking(true).ok();
+                            let id = self.next_client_id;
+                            self.next_client_id += 1;
+                            if let Some(fd) = crate::ipc_source::dup_fd(&stream) {
+                                self.new_clients.push((id, fd));
+                            }
+                            self.client_id = id;
                             self.client = Some(BufReader::new(stream));
                         }
                         other => {
@@ -181,7 +210,7 @@ impl HoverPreview {
         // Read all available lines from client
         let client = match &mut self.client {
             Some(c) => c,
-            None => return,
+            None => return activity,
         };
         let mut line = String::new();
         loop {
@@ -192,9 +221,11 @@ impl HoverPreview {
                     self.client = None;
                     self.hovered_app_id = None;
                     self.fade_start = None;
+                    activity = true;
                     break;
                 }
                 Ok(_) => {
+                    activity = true;
                     let msg = line.trim();
                     if msg == "unhover" {
                         // Start grace period — don't dismiss immediately
@@ -243,10 +274,12 @@ impl HoverPreview {
                     self.client = None;
                     self.hovered_app_id = None;
                     self.fade_start = None;
+                    activity = true;
                     break;
                 }
             }
         }
+        activity
     }
 
     /// Call each frame to handle grace period dismissal.
@@ -470,5 +503,26 @@ impl HoverPreview {
 impl Drop for HoverPreview {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(socket_path());
+    }
+}
+
+impl crate::Lantern {
+    /// Event-loop entry: drain the hover socket, register any new client
+    /// with the loop, and schedule a frame if the hover state changed.
+    pub fn poll_hover_preview_ipc(&mut self) {
+        let activity = self.hover_preview.poll();
+        for (id, fd) in self.hover_preview.take_new_clients() {
+            crate::ipc_source::register_client(
+                self,
+                fd,
+                "hover",
+                id,
+                Self::poll_hover_preview_ipc,
+                |s: &Self, id: u64| s.hover_preview.has_client(id),
+            );
+        }
+        if activity {
+            self.schedule_render();
+        }
     }
 }

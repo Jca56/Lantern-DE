@@ -68,6 +68,16 @@ impl Lantern {
             );
             self.set_output_hdr(&output, cmd.enable, cmd.sdr_nits);
         }
+        for (id, fd) in self.hdr_ipc.take_new_clients() {
+            crate::ipc_source::register_client(
+                self,
+                fd,
+                "hdr",
+                id,
+                Self::poll_hdr_ipc,
+                |s: &Self, id: u64| s.hdr_ipc.has_client(id),
+            );
+        }
     }
 
     /// Confirm "Keep HDR" from the settings app. HDR engagement is currently

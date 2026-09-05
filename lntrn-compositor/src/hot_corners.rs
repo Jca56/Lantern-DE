@@ -109,6 +109,12 @@ impl Lantern {
     /// Starts a calloop timer when the pointer enters a corner zone.
     /// The timer fires the action after DWELL ms if still in the same corner.
     pub fn update_hot_corner(&mut self, pos: Point<f64, Logical>) {
+        // Feature switched off: nothing below can ever produce a corner, and
+        // this runs on every pointer motion event (1000Hz) — the fullscreen +
+        // modal-overlay checks alone scanned every layer surface per event.
+        if !HOT_CORNERS_ENABLED && !TOP_CENTER_HOT_EDGE_ENABLED {
+            return;
+        }
         // Suppress hot corners when the focused window is fullscreen
         let focused_is_fullscreen = self
             .focused_surface
