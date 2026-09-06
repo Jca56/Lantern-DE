@@ -408,7 +408,11 @@ impl Host for App {
         };
         let col = cell_of_byte(d.line(d.cursor.line), d.tab(), d.cursor.col) + 1;
         let sel = if d.has_selection() { format!(" · {} selected", d.selected_text().chars().count()) } else { String::new() };
-        let claude = if self.ide_connected > 0 { " · Claude ✓" } else { "" };
+        let claude = match self.ide_connected {
+            0 => String::new(),
+            1 => " · Claude ✓".to_owned(),
+            n => format!(" · Claude ×{n} ✓"),
+        };
         let branch = self.git.as_ref().filter(|g| !g.branch.is_empty()).map(|g| format!("⎇ {} · ", g.branch)).unwrap_or_default();
         let all = self.problems();
         let (errors, warnings) = (all.iter().filter(|p| p.severity == Severity::Error).count(), all.iter().filter(|p| p.severity == Severity::Warning).count());
@@ -419,7 +423,14 @@ impl Host for App {
             (e, w) => format!(" · {e} error{}, {w} warning{}", if e == 1 { "" } else { "s" }, if w == 1 { "" } else { "s" }),
         };
         let server = self.lsp.status().map(|s| format!(" · {s}")).unwrap_or_default();
-        format!("{branch}Ln {}, Col {col}{sel} · {} · {}{claude}{problems}{server}", d.cursor.line + 1, d.lang().name(), d.buffer.ending.label())
+        // Unix line endings are the norm; only the other kind is worth a word.
+        let ending = if d.buffer.ending.label() == "LF" { String::new() } else { format!(" · {}", d.buffer.ending.label()) };
+        format!("{branch}Ln {}, Col {col}{sel} · {}{ending}{claude}{problems}{server}", d.cursor.line + 1, d.lang().name())
+    }
+
+    /// The status goes along the bottom, not beside the title (U036).
+    fn status_bar(&self) -> bool {
+        true
     }
 
     fn title_menus(&self) -> &[(&str, &str)] {
