@@ -22,6 +22,12 @@ impl App {
         if let Some(a) = shell.screen.target(Editor::Code) {
             return a;
         }
+        // A Code tab hiding behind another tab is brought forward rather
+        // than a second one made.
+        if let Some((a, tab)) = shell.screen.tab_hosting(Editor::Code) {
+            shell.screen.select_tab(a, tab);
+            return a;
+        }
         let a = shell.screen.active.or_else(|| shell.screen.area_ids().next()).unwrap_or(0);
         shell.screen.add_tab(a, Editor::Code);
         a
@@ -32,6 +38,11 @@ impl App {
     /// right of the focused area).
     fn show_editor(&mut self, shell: &mut Shell<Self>, editor: Editor) -> Option<AreaId> {
         if let Some(a) = shell.screen.target(editor) {
+            shell.screen.active = Some(a);
+            return Some(a);
+        }
+        if let Some((a, tab)) = shell.screen.tab_hosting(editor) {
+            shell.screen.select_tab(a, tab);
             shell.screen.active = Some(a);
             return Some(a);
         }

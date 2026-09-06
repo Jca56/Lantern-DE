@@ -47,28 +47,12 @@ pub fn editor_menu(at: Vec2, lsp: bool) -> ContextMenu {
     ContextMenu::new("Editor", at).tab("Edit", items)
 }
 
-/// The right-click menu of a file or folder in the tree.
-pub fn file_menu(path: &Path, is_dir: bool, at: Vec2) -> ContextMenu {
-    let p = |id: &str| Action::new(id).with("path", Value::Str(path.display().to_string()));
-    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let mut items = Vec::new();
-    if is_dir {
-        items.push(Item::action("Go Into", p(GO)));
-        items.push(Item::action("Set as Project", p(SET_PROJECT)));
-        items.push(Item::Separator);
-        items.push(Item::action("New File…", p(FILE_NEW)));
-        items.push(Item::action("New Folder…", p(FOLDER_NEW)));
-        items.push(Item::action("Open Terminal Here", p(TERMINAL_HERE)));
-        items.push(Item::Separator);
-    } else {
-        items.push(Item::action("Open", p(OPENED)));
-        items.push(Item::Separator);
-    }
-    items.push(Item::action("Rename…", p(RENAME)));
-    items.push(Item::action("Delete…", p(DELETE_ASK)));
-    items.push(Item::Separator);
-    items.push(Item::action("Copy Path", p(COPY_PATH)));
-    ContextMenu::new(&name, at).tab("File", items)
+/// `name copy.ext`, then `name copy 2.ext` and on: the first that is free.
+fn duplicate_name(p: &Path) -> Option<PathBuf> {
+    let dir = p.parent()?;
+    let stem = p.file_stem()?.to_string_lossy();
+    let ext = p.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+    (1..1000).map(|n| dir.join(if n == 1 { format!("{stem} copy{ext}") } else { format!("{stem} copy {n}{ext}") })).find(|c| !c.exists())
 }
 
 impl App {
@@ -291,6 +275,10 @@ impl App {
                 self.settings.font_size = size.clamp(8.0, 64.0);
                 self.settings.save(crate::app::APP_ID);
             }
+            TOGGLE_WRAP => {
+                self.settings.wrap_prose = !self.settings.wrap_prose;
+                self.settings.save(crate::app::APP_ID);
+            }
             NEXT_FILE => self.pending_cycle = Some(1),
             PREV_FILE => self.pending_cycle = Some(-1),
             RENAME_SYMBOL => {
@@ -387,6 +375,28 @@ impl App {
             COPY_PATH => {
                 self.pending_clip = Some(ClipOp::Set(path().display().to_string()));
                 cx.toast("Path copied");
+            }
+            COPY_REL_PATH => {
+                let p = path();
+                let base = self.project.as_ref().map(|pr| pr.root.clone()).unwrap_or_else(|| self.tree.root.clone());
+                let rel = p.strip_prefix(&base).unwrap_or(&p);
+                self.pending_clip = Some(ClipOp::Set(rel.display().to_string()));
+                cx.toast("Relative path copied");
+            }
+            DUPLICATE => {
+                let p = path();
+                match duplicate_name(&p) {
+                    Some(to) => match std::fs::copy(&p, &to) {
+                        Ok(_) => {
+                            self.refresh_tree();
+                            self.tree.reveal = Some(to.clone());
+                            self.tree.start_rename(&to);
+                            self.pending_show.push(Editor::Files);
+                        }
+                        Err(e) => cx.request(ShellRequest::Dialog(Dialog::notice("Could not duplicate", &e.to_string()))),
+                    },
+                    None => cx.toast("Could not find a free name"),
+                }
             }
             TERMINAL_HERE => self.pending_new_terminal = Some(Some(path())),
             IDE_ACCEPT | IDE_REJECT => {

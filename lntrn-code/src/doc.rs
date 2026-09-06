@@ -66,6 +66,8 @@ pub struct Doc {
     pub folded: BTreeSet<usize>,
     /// The foldable blocks `(start, end)`, as the view last found them.
     pub fold_ranges: Vec<(usize, usize)>,
+    /// The soft-wrapped rows, as the view last laid them out.
+    pub wrap: crate::editor::wrap::Wrap,
 }
 
 /// Where `text` ends when inserted at `start`.
@@ -102,6 +104,7 @@ impl Doc {
             disk_missing: false,
             folded: BTreeSet::new(),
             fold_ranges: Vec::new(),
+            wrap: crate::editor::wrap::Wrap::none(),
         }
     }
 

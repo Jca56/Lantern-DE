@@ -397,14 +397,9 @@ impl Host for App {
         }
     }
 
+    /// The project name alone: the open file already shows in its tab.
     fn title(&self) -> String {
-        let project = self.project.as_ref().map(|p| p.name());
-        match (self.focus_doc(), project) {
-            (Some(d), Some(p)) => format!("{}{} — {p}", d.title, if d.is_dirty() { "*" } else { "" }),
-            (Some(d), None) => format!("{}{}", d.title, if d.is_dirty() { "*" } else { "" }),
-            (None, Some(p)) => p,
-            (None, None) => "lntrn-code".to_owned(),
-        }
+        self.project.as_ref().map(|p| p.name()).unwrap_or_else(|| "lntrn-code".to_owned())
     }
 
     fn status(&self) -> String {

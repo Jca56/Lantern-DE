@@ -10,8 +10,10 @@ pub mod fold;
 pub mod input;
 pub mod lsp_ui;
 pub mod ops;
+pub mod prose;
 pub mod tabs;
 pub mod view;
+pub mod wrap;
 
 use lntrn_text::TextStyle;
 use lntrn_ui::{AreaId, Ui, WidgetId};

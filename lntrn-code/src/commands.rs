@@ -58,6 +58,8 @@ pub const UNFOLD_ALL: &str = "code.unfold_all";
 pub const ZOOM_IN: &str = "view.zoom_in";
 pub const ZOOM_OUT: &str = "view.zoom_out";
 pub const ZOOM_RESET: &str = "view.zoom_reset";
+/// Flip soft wrap for Markdown and plain text.
+pub const TOGGLE_WRAP: &str = "view.toggle_wrap";
 pub const SHOW_FILES: &str = "view.files";
 pub const SHOW_TERMINAL: &str = "view.terminal";
 pub const SHOW_PROBLEMS: &str = "view.problems";
@@ -74,6 +76,10 @@ pub const RENAME: &str = "files.rename";
 pub const DELETE_ASK: &str = "files.delete_ask";
 pub const DELETE: &str = "files.delete";
 pub const COPY_PATH: &str = "files.copy_path";
+/// The `path` arg relative to the project (or the tree's root).
+pub const COPY_REL_PATH: &str = "files.copy_rel_path";
+/// A copy of the file in the `path` arg beside it.
+pub const DUPLICATE: &str = "files.duplicate";
 pub const TERMINAL_HERE: &str = "files.terminal_here";
 /// Show the folder in the `path` arg as the tree's root.
 pub const GO: &str = "files.go";
@@ -88,7 +94,7 @@ pub const IDE_SEND: &str = "ide.send_selection";
 pub const OPEN_PREFIX: &str = "open:";
 
 /// The palette's commands: (action id, label).
-pub const PALETTE: [(&str, &str); 51] = [
+pub const PALETTE: [(&str, &str); 52] = [
     (GOTO_DEF, "Go to Definition"),
     (MOVE_LINE_UP, "Move Line Up"),
     (MOVE_LINE_DOWN, "Move Line Down"),
@@ -99,6 +105,7 @@ pub const PALETTE: [(&str, &str); 51] = [
     (ZOOM_IN, "Zoom In"),
     (ZOOM_OUT, "Zoom Out"),
     (ZOOM_RESET, "Reset Zoom"),
+    (TOGGLE_WRAP, "Toggle Wrap Prose"),
     (RENAME_SYMBOL, "Rename Symbol…"),
     (REFERENCES, "Find References"),
     (CODE_ACTIONS, "Code Actions…"),
@@ -218,11 +225,44 @@ fn tilde(p: &Path) -> String {
 
 /// The Files panel's menu: new entries, a terminal, the listing, places
 /// to go, the projects opened before, and making the shown folder the
-/// project.
-fn files_menu(app: &App) -> Menu {
+/// project. A right click puts what was under the pointer first.
+fn files_menu(app: &App, context: bool) -> Menu {
     let with_path = |id: &str, p: &Path| Action::new(id).with("path", Value::Str(p.display().to_string()));
     let root = app.tree.root.clone();
     let is_project = |p: &Path| app.project.as_ref().is_some_and(|pr| pr.root == p);
+    // ---- the entry under the pointer ----
+    let mut items = Vec::new();
+    let mut title = "Files".to_owned();
+    // New entries go into the right-clicked folder, or beside the
+    // right-clicked file, else where the tree would put them.
+    let mut into: Option<PathBuf> = None;
+    if context && let Some((p, is_dir)) = app.tree.context.clone() {
+        title = name_of(&p);
+        if is_dir {
+            into = Some(p.clone());
+            items.push(MenuItem::new("Go Into", with_path(GO, &p)));
+            items.push(MenuItem::new("Set as Project", with_path(SET_PROJECT, &p)).enabled(!is_project(&p)));
+            items.push(MenuItem::new("Open Terminal Here", with_path(TERMINAL_HERE, &p)));
+        } else {
+            into = p.parent().map(Path::to_path_buf);
+            items.push(MenuItem::new("Open", with_path(OPENED, &p)));
+            items.push(MenuItem::new("Open Terminal Here", with_path(TERMINAL_HERE, into.as_deref().unwrap_or(&root))));
+        }
+        items.push(MenuItem::separator());
+        items.push(MenuItem::new("Rename…", with_path(RENAME, &p)));
+        if !is_dir {
+            items.push(MenuItem::new("Duplicate", with_path(DUPLICATE, &p)));
+        }
+        items.push(MenuItem::new("Delete…", with_path(DELETE_ASK, &p)));
+        items.push(MenuItem::separator());
+        items.push(MenuItem::new("Copy Path", with_path(COPY_PATH, &p)));
+        items.push(MenuItem::new("Copy Relative Path", with_path(COPY_REL_PATH, &p)));
+        items.push(MenuItem::separator());
+    }
+    let new_in = |id: &str| match &into {
+        Some(d) => with_path(id, d),
+        None => Action::new(id),
+    };
     let mut go = vec![MenuItem::new("Home", with_path(GO, &home()))];
     let projects = home().join("Projects");
     if projects.is_dir() {
@@ -238,22 +278,20 @@ fn files_menu(app: &App) -> Menu {
     }
     let recent: Vec<MenuItem> = app.session.recent.iter().filter(|r| r.is_dir()).map(|r| MenuItem::new(&name_of(r), with_path(SET_PROJECT, r)).checked(is_project(r))).collect();
     let any_recent = !recent.is_empty();
-    Menu::new(
-        "Files",
-        vec![
-            MenuItem::new("New File", Action::new(FILE_NEW)),
-            MenuItem::new("New Folder", Action::new(FOLDER_NEW)),
-            MenuItem::new("Open Terminal Here", with_path(TERMINAL_HERE, &root)),
-            MenuItem::separator(),
-            MenuItem::new("Show Hidden Files", Action::new(TOGGLE_HIDDEN)).checked(app.tree.show_hidden),
-            MenuItem::new("Refresh", Action::new(REFRESH_TREE)),
-            MenuItem::separator(),
-            MenuItem::sub("Go To", go),
-            MenuItem::sub("Recent Projects", recent).enabled(any_recent),
-            MenuItem::separator(),
-            MenuItem::new(&format!("Set “{}” as Project", name_of(&root)), with_path(SET_PROJECT, &root)).enabled(!is_project(&root)),
-        ],
-    )
+    items.push(MenuItem::new("New File", new_in(FILE_NEW)));
+    items.push(MenuItem::new("New Folder", new_in(FOLDER_NEW)));
+    if !context {
+        items.push(MenuItem::new("Open Terminal Here", with_path(TERMINAL_HERE, &root)));
+    }
+    items.push(MenuItem::separator());
+    items.push(MenuItem::new("Show Hidden Files", Action::new(TOGGLE_HIDDEN)).checked(app.tree.show_hidden));
+    items.push(MenuItem::new("Refresh", Action::new(REFRESH_TREE)));
+    items.push(MenuItem::separator());
+    items.push(MenuItem::sub("Go To", go));
+    items.push(MenuItem::sub("Recent Projects", recent).enabled(any_recent));
+    items.push(MenuItem::separator());
+    items.push(MenuItem::new(&format!("Set “{}” as Project", name_of(&root)), with_path(SET_PROJECT, &root)).enabled(!is_project(&root)));
+    Menu::new(&title, items)
 }
 
 pub fn menu(app: &App, name: &str) -> Option<Menu> {
@@ -261,7 +299,8 @@ pub fn menu(app: &App, name: &str) -> Option<Menu> {
     let has_doc = doc.is_some();
     let item = |label: &str, id: &str| MenuItem::new(label, Action::new(id));
     Some(match name {
-        "files" => files_menu(app),
+        "files" => files_menu(app, false),
+        "files-context" => files_menu(app, true),
         "file" => Menu::new(
             "File",
             vec![
@@ -342,6 +381,7 @@ pub fn menu(app: &App, name: &str) -> Option<Menu> {
                     item("Zoom In", ZOOM_IN),
                     item("Zoom Out", ZOOM_OUT),
                     item("Reset Zoom", ZOOM_RESET),
+                    item("Wrap Prose", TOGGLE_WRAP).checked(app.settings.wrap_prose),
                     MenuItem::separator(),
                     item("Preferences", SHOW_PREFS),
                     item("Key Bindings", SHOW_KEYS),

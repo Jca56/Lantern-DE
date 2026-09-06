@@ -28,7 +28,7 @@ pub fn lex_line(spec: &Spec, line: &str, state: LexState, out: &mut Vec<Token>) 
                     state = LexState::Normal;
                 }
             }
-            LexState::Normal => {
+            LexState::Normal | LexState::Fenced { .. } => {
                 let (end, next) = lx.token(i);
                 i = end.max(i + 1);
                 state = next;
@@ -128,7 +128,6 @@ impl<'a> Lexer<'a> {
                 raw_close[1..=h].fill(b'#');
                 (&raw_close[..=h], false)
             }
-            StrDelim::Fence => return (n, false),
         };
         let escapes = escapes && escapes_allowed;
         while i < n {

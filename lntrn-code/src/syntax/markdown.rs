@@ -1,7 +1,7 @@
 //! Markdown, line by line: headings, quotes, rules, list markers, fenced
 //! code, and inline code, emphasis and links.
 
-use super::{LexState, StrDelim, Token, TokenKind};
+use super::{Language, LexState, Token, TokenKind, langs, lexer};
 
 pub fn lex_line(line: &str, state: LexState, out: &mut Vec<Token>) -> LexState {
     out.clear();
@@ -14,13 +14,23 @@ pub fn lex_line(line: &str, state: LexState, out: &mut Vec<Token>) -> LexState {
         }
     };
     let fence = trimmed.starts_with("```") || trimmed.starts_with("~~~");
-    if state == (LexState::Str { delim: StrDelim::Fence }) {
-        push(out, 0, n, TokenKind::Code);
-        return if fence { LexState::Normal } else { state };
+    if let LexState::Fenced { lang, inner } = state {
+        if fence {
+            push(out, 0, n, TokenKind::Code);
+            return LexState::Normal;
+        }
+        if lang == Language::Plain || lang == Language::Markdown {
+            push(out, 0, n, TokenKind::Code);
+            return state;
+        }
+        // The fence's language colors its lines, carrying its own state.
+        let after = lexer::lex_line(langs::spec(lang), line, inner.into(), out);
+        return LexState::Fenced { lang, inner: after.into() };
     }
     if fence {
         push(out, 0, n, TokenKind::Code);
-        return LexState::Str { delim: StrDelim::Fence };
+        let lang = Language::from_fence(&trimmed[3..]);
+        return LexState::Fenced { lang, inner: super::Inner::Normal };
     }
     if trimmed.starts_with('#') {
         let hashes = trimmed.bytes().take_while(|&b| b == b'#').count();
@@ -164,10 +174,15 @@ mod tests {
         assert!(kinds("a * b * c").is_empty(), "spaced stars are not emphasis");
         let mut out = Vec::new();
         let s = lex_line("```rust", LexState::Normal, &mut out);
-        assert_eq!(s, LexState::Str { delim: StrDelim::Fence });
+        assert!(matches!(s, LexState::Fenced { lang: Language::Rust, .. }));
         let s = lex_line("let x = 1;", s, &mut out);
-        assert_eq!(out[0].kind, TokenKind::Code);
+        assert!(out.iter().any(|t| t.kind == TokenKind::Keyword), "rust inside the fence is rust");
+        assert!(out.iter().any(|t| t.kind == TokenKind::Number));
         let s = lex_line("```", s, &mut out);
         assert_eq!(s, LexState::Normal);
+        let s = lex_line("```", LexState::Normal, &mut out);
+        let s = lex_line("anything", s, &mut out);
+        assert_eq!(out[0].kind, TokenKind::Code, "a fence with no language is code");
+        assert!(matches!(s, LexState::Fenced { lang: Language::Plain, .. }));
     }
 }

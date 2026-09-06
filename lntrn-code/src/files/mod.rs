@@ -11,6 +11,7 @@ pub mod row;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use lntrn_math::{Rect, Vec2};
 use lntrn_ui::{FILL, Icon, Ui};
@@ -18,8 +19,18 @@ use lntrn_ui::{FILL, Icon, Ui};
 use crate::git::Git;
 use crate::git::view::letter_color;
 use crate::settings::{GitColors, SyntaxColors};
+use crate::syntax::Language;
 pub use project::Project;
 use row::{RowSpec, Slot, ext_of, house, tree_row};
+
+/// Line counts under this are green, under [`LINES_RED`] orange, then red.
+pub const LINES_ORANGE: usize = 500;
+pub const LINES_RED: usize = 600;
+
+/// Whether a file's line count shows beside it: code, not prose or data.
+pub fn counts_lines(path: &Path) -> bool {
+    matches!(Language::detect(path, ""), Language::Rust | Language::Python | Language::JavaScript | Language::C | Language::Shell)
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
@@ -92,12 +103,21 @@ pub struct Tree {
     /// folder typed becomes the project (Open Folder…).
     pub edit_path: Option<bool>,
     typing_for_project: bool,
+    /// A click on empty space: the open file's row loses its highlight
+    /// until a row is clicked or another file takes focus.
+    pub deselected: bool,
+    /// What was right-clicked last: an entry and whether it is a folder,
+    /// or `None` for empty space. The panel's menu reads it.
+    pub context: Option<(PathBuf, bool)>,
+    /// Line counts of code files, keyed by path, with the modified time
+    /// and size they were counted at.
+    line_counts: HashMap<PathBuf, (SystemTime, u64, usize)>,
 }
 
 impl Tree {
     pub fn new(root: PathBuf) -> Self {
         let root = if root.is_dir() { root } else { home() };
-        Self { root, listings: HashMap::new(), show_hidden: false, editing: None, edit_focus: false, drag: None, selected_dir: None, reveal: None, last_click: None, path_text: String::new(), edit_path: None, typing_for_project: false }
+        Self { root, listings: HashMap::new(), show_hidden: false, editing: None, edit_focus: false, drag: None, selected_dir: None, reveal: None, last_click: None, path_text: String::new(), edit_path: None, typing_for_project: false, deselected: false, context: None, line_counts: HashMap::new() }
     }
 
     /// Show `dir` as the root.
@@ -114,6 +134,25 @@ impl Tree {
     /// Forget every listing; folders are read again as they show.
     pub fn refresh(&mut self) {
         self.listings.clear();
+        self.line_counts.clear();
+    }
+
+    /// The lines in `path`, counted again when the file changed on disk.
+    pub fn line_count(&mut self, path: &Path) -> Option<usize> {
+        let meta = std::fs::metadata(path).ok()?;
+        let stamp = (meta.modified().ok()?, meta.len());
+        if let Some((m, len, n)) = self.line_counts.get(path)
+            && (*m, *len) == stamp
+        {
+            return Some(*n);
+        }
+        let bytes = std::fs::read(path).ok()?;
+        let mut n = bytes.iter().filter(|b| **b == b'\n').count();
+        if bytes.last().is_some_and(|b| *b != b'\n') {
+            n += 1;
+        }
+        self.line_counts.insert(path.to_path_buf(), (stamp.0, stamp.1, n));
+        Some(n)
     }
 
     /// The folders whose listings are held (what the tree has shown).
@@ -169,8 +208,9 @@ impl Tree {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FilesOut {
     pub open: Option<PathBuf>,
-    /// A right click on an entry: its path, whether it is a folder, where.
-    pub context: Option<(PathBuf, bool, Vec2)>,
+    /// A right click anywhere in the panel: where. What was under the
+    /// pointer is in [`Tree::context`].
+    pub context: Option<Vec2>,
     /// A row dropped on a folder: what, and where it goes.
     pub moved: Option<(PathBuf, PathBuf)>,
     /// A new name typed for a path.
@@ -267,6 +307,18 @@ pub fn draw_files(ui: &mut Ui, t: &mut Tree, cx: FilesCx) -> FilesOut {
         }
     }
     t.reveal = None;
+    // A click on empty space drops the highlight; a right click there
+    // opens the panel's menu with no entry picked.
+    let on_row = |p: Vec2| targets.iter().any(|(r, _)| r.contains(p));
+    if ui.state.pressed && panel.contains(ui.state.press_pos) && !on_row(ui.state.press_pos) {
+        t.deselected = true;
+        t.selected_dir = None;
+        ui.state.request_rebuild = true;
+    }
+    if ui.state.right_pressed && panel.contains(pointer) && !on_row(pointer) {
+        t.context = None;
+        out.context = Some(pointer);
+    }
     if let Some(d) = &t.drag
         && d.started
     {
@@ -353,10 +405,11 @@ fn draw_dir(ui: &mut Ui, t: &mut Tree, dir: &Path, cx: &FilesCx, out: &mut Files
             // Marks show on a closed folder for what is inside it.
             let git = cx.git.filter(|(g, _)| !open_now && g.dirty_dirs.contains(&e.path)).map(|_| dim);
             let (errors, warnings) = if open_now { (0, 0) } else { (errors, warnings) };
-            let spec = RowSpec { label: &e.name, selected: false, branch: Some(false), flat: false, slot: Slot::Folder, git, errors, warnings, dim: false };
+            let spec = RowSpec { label: &e.name, selected: false, branch: Some(false), flat: false, slot: Slot::Folder, git, errors, warnings, dim: false, lines: None };
             let r = tree_row(ui, &spec);
             if r.clicked {
                 t.selected_dir = Some(e.path.clone());
+                t.deselected = false;
             }
             if r.double_clicked {
                 *go = Some(e.path.clone());
@@ -370,7 +423,8 @@ fn draw_dir(ui: &mut Ui, t: &mut Tree, dir: &Path, cx: &FilesCx, out: &mut Files
                 t.drag = Some(Drag { path: e.path.clone(), name: e.name.clone(), started: false });
             }
             if right && row.contains(pointer) {
-                out.context = Some((e.path.clone(), true, pointer));
+                t.context = Some((e.path.clone(), true));
+                out.context = Some(pointer);
             }
             if r.open {
                 ui.push_id(&e.name);
@@ -379,7 +433,9 @@ fn draw_dir(ui: &mut Ui, t: &mut Tree, dir: &Path, cx: &FilesCx, out: &mut Files
             }
         } else {
             let git = cx.git.and_then(|(g, colors)| g.status_of(&e.path).map(|st| letter_color(st.letter(), colors)));
-            let spec = RowSpec { label: &e.name, selected: cx.selected == Some(e.path.as_path()), branch: None, flat: false, slot: Slot::File(ext_of(&e.path, cx.colors, dim)), git, errors, warnings, dim: false };
+            let lines = if counts_lines(&e.path) { t.line_count(&e.path).map(|n| (n, lines_color(n, ui, cx))) } else { None };
+            let selected = !t.deselected && cx.selected == Some(e.path.as_path());
+            let spec = RowSpec { label: &e.name, selected, branch: None, flat: false, slot: Slot::File(ext_of(&e.path, cx.colors, dim)), git, errors, warnings, dim: false, lines };
             let r = tree_row(ui, &spec);
             if t.reveal.as_deref() == Some(e.path.as_path()) {
                 *shown = Some(r.rect);
@@ -390,6 +446,7 @@ fn draw_dir(ui: &mut Ui, t: &mut Tree, dir: &Path, cx: &FilesCx, out: &mut Files
             }
             if r.clicked && !dragging {
                 t.selected_dir = Some(dir.to_path_buf());
+                t.deselected = false;
                 let slow_again = cx.selected == Some(e.path.as_path()) && t.last_click.as_ref().is_some_and(|(q, at)| *q == e.path && (SLOW_CLICK.0..SLOW_CLICK.1).contains(&(now - at)));
                 if slow_again && !r.double_clicked {
                     t.start_rename(&e.path);
@@ -403,10 +460,22 @@ fn draw_dir(ui: &mut Ui, t: &mut Tree, dir: &Path, cx: &FilesCx, out: &mut Files
                 *go = up.clone();
             }
             if right && r.rect.contains(pointer) {
-                out.context = Some((e.path.clone(), false, pointer));
+                t.context = Some((e.path.clone(), false));
+                out.context = Some(pointer);
             }
         }
         ui.pop_id();
+    }
+}
+
+/// Green while a file is a comfortable size, orange near the limit, red over it.
+fn lines_color(n: usize, ui: &Ui, cx: &FilesCx) -> lntrn_math::Color {
+    if n >= LINES_RED {
+        ui.theme.close
+    } else if n >= LINES_ORANGE {
+        ui.theme.accent
+    } else {
+        cx.git.map(|(_, c)| c.added).unwrap_or(cx.colors.string)
     }
 }
 

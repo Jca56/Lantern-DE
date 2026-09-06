@@ -50,8 +50,35 @@ pub enum StrDelim {
     TripleSingle,
     /// A Rust raw string closed by `"` and this many `#`.
     Raw(u8),
-    /// A Markdown fenced code block.
-    Fence,
+}
+
+/// The state of the language inside a Markdown code fence, between lines.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Inner {
+    #[default]
+    Normal,
+    Comment(u8),
+    Str(StrDelim),
+}
+
+impl From<LexState> for Inner {
+    fn from(s: LexState) -> Self {
+        match s {
+            LexState::Comment { depth } => Inner::Comment(depth),
+            LexState::Str { delim } => Inner::Str(delim),
+            _ => Inner::Normal,
+        }
+    }
+}
+
+impl From<Inner> for LexState {
+    fn from(i: Inner) -> Self {
+        match i {
+            Inner::Normal => LexState::Normal,
+            Inner::Comment(depth) => LexState::Comment { depth },
+            Inner::Str(delim) => LexState::Str { delim },
+        }
+    }
 }
 
 /// What a line's end leaves for the next line.
@@ -64,6 +91,11 @@ pub enum LexState {
     },
     Str {
         delim: StrDelim,
+    },
+    /// Inside a Markdown code fence, lexed as `lang` (`Plain`: no colors).
+    Fenced {
+        lang: Language,
+        inner: Inner,
     },
 }
 
@@ -117,6 +149,22 @@ impl Language {
             Language::Shell
         } else {
             Language::Plain
+        }
+    }
+
+    /// The language a code fence's info string names (```rust, ```py …).
+    pub fn from_fence(info: &str) -> Language {
+        let word: String = info.trim().chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '+' || *c == '#').collect::<String>().to_ascii_lowercase();
+        match word.as_str() {
+            "rust" | "rs" => Language::Rust,
+            "toml" => Language::Toml,
+            "json" | "jsonc" | "json5" => Language::Json,
+            "python" | "py" | "python3" => Language::Python,
+            "js" | "javascript" | "ts" | "typescript" | "jsx" | "tsx" => Language::JavaScript,
+            "c" | "cpp" | "c++" | "h" | "hpp" | "cxx" | "wgsl" | "glsl" | "objc" => Language::C,
+            "sh" | "bash" | "zsh" | "shell" | "console" | "fish" | "ebuild" => Language::Shell,
+            "yaml" | "yml" => Language::Yaml,
+            _ => Language::Plain,
         }
     }
 

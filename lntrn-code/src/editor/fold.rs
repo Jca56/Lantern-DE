@@ -7,6 +7,7 @@
 use std::collections::BTreeSet;
 
 use crate::doc::Doc;
+use crate::editor::wrap::Wrap;
 use crate::syntax::{Language, TokenKind};
 use crate::text_util::{bracket_pair, cell_width, indent_of};
 
@@ -57,6 +58,27 @@ pub fn scan(doc: &Doc) -> Scan {
             }
             *end = last;
         }
+        // Markdown: a heading folds everything down to the next heading
+        // of its level or above.
+        if doc.lang() == Language::Markdown {
+            let level = |l: usize| -> Option<usize> {
+                let t = doc.line(l).trim_start();
+                (doc.highlight.tokens(l).first().is_some_and(|t| t.kind == TokenKind::Heading)).then(|| t.bytes().take_while(|&b| b == b'#').count())
+            };
+            for l in 0..n {
+                let Some(lv) = level(l) else {
+                    continue;
+                };
+                let next = (l + 1..n).find(|&m| level(m).is_some_and(|k| k <= lv)).unwrap_or(n);
+                let mut end = next - 1;
+                while end > l && doc.line(end).trim().is_empty() {
+                    end -= 1;
+                }
+                if end > l {
+                    ends[l] = Some(end);
+                }
+            }
+        }
     } else {
         // Brackets outside strings and comments, matched across lines.
         let mut stack: Vec<usize> = Vec::new();
@@ -93,18 +115,21 @@ pub fn scan(doc: &Doc) -> Scan {
     Scan { regions, depth }
 }
 
-/// Rows on screen: which line each row shows, and which row each line
-/// is on (a hidden line is on its fold header's row).
+/// Rows on screen: which line (and which wrapped row of it) each row
+/// shows, and which row each line starts on (a hidden line is on its
+/// fold header's row).
 pub struct Layout {
-    rows: Vec<u32>,
+    rows: Vec<(u32, u16)>,
     row_of: Vec<u32>,
+    /// Rows each line takes: its wrapped rows, or 0 when hidden.
+    nrows: Vec<u16>,
     hidden: Vec<bool>,
     /// The last hidden line of a folded header.
     ends: Vec<Option<u32>>,
 }
 
 impl Layout {
-    pub fn build(n: usize, regions: &[Region], folded: &BTreeSet<usize>) -> Self {
+    pub fn build(n: usize, regions: &[Region], folded: &BTreeSet<usize>, wrap: &Wrap) -> Self {
         let n = n.max(1);
         let mut ends: Vec<Option<u32>> = vec![None; n];
         for r in regions {
@@ -114,12 +139,17 @@ impl Layout {
         }
         let mut rows = Vec::with_capacity(n);
         let mut row_of = vec![0u32; n];
+        let mut nrows = vec![0u16; n];
         let mut hidden = vec![false; n];
         let mut l = 0;
         while l < n {
             let row = rows.len() as u32;
-            rows.push(l as u32);
+            let k = wrap.rows_of(l).max(1);
+            for s in 0..k {
+                rows.push((l as u32, s as u16));
+            }
             row_of[l] = row;
+            nrows[l] = k as u16;
             match ends[l] {
                 Some(e) => {
                     for h in l + 1..=e as usize {
@@ -131,7 +161,7 @@ impl Layout {
                 None => l += 1,
             }
         }
-        Self { rows, row_of, hidden, ends }
+        Self { rows, row_of, nrows, hidden, ends }
     }
 
     pub fn rows(&self) -> usize {
@@ -140,11 +170,23 @@ impl Layout {
 
     /// The line on `row`, clamped to the last row.
     pub fn line_at(&self, row: usize) -> usize {
-        self.rows[row.min(self.rows.len() - 1)] as usize
+        self.rows[row.min(self.rows.len() - 1)].0 as usize
     }
 
+    /// The line on `row` and which of its wrapped rows it is.
+    pub fn seg_at(&self, row: usize) -> (usize, usize) {
+        let (l, s) = self.rows[row.min(self.rows.len() - 1)];
+        (l as usize, s as usize)
+    }
+
+    /// The first row of `line`.
     pub fn row_of(&self, line: usize) -> usize {
         self.row_of[line.min(self.row_of.len() - 1)] as usize
+    }
+
+    /// Rows `line` takes on screen (0 when folded away).
+    pub fn rows_of(&self, line: usize) -> usize {
+        self.nrows.get(line).copied().unwrap_or(1) as usize
     }
 
     pub fn hidden(&self, line: usize) -> bool {
@@ -172,13 +214,13 @@ mod tests {
         assert_eq!(s.regions, vec![Region { start: 0, end: 4 }, Region { start: 1, end: 3 }], "one-line braces fold nothing");
         assert_eq!(&s.depth[..6], &[0, 1, 2, 2, 1, 0]);
         let folded: BTreeSet<usize> = [0].into_iter().collect();
-        let l = Layout::build(7, &s.regions, &folded);
+        let l = Layout::build(7, &s.regions, &folded, &Wrap::none());
         assert_eq!(l.rows(), 3, "header, fn b, the last empty line");
         assert!(l.hidden(2) && !l.hidden(5));
         assert_eq!((l.row_of(3), l.row_of(5), l.line_at(1)), (0, 1, 5));
         assert_eq!(l.folded_end(0), Some(4));
         let both: BTreeSet<usize> = [0, 1].into_iter().collect();
-        assert_eq!(Layout::build(7, &s.regions, &both).rows(), 3, "a fold inside a fold hides nothing more");
+        assert_eq!(Layout::build(7, &s.regions, &both, &Wrap::none()).rows(), 3, "a fold inside a fold hides nothing more");
     }
 
     #[test]

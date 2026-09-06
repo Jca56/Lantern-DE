@@ -6,7 +6,7 @@ use lntrn_ui::{Key, KeyPress, Ui, UiState};
 
 use crate::buffer::{Pos, Range};
 use crate::doc::Doc;
-use crate::editor::ops;
+use crate::editor::{ops, prose};
 use crate::settings::Settings;
 use crate::text_util::{cell_of_byte, byte_at_cell, word_at, word_left, word_right};
 
@@ -76,8 +76,12 @@ pub fn handle(ui: &mut Ui, doc: &mut Doc, settings: &Settings, page: usize) -> b
     changed
 }
 
-/// The caret moved `by` lines, keeping its display column.
+/// The caret moved `by` rows, keeping its display column. With prose
+/// wrapped, a row is one wrapped row of a line.
 fn vertical(doc: &mut Doc, by: isize, extend: bool) {
+    if doc.wrap.active() {
+        return vertical_wrapped(doc, by, extend);
+    }
     let tab = doc.tab();
     let n = doc.buffer.line_count() as isize;
     let from = doc.cursor;
@@ -108,6 +112,65 @@ fn vertical(doc: &mut Doc, by: isize, extend: bool) {
     let line = doc.buffer.line(target);
     let col = byte_at_cell(line, tab, goal);
     doc.set_cursor(Pos::new(target, col), extend);
+    doc.goal_cell = Some(goal);
+}
+
+/// Row by row through wrapped lines, the goal a column on the row.
+fn vertical_wrapped(doc: &mut Doc, by: isize, extend: bool) {
+    let tab = doc.tab();
+    let n = doc.buffer.line_count();
+    let from = doc.cursor;
+    let (mut line, mut seg) = (from.line, doc.wrap.seg_of(from.line, from.col));
+    let goal = doc.goal_cell.unwrap_or_else(|| {
+        let (_, cell0) = doc.wrap.seg_start(line, seg);
+        doc.wrap.hang(line, seg) + cell_of_byte(doc.buffer.line(line), tab, from.col) - cell0
+    });
+    let visible_line = |mut l: usize, down: bool| -> Option<usize> {
+        loop {
+            l = if down { l + 1 } else { l.checked_sub(1)? };
+            if l >= n {
+                return None;
+            }
+            if !doc.is_hidden(l) {
+                return Some(l);
+            }
+        }
+    };
+    for _ in 0..by.unsigned_abs() {
+        if by > 0 {
+            if seg + 1 < doc.wrap.rows_of(line) {
+                seg += 1;
+            } else {
+                match visible_line(line, true) {
+                    Some(l) => (line, seg) = (l, 0),
+                    None => {
+                        doc.set_cursor(doc.buffer.end(), extend);
+                        return;
+                    }
+                }
+            }
+        } else if seg > 0 {
+            seg -= 1;
+        } else {
+            match visible_line(line, false) {
+                Some(l) => (line, seg) = (l, doc.wrap.rows_of(l) - 1),
+                None => {
+                    doc.set_cursor(Pos::new(0, 0), extend);
+                    return;
+                }
+            }
+        }
+    }
+    let text = doc.buffer.line(line);
+    let (start, cell0) = doc.wrap.seg_start(line, seg);
+    let cell = cell0 + goal.saturating_sub(doc.wrap.hang(line, seg));
+    let mut col = byte_at_cell(text, tab, cell).max(start);
+    if let Some(e) = doc.wrap.seg_end(line, seg)
+        && col >= e
+    {
+        col = crate::text_util::prev_boundary(text, e).max(start);
+    }
+    doc.set_cursor(Pos::new(line, col), extend);
     doc.goal_cell = Some(goal);
 }
 
@@ -175,7 +238,7 @@ fn key(ui: &mut Ui, doc: &mut Doc, k: KeyPress, settings: &Settings, page: usize
         Key::Enter => {
             if ctrl {
                 ops::insert_line(doc, shift, now);
-            } else {
+            } else if !(prose::is_prose(doc) && prose::continue_list(doc, now)) {
                 ops::newline(doc, settings, now);
             }
         }
@@ -183,7 +246,7 @@ fn key(ui: &mut Ui, doc: &mut Doc, k: KeyPress, settings: &Settings, page: usize
             let multi_line = sel.start.line != sel.end.line;
             if shift {
                 ops::dedent_lines(doc, settings, now);
-            } else if multi_line {
+            } else if multi_line || (prose::is_prose(doc) && prose::on_list_line(doc)) {
                 ops::indent_lines(doc, settings, now);
             } else if settings.insert_spaces {
                 let tab = settings.tab();

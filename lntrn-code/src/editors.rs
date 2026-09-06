@@ -42,6 +42,7 @@ impl App {
                 // The file being edited shows in the tree when it changes.
                 if self.focus_doc != self.last_revealed {
                     self.last_revealed = self.focus_doc;
+                    self.tree.deselected = false;
                     if let Some(p) = self.focus_doc().and_then(|d| d.path.clone())
                         && p.starts_with(&self.tree.root)
                     {
@@ -80,8 +81,8 @@ impl App {
                     cx.host().toast(&msg);
                     cx.rebuild();
                 }
-                if let Some((path, is_dir, at)) = out.context {
-                    cx.request(ShellRequest::ContextMenu(Box::new(crate::actions::file_menu(&path, is_dir, at))));
+                if let Some(at) = out.context {
+                    cx.request(ShellRequest::MenuAt("files-context".to_owned(), at));
                 }
                 false
             }

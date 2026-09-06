@@ -34,6 +34,8 @@ pub struct RowSpec<'a> {
     pub warnings: usize,
     /// Drawn dim: shown, not for taking.
     pub dim: bool,
+    /// A code file's line count and the color it earns, at the right edge.
+    pub lines: Option<(usize, Color)>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -126,7 +128,15 @@ pub fn tree_row(ui: &mut Ui, spec: &RowSpec) -> RowOut {
         ui.text_in_rect(&text, &small, Rect::new(Vec2::new(x, rect.min.y), Vec2::new(x + w + m.pad, rect.max.y)), color);
         x += w + m.gap;
     }
-    let text_rect = Rect::new(Vec2::new(x, rect.min.y), Vec2::new(rect.max.x - m.pad, rect.max.y));
+    let mut right = rect.max.x - m.pad;
+    if let Some((n, color)) = spec.lines {
+        let text = n.to_string();
+        let w = ui.measure(&text, &small);
+        let color = if spec.selected { theme.selection_text } else { color };
+        ui.text_in_rect(&text, &small, Rect::new(Vec2::new(right - w, rect.min.y), Vec2::new(right + m.pad, rect.max.y)), color);
+        right -= w + m.gap;
+    }
+    let text_rect = Rect::new(Vec2::new(x, rect.min.y), Vec2::new(right, rect.max.y));
     ui.text_in_rect(spec.label, &style, text_rect, ink);
     ui.focus_ring(id, rect);
     RowOut { clicked: r.clicked, double_clicked: r.double_clicked, open, back, rect }

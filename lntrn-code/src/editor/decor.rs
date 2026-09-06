@@ -8,6 +8,7 @@ use lntrn_ui::Ui;
 use crate::buffer::Range;
 use crate::doc::Doc;
 use crate::editor::fold::Layout;
+use crate::editor::wrap::Wrap;
 use crate::git::gutter::{LineMark, MarkKind};
 use crate::problems::severity_color;
 use crate::settings::{GitColors, SyntaxColors};
@@ -28,6 +29,7 @@ pub struct DiagMark {
 /// Where the text sits this frame: the row layout and the geometry.
 pub struct Grid<'a> {
     pub layout: &'a Layout,
+    pub wrap: &'a Wrap,
     pub vp: Rect,
     pub origin: Vec2,
     pub gutter_w: f64,
@@ -48,24 +50,62 @@ impl Grid<'_> {
         self.origin.y + row as f64 * self.lh
     }
 
-    /// The top of the row `line` is on.
+    /// The top of the first row `line` is on.
     pub fn row_y(&self, line: usize) -> f64 {
         self.row_top(self.layout.row_of(line))
     }
 
+    /// The row byte `col` of `line` is on.
+    pub fn pos_row(&self, line: usize, col: usize) -> usize {
+        self.layout.row_of(line) + self.wrap.seg_of(line, col)
+    }
+
+    /// The top of the row byte `col` of `line` is on.
+    pub fn pos_y(&self, line: usize, col: usize) -> f64 {
+        self.row_top(self.pos_row(line, col))
+    }
+
     /// Whether `line` has a row on screen.
     pub fn shown(&self, line: usize) -> bool {
-        let row = self.layout.row_of(line);
-        !self.layout.hidden(line) && row >= self.first_row && row < self.last_row
+        let first = self.layout.row_of(line);
+        let last = first + self.layout.rows_of(line);
+        !self.layout.hidden(line) && last > self.first_row && first < self.last_row
     }
 
+    /// The left edge of byte `col` of `line`, on whichever row it wrapped to.
     pub fn cell_x(&self, doc: &Doc, line: usize, col: usize) -> f64 {
-        self.text_x0() + cell_of_byte(doc.line(line), self.tab, col) as f64 * self.cell_w
+        let cell = cell_of_byte(doc.line(line), self.tab, col);
+        let seg = self.wrap.seg_of(line, col);
+        let (_, cell0) = self.wrap.seg_start(line, seg);
+        self.text_x0() + (self.wrap.hang(line, seg) + cell - cell0) as f64 * self.cell_w
     }
 
-    /// The lines with a row on screen, in row order.
+    /// The bytes row `seg` of `line` shows.
+    pub fn seg_range(&self, doc: &Doc, line: usize, seg: usize) -> (usize, usize) {
+        let (s, _) = self.wrap.seg_start(line, seg);
+        (s, self.wrap.seg_end(line, seg).unwrap_or(doc.line(line).len()))
+    }
+
+    /// The right edge of the text on row `seg` of `line`.
+    pub fn row_end_x(&self, doc: &Doc, line: usize, seg: usize) -> f64 {
+        let (s, e) = self.seg_range(doc, line, seg);
+        let (_, cell0) = self.wrap.seg_start(line, seg);
+        let cells = cell_of_byte(doc.line(line), self.tab, e).max(cell_of_byte(doc.line(line), self.tab, s));
+        self.text_x0() + (self.wrap.hang(line, seg) + cells - cell0) as f64 * self.cell_w
+    }
+
+    /// The rows on screen: `(row, line, seg)`.
+    pub fn rows(&self) -> impl Iterator<Item = (usize, usize, usize)> + '_ {
+        (self.first_row..self.last_row).map(|r| {
+            let (l, s) = self.layout.seg_at(r);
+            (r, l, s)
+        })
+    }
+
+    /// The lines with a row on screen, each once, in row order.
     pub fn lines(&self) -> impl Iterator<Item = usize> + '_ {
-        (self.first_row..self.last_row).map(|r| self.layout.line_at(r))
+        let mut last = None;
+        self.rows().filter_map(move |(_, l, _)| if last == Some(l) { None } else { last = Some(l); Some(l) })
     }
 }
 
@@ -76,10 +116,20 @@ pub fn selection(ui: &mut Ui, doc: &Doc, g: &Grid) {
     }
     let color = ui.theme.selection.fade(0.45);
     let m = ui.m;
-    for line in g.lines().filter(|&l| l >= sel.start.line && l <= sel.end.line) {
-        let x0 = if line == sel.start.line { g.cell_x(doc, line, sel.start.col) } else { g.text_x0() };
-        let x1 = if line == sel.end.line { g.cell_x(doc, line, sel.end.col) } else { g.text_x0() + (doc.line_cells(line) as f64 + 0.5) * g.cell_w };
-        let y = g.row_y(line);
+    for (row, line, seg) in g.rows().filter(|&(_, l, _)| l >= sel.start.line && l <= sel.end.line) {
+        let (s, e) = g.seg_range(doc, line, seg);
+        let a = if line == sel.start.line { sel.start.col.max(s) } else { s };
+        let b = if line == sel.end.line { sel.end.col.min(e) } else { e };
+        if a > b || (line == sel.start.line && sel.start.col > e) || (line == sel.end.line && sel.end.col < s) {
+            continue;
+        }
+        let last_seg = g.wrap.seg_end(line, seg).is_none();
+        let x0 = g.cell_x(doc, line, a);
+        let mut x1 = g.cell_x(doc, line, b).max(x0);
+        if line < sel.end.line && last_seg {
+            x1 += g.cell_w * 0.5;
+        }
+        let y = g.row_top(row);
         ui.draw.rect(Rect::new(Vec2::new(x0, y), Vec2::new(x1.max(x0 + m.px(2.0)), y + g.lh)), color);
     }
 }
@@ -91,8 +141,13 @@ pub fn matches(ui: &mut Ui, doc: &Doc, g: &Grid, matches: &[Range], current: Opt
         if !g.shown(mr.start.line) {
             continue;
         }
-        let y = g.row_y(mr.start.line);
-        let rect = Rect::new(Vec2::new(g.cell_x(doc, mr.start.line, mr.start.col), y), Vec2::new(g.cell_x(doc, mr.end.line, mr.end.col), y + g.lh));
+        let y = g.pos_y(mr.start.line, mr.start.col);
+        let x1 = if g.pos_row(mr.end.line, mr.end.col) == g.pos_row(mr.start.line, mr.start.col) {
+            g.cell_x(doc, mr.end.line, mr.end.col)
+        } else {
+            g.row_end_x(doc, mr.start.line, g.wrap.seg_of(mr.start.line, mr.start.col))
+        };
+        let rect = Rect::new(Vec2::new(g.cell_x(doc, mr.start.line, mr.start.col), y), Vec2::new(x1, y + g.lh));
         let is_current = current == Some(i);
         ui.draw.rounded_rect(rect, m.radius * 0.5, theme.accent.fade(if is_current { 0.5 } else { 0.22 }));
         if is_current {
@@ -131,7 +186,7 @@ pub fn occurrences(ui: &mut Ui, doc: &Doc, g: &Grid) {
             if !before || !after || (l == cur.line && s == a) {
                 continue;
             }
-            let y = g.row_y(l);
+            let y = g.pos_y(l, s);
             ui.draw.rounded_rect(Rect::new(Vec2::new(g.cell_x(doc, l, s), y), Vec2::new(g.cell_x(doc, l, e), y + g.lh)), m.radius * 0.4, color);
         }
     }
@@ -197,14 +252,17 @@ pub fn diag_marks(ui: &mut Ui, doc: &Doc, g: &Grid, diags: &[DiagMark], hovered:
             continue;
         }
         let text = doc.line(d.line);
-        let x0 = g.cell_x(doc, d.line, d.col.min(text.len()));
+        let col = d.col.min(text.len());
+        let seg = g.wrap.seg_of(d.line, col);
+        let x0 = g.cell_x(doc, d.line, col);
         let x1 = match d.end {
             Some(e) if e > d.col => g.cell_x(doc, d.line, e.min(text.len())).max(x0 + g.cell_w * 0.5),
-            _ => (g.text_x0() + doc.line_cells(d.line) as f64 * g.cell_w).max(x0 + g.cell_w),
+            _ => g.row_end_x(doc, d.line, seg).max(x0 + g.cell_w),
         };
-        let y1 = g.row_y(d.line) + g.lh;
+        let y0 = g.pos_y(d.line, col);
+        let y1 = y0 + g.lh;
         ui.draw.hline(x0, x1, y1 - m.px(2.0), m.px(2.0), severity_color(ui, d.severity));
-        let band = Rect::new(Vec2::new(g.vp.min.x, g.row_y(d.line)), Vec2::new(g.vp.max.x, y1));
+        let band = Rect::new(Vec2::new(g.vp.min.x, y0), Vec2::new(g.vp.max.x, y1));
         let on_text = pointer.x >= x0 && pointer.x <= x1;
         let on_gutter = pointer.x < g.vp.min.x + g.gutter_w;
         if hover.is_none() && hovered && band.contains(pointer) && (on_text || on_gutter) {
@@ -264,7 +322,8 @@ pub fn git_marks(ui: &mut Ui, g: &Grid, gutter: Rect, marks: &[LineMark], colors
                 }
             }
             _ => {
-                let (a, b) = (g.layout.row_of(mk.line).max(g.first_row), (g.layout.row_of((mk.line + mk.len).saturating_sub(1)) + 1).min(g.last_row));
+                let last = (mk.line + mk.len).saturating_sub(1);
+                let (a, b) = (g.layout.row_of(mk.line).max(g.first_row), (g.layout.row_of(last) + g.layout.rows_of(last).max(1)).min(g.last_row));
                 if a < b {
                     ui.draw.rect(Rect::new(Vec2::new(bar_x, g.row_top(a)), Vec2::new(bar_x + m.px(3.0), g.row_top(b))), color);
                 }
