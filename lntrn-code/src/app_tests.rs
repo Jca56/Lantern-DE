@@ -14,7 +14,7 @@ use lntrn_ui::{Key, Modifiers};
 /// runtime, then clicked, typed into, wheeled and resized.
 #[test]
 fn terminal_area_at_runtime() {
-    let session = Session { root: Some(PathBuf::from("/home/alva/Projects/lntrnlabs")), open: Vec::new() };
+    let session = Session { root: Some(PathBuf::from("/home/alva/Projects/lntrnlabs")), ..Session::default() };
     let mut app = App::new(Settings::default(), session, Vec::new());
     let mut shell = Shell::new(Editor::Code);
     let right = shell.screen.split(0, Axis::Horizontal, 0.2, Editor::Code).unwrap();
@@ -81,7 +81,7 @@ fn problems_from_terminal_output() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("src/main.rs"), "fn main() {\n    let x: u32 = \"a\";\n}\n").unwrap();
-    let session = Session { root: Some(dir.clone()), open: Vec::new() };
+    let session = Session { root: Some(dir.clone()), ..Session::default() };
     let mut app = App::new(Settings::default(), session, Vec::new());
     let mut shell = Shell::new(Editor::Code);
     let mut h = Harness::new(1600.0, 1000.0);

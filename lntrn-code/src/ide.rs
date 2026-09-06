@@ -310,9 +310,7 @@ impl App {
                     if let Some(j) = self.doc_by_path(&path) {
                         self.docs[j].replace_all(&text, shell.state.now);
                     }
-                    if let Some(p) = self.project.as_mut() {
-                        p.refresh();
-                    }
+                    self.refresh_tree();
                     shell.request(self, ShellRequest::Toast(format!("Wrote {name}")));
                 }
                 Err(e) => {

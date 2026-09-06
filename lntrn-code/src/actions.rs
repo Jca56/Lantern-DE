@@ -29,14 +29,6 @@ fn arg_i64(action: &Action, name: &str) -> Option<i64> {
     }
 }
 
-/// The folder a picked path means: itself, its parent for `.` or a file.
-fn folder_of(path: &Path) -> PathBuf {
-    if path.is_dir() {
-        return path.to_path_buf();
-    }
-    path.parent().map(Path::to_path_buf).unwrap_or_else(|| path.to_path_buf())
-}
-
 /// The right-click menu of the code: the clipboard, then what the
 /// language server can do when there is one.
 pub fn editor_menu(at: Vec2, lsp: bool) -> ContextMenu {
@@ -61,9 +53,12 @@ pub fn file_menu(path: &Path, is_dir: bool, at: Vec2) -> ContextMenu {
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let mut items = Vec::new();
     if is_dir {
+        items.push(Item::action("Go Into", p(GO)));
+        items.push(Item::action("Set as Project", p(SET_PROJECT)));
+        items.push(Item::Separator);
         items.push(Item::action("New File…", p(FILE_NEW)));
         items.push(Item::action("New Folder…", p(FOLDER_NEW)));
-        items.push(Item::action("Terminal Here", p(TERMINAL_HERE)));
+        items.push(Item::action("Open Terminal Here", p(TERMINAL_HERE)));
         items.push(Item::Separator);
     } else {
         items.push(Item::action("Open", p(OPENED)));
@@ -129,9 +124,11 @@ impl App {
                 let id = self.new_untitled();
                 self.pending_docs.push(id);
             }
+            // Open File… and Open Folder… type a path into the tree's path
+            // bar; a folder typed for the latter becomes the project.
             OPEN => {
-                let suggest = self.focus_doc().and_then(|d| d.path.as_ref()).and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_else(|| self.base_dir()).join(" ");
-                cx.request(ShellRequest::PathDialog { action: Action::new(OPENED), save: false, suggest: suggest.display().to_string() });
+                self.tree.edit_path = Some(false);
+                self.pending_show.push(Editor::Files);
             }
             OPENED => {
                 let p = path();
@@ -142,10 +139,19 @@ impl App {
                 }
             }
             OPEN_FOLDER => {
-                let suggest = self.base_dir();
-                cx.request(ShellRequest::FolderDialog { action: Action::new(FOLDER_OPENED), suggest: suggest.display().to_string() });
+                self.tree.edit_path = Some(true);
+                self.pending_show.push(Editor::Files);
             }
-            FOLDER_OPENED => self.pending_folder = Some(folder_of(&path())),
+            GO => {
+                self.tree.go(path());
+                self.pending_show.push(Editor::Files);
+            }
+            SET_PROJECT => self.pending_folder = Some(path()),
+            TOGGLE_HIDDEN => {
+                self.tree.show_hidden = !self.tree.show_hidden;
+                self.tree.refresh();
+            }
+            REFRESH_TREE => self.refresh_tree(),
             SAVE => self.save_doc(cx),
             SAVE_AS => {
                 if let Some(d) = self.focus_doc() {
@@ -159,9 +165,7 @@ impl App {
                     doc.set_path(p);
                 }
                 self.save_doc(cx);
-                if let Some(p) = self.project.as_mut() {
-                    p.refresh();
-                }
+                self.refresh_tree();
             }
             CLOSE_TAB => {
                 if let Some(d) = self.focus_doc() {
@@ -260,6 +264,33 @@ impl App {
                     ops::delete_lines(d, now);
                 }
             }
+            MOVE_LINE_UP | MOVE_LINE_DOWN => {
+                let down = action.id == MOVE_LINE_DOWN;
+                if let Some(d) = self.focus_doc_mut() {
+                    ops::move_lines(d, down, now);
+                }
+            }
+            FOLD | UNFOLD | FOLD_ALL | UNFOLD_ALL => {
+                let which = action.id.as_str();
+                if let Some(d) = self.focus_doc_mut() {
+                    let line = d.cursor.line;
+                    match which {
+                        FOLD => d.fold_at(line),
+                        UNFOLD => d.unfold_here(line),
+                        FOLD_ALL => d.fold_all(),
+                        _ => d.unfold_all(),
+                    }
+                }
+            }
+            ZOOM_IN | ZOOM_OUT | ZOOM_RESET => {
+                let size = match action.id.as_str() {
+                    ZOOM_IN => self.settings.font_size + 1.0,
+                    ZOOM_OUT => self.settings.font_size - 1.0,
+                    _ => crate::settings::Settings::default().font_size,
+                };
+                self.settings.font_size = size.clamp(8.0, 64.0);
+                self.settings.save(crate::app::APP_ID);
+            }
             NEXT_FILE => self.pending_cycle = Some(1),
             PREV_FILE => self.pending_cycle = Some(-1),
             RENAME_SYMBOL => {
@@ -323,62 +354,17 @@ impl App {
                 "lntrn-code",
                 "The Lantern DE code editor, on **Lantern UI 2**.\n\nRust, `wgpu` and `winit`; everything else is ours: the text engine, the widgets, the syntax highlighting, the terminal.\n\n- Ctrl+P: command palette and quick open\n- Ctrl+B: files · Ctrl+`: terminal\n- Ctrl+F / Ctrl+H: find and replace\n- Split any area from the ⋮ menu in its header",
             ))),
+            // The name of a new entry, or a new name, is typed in the tree
+            // itself; without a folder given, the new entry goes where the
+            // last click was.
             FILE_NEW | FOLDER_NEW => {
-                let dir = path();
-                self.dialog_target = Some(dir.clone());
-                self.dialog_text.clear();
-                let folder = action.id == FOLDER_NEW;
-                let title = if folder { "New Folder" } else { "New File" };
-                let go = if folder { FOLDER_NEW_GO } else { FILE_NEW_GO };
-                self.dialog_with_field(title, &format!("in `{}`", dir.display()), "Create", go, "text", cx);
-            }
-            FILE_NEW_GO | FOLDER_NEW_GO => {
-                let name = self.dialog_text.trim().to_owned();
-                if let Some(dir) = self.dialog_target.take()
-                    && !name.is_empty()
-                {
-                    let target = dir.join(&name);
-                    let result = if action.id == FOLDER_NEW_GO {
-                        std::fs::create_dir_all(&target)
-                    } else if target.exists() {
-                        Ok(())
-                    } else {
-                        target.parent().map(std::fs::create_dir_all).unwrap_or(Ok(())).and_then(|()| std::fs::write(&target, ""))
-                    };
-                    match result {
-                        Ok(()) => {
-                            if action.id == FILE_NEW_GO {
-                                self.pending_paths.push(target);
-                            }
-                        }
-                        Err(e) => cx.request(ShellRequest::Dialog(Dialog::notice("Could not create", &format!("{}\n{e}", target.display())))),
-                    }
-                    if let Some(p) = self.project.as_mut() {
-                        p.refresh();
-                    }
-                }
+                let dir = if arg_str(action, "path").is_some() { path() } else { self.tree.target_dir() };
+                self.tree.start_create(&dir, action.id == FOLDER_NEW);
+                self.pending_show.push(Editor::Files);
             }
             RENAME => {
-                let p = path();
-                self.dialog_text = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                self.dialog_target = Some(p);
-                self.dialog_with_field("Rename", "", "Rename", RENAME_GO, "text", cx);
-            }
-            RENAME_GO => {
-                let name = self.dialog_text.trim().to_owned();
-                if let Some(from) = self.dialog_target.take()
-                    && !name.is_empty()
-                    && let Some(parent) = from.parent()
-                {
-                    let to = parent.join(&name);
-                    match std::fs::rename(&from, &to) {
-                        Ok(()) => self.retarget_docs(&from, &to),
-                        Err(e) => cx.request(ShellRequest::Dialog(Dialog::notice("Could not rename", &e.to_string()))),
-                    }
-                    if let Some(p) = self.project.as_mut() {
-                        p.refresh();
-                    }
-                }
+                self.tree.start_rename(&path());
+                self.pending_show.push(Editor::Files);
             }
             DELETE_ASK => {
                 let p = path();
@@ -396,9 +382,7 @@ impl App {
                     }
                     Err(e) => cx.request(ShellRequest::Dialog(Dialog::notice("Could not delete", &e.to_string()))),
                 }
-                if let Some(pr) = self.project.as_mut() {
-                    pr.refresh();
-                }
+                self.refresh_tree();
             }
             COPY_PATH => {
                 self.pending_clip = Some(ClipOp::Set(path().display().to_string()));

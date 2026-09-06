@@ -80,6 +80,9 @@ props! {
         pub colors: SyntaxColors = SyntaxColors::default() => { id: 10, label: "Syntax Colors" },
         pub git: GitColors = GitColors::default() => { id: 11, label: "Git Colors" },
         pub terminal: TerminalColors = TerminalColors::default() => { id: 14, label: "Terminal" },
+        /// How big the side panels (Files, Git, Search, Problems) draw,
+        /// relative to the UI scale: smaller keeps them thin beside big code.
+        pub panel_scale: f64 = 0.8 => { id: 15, hard: 0.5..=1.5, step: 0.05, subtype: Factor },
     }
 }
 

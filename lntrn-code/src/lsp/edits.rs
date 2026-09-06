@@ -163,8 +163,8 @@ impl App {
                 }
             }
         }
-        if touched_tree && let Some(p) = self.project.as_mut() {
-            p.refresh();
+        if touched_tree {
+            self.refresh_tree();
         }
         out
     }

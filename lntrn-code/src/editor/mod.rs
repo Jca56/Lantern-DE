@@ -4,7 +4,9 @@
 //! operations behind them and the menus ([`ops`]); the file tabs above
 //! it ([`tabs`]); and the find/replace bar ([`find`]).
 
+pub mod decor;
 pub mod find;
+pub mod fold;
 pub mod input;
 pub mod lsp_ui;
 pub mod ops;

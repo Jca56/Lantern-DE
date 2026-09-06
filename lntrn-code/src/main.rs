@@ -17,6 +17,7 @@ mod diff_view;
 mod doc;
 mod editor;
 mod editors;
+mod file_ops;
 mod files;
 mod git;
 mod ide;

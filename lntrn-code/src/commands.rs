@@ -2,18 +2,20 @@
 //! palette entries. Everything a menu row or key can ask for is an
 //! `Action` whose id is one of the constants here.
 
+use std::path::{Path, PathBuf};
+
 use lntrn_props::Value;
 use lntrn_ui::keymap::CTX_WINDOW;
 use lntrn_ui::{Action, Key, KeyConfig, KeyItem, Menu, MenuItem, Modifiers, Trigger, actions};
 
 use crate::app::App;
+use crate::files::home;
 use crate::syntax::Language;
 
 pub const NEW: &str = "code.new";
 pub const OPEN: &str = "code.open";
 pub const OPENED: &str = "code.opened";
 pub const OPEN_FOLDER: &str = "code.open_folder";
-pub const FOLDER_OPENED: &str = "code.folder_opened";
 pub const SAVE: &str = "code.save";
 pub const SAVE_AS: &str = "code.save_as";
 pub const SAVED_AS: &str = "code.saved_as";
@@ -47,6 +49,15 @@ pub const CODE_ACTION_PICK: &str = "code.action_pick";
 pub const FORMAT: &str = "code.format";
 pub const SIGNATURE: &str = "code.signature";
 pub const GOTO_DEF: &str = "code.goto_definition";
+pub const MOVE_LINE_UP: &str = "code.move_line_up";
+pub const MOVE_LINE_DOWN: &str = "code.move_line_down";
+pub const FOLD: &str = "code.fold";
+pub const UNFOLD: &str = "code.unfold";
+pub const FOLD_ALL: &str = "code.fold_all";
+pub const UNFOLD_ALL: &str = "code.unfold_all";
+pub const ZOOM_IN: &str = "view.zoom_in";
+pub const ZOOM_OUT: &str = "view.zoom_out";
+pub const ZOOM_RESET: &str = "view.zoom_reset";
 pub const SHOW_FILES: &str = "view.files";
 pub const SHOW_TERMINAL: &str = "view.terminal";
 pub const SHOW_PROBLEMS: &str = "view.problems";
@@ -58,15 +69,18 @@ pub const SHOW_PREFS: &str = "view.prefs";
 pub const SHOW_KEYS: &str = "view.keys";
 pub const ABOUT: &str = "help.about";
 pub const FILE_NEW: &str = "files.new_file";
-pub const FILE_NEW_GO: &str = "files.new_file_go";
 pub const FOLDER_NEW: &str = "files.new_folder";
-pub const FOLDER_NEW_GO: &str = "files.new_folder_go";
 pub const RENAME: &str = "files.rename";
-pub const RENAME_GO: &str = "files.rename_go";
 pub const DELETE_ASK: &str = "files.delete_ask";
 pub const DELETE: &str = "files.delete";
 pub const COPY_PATH: &str = "files.copy_path";
 pub const TERMINAL_HERE: &str = "files.terminal_here";
+/// Show the folder in the `path` arg as the tree's root.
+pub const GO: &str = "files.go";
+/// Make the folder in the `path` arg the project.
+pub const SET_PROJECT: &str = "files.set_project";
+pub const TOGGLE_HIDDEN: &str = "files.toggle_hidden";
+pub const REFRESH_TREE: &str = "files.refresh";
 pub const IDE_ACCEPT: &str = "ide.accept";
 pub const IDE_REJECT: &str = "ide.reject";
 pub const IDE_SEND: &str = "ide.send_selection";
@@ -74,8 +88,17 @@ pub const IDE_SEND: &str = "ide.send_selection";
 pub const OPEN_PREFIX: &str = "open:";
 
 /// The palette's commands: (action id, label).
-pub const PALETTE: [(&str, &str); 42] = [
+pub const PALETTE: [(&str, &str); 51] = [
     (GOTO_DEF, "Go to Definition"),
+    (MOVE_LINE_UP, "Move Line Up"),
+    (MOVE_LINE_DOWN, "Move Line Down"),
+    (FOLD, "Fold Block"),
+    (UNFOLD, "Unfold Block"),
+    (FOLD_ALL, "Fold All"),
+    (UNFOLD_ALL, "Unfold All"),
+    (ZOOM_IN, "Zoom In"),
+    (ZOOM_OUT, "Zoom Out"),
+    (ZOOM_RESET, "Reset Zoom"),
     (RENAME_SYMBOL, "Rename Symbol…"),
     (REFERENCES, "Find References"),
     (CODE_ACTIONS, "Code Actions…"),
@@ -164,6 +187,9 @@ pub fn keymap() -> KeyConfig {
     bind(F(12), shift, REFERENCES);
     bind(Char('.'), ctrl, CODE_ACTIONS);
     bind(Char('i'), ctrl | shift, FORMAT);
+    bind(Char('='), ctrl, ZOOM_IN);
+    bind(Char('-'), ctrl, ZOOM_OUT);
+    bind(Char('0'), ctrl, ZOOM_RESET);
     bind(Space, ctrl | shift, SIGNATURE);
     let alt = Modifiers::ALT;
     bind(Char('k'), ctrl | alt, IDE_SEND);
@@ -176,11 +202,66 @@ pub fn title_menus() -> &'static [(&'static str, &'static str)] {
     &[("File", "file"), ("Edit", "edit"), ("View", "view"), ("Help", "help")]
 }
 
+/// The last part of a path, or the whole of it for `/`.
+fn name_of(p: &Path) -> String {
+    p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.display().to_string())
+}
+
+/// A path with the home folder as `~`.
+fn tilde(p: &Path) -> String {
+    match p.strip_prefix(home()) {
+        Ok(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
+        Ok(rest) => format!("~/{}", rest.display()),
+        Err(_) => p.display().to_string(),
+    }
+}
+
+/// The Files panel's menu: new entries, a terminal, the listing, places
+/// to go, the projects opened before, and making the shown folder the
+/// project.
+fn files_menu(app: &App) -> Menu {
+    let with_path = |id: &str, p: &Path| Action::new(id).with("path", Value::Str(p.display().to_string()));
+    let root = app.tree.root.clone();
+    let is_project = |p: &Path| app.project.as_ref().is_some_and(|pr| pr.root == p);
+    let mut go = vec![MenuItem::new("Home", with_path(GO, &home()))];
+    let projects = home().join("Projects");
+    if projects.is_dir() {
+        go.push(MenuItem::new("Projects", with_path(GO, &projects)));
+    }
+    go.push(MenuItem::new("/", with_path(GO, Path::new("/"))));
+    let terms: Vec<PathBuf> = app.terminals.iter().filter_map(|t| t.cwd_now()).collect();
+    if !terms.is_empty() {
+        go.push(MenuItem::separator());
+        for dir in terms {
+            go.push(MenuItem::new(&format!("Terminal · {}", tilde(&dir)), with_path(GO, &dir)));
+        }
+    }
+    let recent: Vec<MenuItem> = app.session.recent.iter().filter(|r| r.is_dir()).map(|r| MenuItem::new(&name_of(r), with_path(SET_PROJECT, r)).checked(is_project(r))).collect();
+    let any_recent = !recent.is_empty();
+    Menu::new(
+        "Files",
+        vec![
+            MenuItem::new("New File", Action::new(FILE_NEW)),
+            MenuItem::new("New Folder", Action::new(FOLDER_NEW)),
+            MenuItem::new("Open Terminal Here", with_path(TERMINAL_HERE, &root)),
+            MenuItem::separator(),
+            MenuItem::new("Show Hidden Files", Action::new(TOGGLE_HIDDEN)).checked(app.tree.show_hidden),
+            MenuItem::new("Refresh", Action::new(REFRESH_TREE)),
+            MenuItem::separator(),
+            MenuItem::sub("Go To", go),
+            MenuItem::sub("Recent Projects", recent).enabled(any_recent),
+            MenuItem::separator(),
+            MenuItem::new(&format!("Set “{}” as Project", name_of(&root)), with_path(SET_PROJECT, &root)).enabled(!is_project(&root)),
+        ],
+    )
+}
+
 pub fn menu(app: &App, name: &str) -> Option<Menu> {
     let doc = app.focus_doc();
     let has_doc = doc.is_some();
     let item = |label: &str, id: &str| MenuItem::new(label, Action::new(id));
     Some(match name {
+        "files" => files_menu(app),
         "file" => Menu::new(
             "File",
             vec![
@@ -216,8 +297,13 @@ pub fn menu(app: &App, name: &str) -> Option<Menu> {
                 item("Toggle Comment", TOGGLE_COMMENT).enabled(has_doc),
                 item("Duplicate Line", DUPLICATE_LINE).enabled(has_doc),
                 item("Delete Line", DELETE_LINE).enabled(has_doc),
-                item("Move Line Up", "").disabled().hint("Alt+Up"),
-                item("Move Line Down", "").disabled().hint("Alt+Down"),
+                item("Move Line Up", MOVE_LINE_UP).enabled(has_doc).hint("Alt+Up"),
+                item("Move Line Down", MOVE_LINE_DOWN).enabled(has_doc).hint("Alt+Down"),
+                MenuItem::separator(),
+                item("Fold Block", FOLD).enabled(has_doc).hint("Ctrl+Shift+["),
+                item("Unfold Block", UNFOLD).enabled(has_doc).hint("Ctrl+Shift+]"),
+                item("Fold All", FOLD_ALL).enabled(has_doc),
+                item("Unfold All", UNFOLD_ALL).enabled(has_doc),
                 MenuItem::separator(),
                 item("Go to Line…", GOTO_LINE).enabled(has_doc),
                 MenuItem::separator(),
@@ -252,6 +338,10 @@ pub fn menu(app: &App, name: &str) -> Option<Menu> {
                     item("Reject Claude's Diff", IDE_REJECT).enabled(app.focus_diff.is_some()),
                     MenuItem::separator(),
                     MenuItem::sub("Language", langs),
+                    MenuItem::separator(),
+                    item("Zoom In", ZOOM_IN),
+                    item("Zoom Out", ZOOM_OUT),
+                    item("Reset Zoom", ZOOM_RESET),
                     MenuItem::separator(),
                     item("Preferences", SHOW_PREFS),
                     item("Key Bindings", SHOW_KEYS),

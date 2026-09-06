@@ -8,7 +8,8 @@ use crate::commands;
 use crate::editor::find::draw_find_bar;
 use crate::editor::tabs::{TabItem, draw_tabs};
 use crate::editor::lsp_ui::LspOut;
-use crate::editor::view::{DiagMark, ViewOpts, draw_doc};
+use crate::editor::decor::DiagMark;
+use crate::editor::view::{ViewOpts, draw_doc};
 use crate::lsp::pos::from_units;
 use lntrn_ui::Action;
 
@@ -19,7 +20,7 @@ impl App {
         let st = &mut *cx.state;
         st.docs.retain(|id| self.docs.iter().any(|d| d.id == *id));
         if st.docs.is_empty() {
-            return self.draw_welcome(ui, cx);
+            return false;
         }
         st.current = st.current.min(st.docs.len() - 1);
         let items: Vec<TabItem> = st.docs.iter().filter_map(|id| self.docs.iter().find(|d| d.id == *id)).map(|d| TabItem { label: &d.title, dirty: d.is_dirty() }).collect();
@@ -100,6 +101,11 @@ impl App {
         if out.focused {
             *last_editor_focus = Some(editor_focus);
         }
+        if out.zoom != 0 {
+            self.settings.font_size = (self.settings.font_size + f64::from(out.zoom)).clamp(8.0, 64.0);
+            self.settings.save(crate::app::APP_ID);
+            ui.state.request_rebuild = true;
+        }
         let asked = out.lsp;
         if asked != LspOut::default()
             && let Some(d) = self.docs.iter().find(|d| d.id == doc_id)
@@ -164,11 +170,5 @@ impl App {
             out.push(DiagMark { line, col, end, severity: p.severity, message: p.message });
         }
         out
-    }
-
-    /// An empty Code area: a pointer to where files come from.
-    fn draw_welcome(&mut self, ui: &mut Ui, _cx: &mut AreaCx<TabState>) -> bool {
-        ui.label_dim("Open a file from the Files panel, Ctrl+O, or Ctrl+P to find one by name.");
-        false
     }
 }

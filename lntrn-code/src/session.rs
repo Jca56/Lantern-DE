@@ -1,5 +1,6 @@
-//! What was open last time: the project folder and the files, with their
-//! caret positions, as a small text file in the config directory.
+//! What was open last time: the project folder, the files with their
+//! caret positions, and the projects opened before, as a small text
+//! file in the config directory.
 
 use std::path::{Path, PathBuf};
 
@@ -10,9 +11,13 @@ pub struct Session {
     pub root: Option<PathBuf>,
     /// Open files with `(line, col)` of the caret.
     pub open: Vec<(PathBuf, usize, usize)>,
+    /// Projects opened before, newest first.
+    pub recent: Vec<PathBuf>,
 }
 
 const FILE: &str = "session.txt";
+/// How many projects the recent list keeps.
+const RECENT_CAP: usize = 8;
 
 impl Session {
     pub fn load(app_id: &str) -> Self {
@@ -35,6 +40,10 @@ impl Session {
         for line in text.lines() {
             if let Some(rest) = line.strip_prefix("root\t") {
                 s.root = Some(PathBuf::from(rest));
+            } else if let Some(rest) = line.strip_prefix("recent\t") {
+                if !rest.is_empty() {
+                    s.recent.push(PathBuf::from(rest));
+                }
             } else if let Some(rest) = line.strip_prefix("open\t") {
                 let mut parts = rest.split('\t');
                 let path = parts.next().unwrap_or_default();
@@ -56,7 +65,17 @@ impl Session {
         for (p, l, c) in &self.open {
             out.push_str(&format!("open\t{}\t{l}\t{c}\n", p.display()));
         }
+        for r in &self.recent {
+            out.push_str(&format!("recent\t{}\n", r.display()));
+        }
         out
+    }
+
+    /// Put `root` at the head of the recent list.
+    pub fn remember(&mut self, root: &Path) {
+        self.recent.retain(|r| r != root);
+        self.recent.insert(0, root.to_path_buf());
+        self.recent.truncate(RECENT_CAP);
     }
 
     /// The saved caret of `path`, if it was open.
@@ -71,7 +90,11 @@ mod tests {
 
     #[test]
     fn round_trip() {
-        let s = Session { root: Some(PathBuf::from("/home/x/proj")), open: vec![(PathBuf::from("/home/x/proj/a.rs"), 3, 7), (PathBuf::from("/tmp/b c.md"), 0, 0)] };
+        let mut s = Session { root: Some(PathBuf::from("/home/x/proj")), open: vec![(PathBuf::from("/home/x/proj/a.rs"), 3, 7), (PathBuf::from("/tmp/b c.md"), 0, 0)], recent: Vec::new() };
+        s.remember(Path::new("/home/x/old"));
+        s.remember(Path::new("/home/x/proj"));
+        s.remember(Path::new("/home/x/old"));
+        assert_eq!(s.recent, vec![PathBuf::from("/home/x/old"), PathBuf::from("/home/x/proj")], "newest first, no repeats");
         let back = Session::parse(&s.to_text());
         assert_eq!(back, s);
         assert_eq!(back.caret(Path::new("/home/x/proj/a.rs")), Some((3, 7)));

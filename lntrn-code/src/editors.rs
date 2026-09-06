@@ -1,12 +1,11 @@
 //! What each editor kind draws in its header and body: the dispatch the
 //! shell calls through `Host`.
 
-use lntrn_ui::{Action, AreaCx, ShellRequest, Ui, prefs};
+use lntrn_ui::{AreaCx, ShellRequest, Ui, prefs};
 
 use crate::app::{APP_ID, App, Editor, Goto, TabState};
-use crate::commands;
 use crate::diff_view::{draw_diff, draw_diff_header};
-use crate::files::draw_files;
+use crate::files::{FilesCx, draw_files};
 use crate::git::view::draw_git;
 use crate::preview::draw_preview;
 use crate::problems::{ProblemRow, draw_problems};
@@ -40,21 +39,46 @@ impl App {
         match editor {
             Editor::Code => self.draw_code(ui, cx),
             Editor::Files => {
+                // The file being edited shows in the tree when it changes.
+                if self.focus_doc != self.last_revealed {
+                    self.last_revealed = self.focus_doc;
+                    if let Some(p) = self.focus_doc().and_then(|d| d.path.clone())
+                        && p.starts_with(&self.tree.root)
+                    {
+                        self.tree.reveal = Some(p);
+                    }
+                }
                 let selected = self.focus_doc().and_then(|d| d.path.clone());
+                let counts = self.problem_counts();
                 let git = self.git.as_ref().map(|g| (g, &self.settings.git));
-                let out = draw_files(ui, self.project.as_mut(), selected.as_deref(), git);
+                let project = self.project.as_ref().map(|p| p.root.as_path());
+                let cxf = FilesCx { selected: selected.as_deref(), git, colors: &self.settings.colors, problems: &counts, project };
+                let out = draw_files(ui, &mut self.tree, cxf);
                 if let Some(p) = out.open {
                     self.pending_paths.push(p);
                     cx.rebuild();
                 }
-                if out.new_file {
-                    self.run_action(&Action::new(commands::NEW), &mut cx.host());
+                if let Some(d) = out.set_project {
+                    self.pending_folder = Some(d);
+                    cx.rebuild();
                 }
-                if out.open_file {
-                    self.run_action(&Action::new(commands::OPEN), &mut cx.host());
+                if let Some(at) = out.menu_at {
+                    cx.request(ShellRequest::MenuAt("files".to_owned(), at));
                 }
-                if out.open_folder {
-                    self.run_action(&Action::new(commands::OPEN_FOLDER), &mut cx.host());
+                if let Some((from, to_dir)) = out.moved {
+                    let msg = self.move_path(&from, &to_dir);
+                    cx.host().toast(&msg);
+                    cx.rebuild();
+                }
+                if let Some((path, name)) = out.renamed {
+                    let msg = self.rename_path(&path, &name);
+                    cx.host().toast(&msg);
+                    cx.rebuild();
+                }
+                if let Some((path, is_dir)) = out.created {
+                    let msg = self.create_path(&path, is_dir);
+                    cx.host().toast(&msg);
+                    cx.rebuild();
                 }
                 if let Some((path, is_dir, at)) = out.context {
                     cx.request(ShellRequest::ContextMenu(Box::new(crate::actions::file_menu(&path, is_dir, at))));

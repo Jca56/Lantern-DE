@@ -32,7 +32,7 @@ fn handles(k: &KeyPress) -> bool {
         Key::PageUp | Key::PageDown => !ctrl && !alt,
         Key::Escape => m.is_empty(),
         Key::Insert => shift && !ctrl,
-        Key::Char(c) => ctrl && !alt && matches!(c.to_ascii_lowercase(), 'a' | 'c' | 'x' | 'v' | 'z' | 'y' | 'l' | '[' | ']'),
+        Key::Char(c) => ctrl && !alt && matches!(c.to_ascii_lowercase(), 'a' | 'c' | 'x' | 'v' | 'z' | 'y' | 'l' | '[' | ']' | '{' | '}'),
         _ => false,
     }
 }
@@ -90,10 +90,24 @@ fn vertical(doc: &mut Doc, by: isize, extend: bool) {
         doc.set_cursor(doc.buffer.end(), extend);
         return;
     }
+    // Folded lines are skipped, the way they are on screen.
+    let mut target = target as usize;
+    while doc.is_hidden(target) {
+        if by < 0 {
+            if target == 0 {
+                break;
+            }
+            target -= 1;
+        } else if target + 1 < n as usize {
+            target += 1;
+        } else {
+            break;
+        }
+    }
     let goal = doc.goal_cell.unwrap_or_else(|| cell_of_byte(doc.buffer.line(from.line), tab, from.col));
-    let line = doc.buffer.line(target as usize);
+    let line = doc.buffer.line(target);
     let col = byte_at_cell(line, tab, goal);
-    doc.set_cursor(Pos::new(target as usize, col), extend);
+    doc.set_cursor(Pos::new(target, col), extend);
     doc.goal_cell = Some(goal);
 }
 
@@ -216,6 +230,14 @@ fn key(ui: &mut Ui, doc: &mut Doc, k: KeyPress, settings: &Settings, page: usize
             'l' => {
                 changed = false;
                 ops::select_line(doc);
+            }
+            '[' | '{' if shift => {
+                changed = false;
+                doc.fold_at(cur.line);
+            }
+            ']' | '}' if shift => {
+                changed = false;
+                doc.unfold_here(cur.line);
             }
             ']' => ops::indent_lines(doc, settings, now),
             '[' => ops::dedent_lines(doc, settings, now),

@@ -3,6 +3,7 @@
 //! records an invertible step; typing and deleting runs coalesce so Ctrl+Z
 //! steps back a word, not a letter.
 
+use std::collections::BTreeSet;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -61,6 +62,10 @@ pub struct Doc {
     pub disk_changed: bool,
     /// The file is gone from disk.
     pub disk_missing: bool,
+    /// The first lines of the folded blocks.
+    pub folded: BTreeSet<usize>,
+    /// The foldable blocks `(start, end)`, as the view last found them.
+    pub fold_ranges: Vec<(usize, usize)>,
 }
 
 /// Where `text` ends when inserted at `start`.
@@ -95,6 +100,8 @@ impl Doc {
             last_edit: 0.0,
             disk_changed: false,
             disk_missing: false,
+            folded: BTreeSet::new(),
+            fold_ranges: Vec::new(),
         }
     }
 
@@ -204,6 +211,13 @@ impl Doc {
     /// Replace `r` with `text`, recording the step. The caret lands after
     /// the inserted text. Returns where that is.
     pub fn edit(&mut self, r: Range, text: &str, kind: EditKind, now: f64) -> Pos {
+        // Folds follow the lines they head: past an edit above they shift,
+        // inside an edit they go.
+        let removed = r.end.line - r.start.line;
+        let added = text.matches('\n').count();
+        if !self.folded.is_empty() && (removed != 0 || added != 0) {
+            self.folded = self.folded.iter().filter_map(|&s| if s <= r.start.line { Some(s) } else if s <= r.end.line { None } else { Some((s + added).saturating_sub(removed)) }).collect();
+        }
         let r = Range::new(self.buffer.clamp(r.start), self.buffer.clamp(r.end));
         let removed = self.buffer.text_in(r);
         if removed.is_empty() && text.is_empty() {
@@ -353,6 +367,67 @@ impl Doc {
     /// The tab-width-aware text of a line.
     pub fn line(&self, i: usize) -> &str {
         self.buffer.line(i)
+    }
+}
+
+impl Doc {
+    /// The foldable block starting at `line`.
+    pub fn region_at(&self, line: usize) -> Option<(usize, usize)> {
+        self.fold_ranges.iter().copied().find(|(s, _)| *s == line)
+    }
+
+    /// The smallest foldable block `line` is inside of (or heads).
+    fn innermost_region(&self, line: usize) -> Option<(usize, usize)> {
+        self.fold_ranges.iter().copied().filter(|(s, e)| *s <= line && line <= *e).min_by_key(|(s, e)| e - s)
+    }
+
+    /// Whether `line` is hidden inside a folded block.
+    pub fn is_hidden(&self, line: usize) -> bool {
+        self.folded.iter().any(|&s| self.fold_ranges.iter().any(|&(a, e)| a == s && line > a && line <= e))
+    }
+
+    /// Open every folded block hiding `line`.
+    pub fn unfold_at(&mut self, line: usize) {
+        let ranges = self.fold_ranges.clone();
+        self.folded.retain(|&s| !ranges.iter().any(|&(a, e)| a == s && line > a && line <= e));
+    }
+
+    /// Fold the block `line` is in; the caret comes up to its first line.
+    pub fn fold_at(&mut self, line: usize) {
+        if let Some((s, _)) = self.innermost_region(line) {
+            self.folded.insert(s);
+            if self.cursor.line > s && self.is_hidden(self.cursor.line) {
+                self.set_cursor(Pos::new(s, self.line(s).len()), false);
+            }
+        }
+    }
+
+    /// Fold the block starting at `line`, or open it again.
+    pub fn toggle_fold(&mut self, line: usize) {
+        if self.folded.contains(&line) {
+            self.folded.remove(&line);
+        } else {
+            self.fold_at(line);
+        }
+    }
+
+    /// Open the block at `line` (a folded header), else whatever hides it.
+    pub fn unfold_here(&mut self, line: usize) {
+        if !self.folded.remove(&line) {
+            self.unfold_at(line);
+        }
+    }
+
+    pub fn fold_all(&mut self) {
+        self.folded = self.fold_ranges.iter().map(|(s, _)| *s).collect();
+        if self.is_hidden(self.cursor.line) {
+            let line = self.cursor.line;
+            self.unfold_at(line);
+        }
+    }
+
+    pub fn unfold_all(&mut self) {
+        self.folded.clear();
     }
 }
 

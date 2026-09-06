@@ -18,7 +18,7 @@ use crate::diff_view::{DiffDoc, DiffId};
 use crate::doc::{Doc, DocId};
 use crate::ide::PendingSelect;
 use crate::editor::find::Finder;
-use crate::files::Project;
+use crate::files::{Project, Tree, home};
 use crate::git::Git;
 use crate::git::gutter::LineMark;
 use crate::lsp::{CodeAction, Lsp};
@@ -41,7 +41,13 @@ pub struct App {
     pub docs: Vec<Doc>,
     next_doc: u64,
     untitled: usize,
+    /// The folder the app works in: git, the language servers, search and
+    /// the Claude bridge hang off it. Set on purpose, never by browsing.
     pub project: Option<Project>,
+    /// The Files panel's tree, looking wherever the user took it.
+    pub tree: Tree,
+    /// The document the tree last revealed (its folders opened).
+    pub last_revealed: Option<DocId>,
     pub terminals: Vec<Terminal>,
     pub(crate) next_term: u64,
     pub finder: Finder,
@@ -67,8 +73,6 @@ pub struct App {
     pub prefs_tab: usize,
     /// Text typed into the open dialog's field.
     pub dialog_text: String,
-    /// The path a file-operation dialog works on.
-    pub dialog_target: Option<PathBuf>,
     // ---- applied after the rebuild, with the screen in hand ----
     pub pending_paths: Vec<PathBuf>,
     pub pending_docs: Vec<DocId>,
@@ -85,7 +89,7 @@ pub struct App {
     pub(crate) paste_armed: bool,
     pub(crate) popup_was_open: bool,
     pub session_dirty: bool,
-    session: Session,
+    pub(crate) session: Session,
     /// The loop's waker, for the terminals' reader threads.
     pub(crate) waker: Option<Waker>,
     // ---- Claude Code ----
@@ -115,6 +119,8 @@ impl App {
             next_doc: 1,
             untitled: 0,
             project: None,
+            tree: Tree::new(session.root.clone().unwrap_or_else(home)),
+            last_revealed: None,
             terminals: Vec::new(),
             next_term: 1,
             finder: Finder::default(),
@@ -131,7 +137,6 @@ impl App {
             last_editor_focus: None,
             prefs_tab: 0,
             dialog_text: String::new(),
-            dialog_target: None,
             pending_paths: Vec::new(),
             pending_docs: Vec::new(),
             pending_goto: None,
@@ -224,8 +229,10 @@ impl App {
         Ok(id)
     }
 
+    /// Make `root` the project; the tree shows it too.
     pub fn set_project(&mut self, root: PathBuf) {
         let root = std::fs::canonicalize(&root).unwrap_or(root);
+        self.tree.go(root.clone());
         if self.project.as_ref().is_some_and(|p| p.root == root) {
             return;
         }
@@ -233,8 +240,18 @@ impl App {
         self.git_marks.clear();
         self.lsp.set_root(Some(root.clone()));
         self.lsp_ui.close_all();
+        self.session.remember(&root);
         self.project = Some(Project::new(root));
         self.session_dirty = true;
+    }
+
+    /// Something on disk changed under our hands: the tree reads its
+    /// folders again and the quick-open list is rebuilt.
+    pub(crate) fn refresh_tree(&mut self) {
+        self.tree.refresh();
+        if let Some(p) = self.project.as_mut() {
+            p.refresh();
+        }
     }
 
     /// Seconds since the app started: the same clock the widgets stamp
@@ -269,6 +286,7 @@ impl App {
         self.session = Session {
             root: self.project.as_ref().map(|p| p.root.clone()),
             open: self.docs.iter().filter_map(|d| d.path.as_ref().map(|p| (p.clone(), d.cursor.line, d.cursor.col))).collect(),
+            recent: self.session.recent.clone(),
         };
         self.session.save(APP_ID);
     }
@@ -281,9 +299,7 @@ impl App {
             return false;
         };
         let mut wanted: HashSet<PathBuf> = self.docs.iter().filter_map(|d| d.path.as_ref()?.parent().map(Path::to_path_buf)).collect();
-        if let Some(p) = &self.project {
-            wanted.extend(p.listed_dirs().map(Path::to_path_buf));
-        }
+        wanted.extend(self.tree.listed_dirs().map(Path::to_path_buf));
         // Commits and staging from a terminal show up as writes in .git.
         let git_dir = self.git.as_ref().map(|g| g.root.join(".git")).filter(|d| d.is_dir());
         if let Some(d) = &git_dir {
@@ -308,10 +324,13 @@ impl App {
             if in_git {
                 continue;
             }
-            if c.is_listing()
-                && let Some(p) = self.project.as_mut()
-            {
-                p.invalidate(&c.dir);
+            if c.is_listing() {
+                self.tree.invalidate(&c.dir);
+                if let Some(p) = self.project.as_mut()
+                    && c.dir.starts_with(&p.root)
+                {
+                    p.refresh();
+                }
             }
             let hits: Vec<usize> = self.docs.iter().enumerate().filter(|(_, d)| d.path.as_ref().is_some_and(|p| p.parent() == Some(c.dir.as_path()) && (c.name.is_none() || p.file_name().and_then(|n| n.to_str()) == c.name.as_deref()))).map(|(i, _)| i).collect();
             for i in hits {
@@ -355,9 +374,17 @@ impl Host for App {
         &EDITORS
     }
 
+    /// Saved layouts keep naming the editor "Code".
+    fn editor_id(&self, editor: Editor) -> String {
+        match editor {
+            Editor::Code => "Code".to_owned(),
+            e => self.editor_label(e).to_owned(),
+        }
+    }
+
     fn editor_label(&self, editor: Editor) -> &str {
         match editor {
-            Editor::Code => "Code",
+            Editor::Code => "Editor",
             Editor::Files => "Files",
             Editor::Terminal => "Terminal",
             Editor::Preview => "Preview",
@@ -423,6 +450,15 @@ impl Host for App {
 
     fn key_hint(&self, action: &Action) -> Option<String> {
         self.keys.hint_for(action)
+    }
+
+    /// The side panels draw at the Panel Scale setting, so a thin tree
+    /// fits beside big code.
+    fn editor_scale(&self, editor: Editor) -> f64 {
+        match editor {
+            Editor::Files | Editor::Git | Editor::Search | Editor::Problems => self.settings.panel_scale,
+            _ => 1.0,
+        }
     }
 
     fn draw_header(&mut self, editor: Editor, ui: &mut Ui, cx: &mut AreaCx<TabState>) {
@@ -509,6 +545,12 @@ impl AppHost for App {
         again |= self.search.poll();
         again |= self.lsp_pump(shell);
         again |= self.settle_saves(shell);
+        // Every terminal, shown or not: a hidden tab's output is read in
+        // as it comes, so the program there never blocks on a full pipe.
+        let now = shell.state.now;
+        for t in &mut self.terminals {
+            again |= t.pump(now);
+        }
         if let Some(g) = self.git.as_mut() {
             again |= g.poll();
             if let Some(delay) = g.tick(shell.state.now) {
