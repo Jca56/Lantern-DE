@@ -95,6 +95,20 @@ pub(crate) struct OutputSurface {
     /// at the next vblank (`frame_finish`) with the real scanout timestamp +
     /// sequence. `None` between vblanks / for idle surfaces.
     pub pending_feedback: Option<OutputPresentationFeedback>,
+    /// Dropped-flip watchdog for THIS output (one-shot). Armed after every
+    /// `queue_frame`, cancelled by this output's own vblank in `frame_finish`.
+    /// Per output on purpose: a single shared slot was cancelled by whichever
+    /// output flipped first, so a dropped flip on the other monitor stayed
+    /// wedged until something happened to re-render the primary.
+    pub watchdog_timer: Option<RegistrationToken>,
+    /// One-shot timer that answers `wl_surface.frame` after a frame that
+    /// produced no damage (no flip, so no vblank). Fires at the refresh
+    /// interval so a client pumping frame+commit is paced like a real vblank
+    /// instead of being answered instantly — see `schedule_noflip_callbacks`.
+    pub noflip_timer: Option<RegistrationToken>,
+    /// When this output last answered frame callbacks (vblank or no-flip
+    /// timer). Paces the no-flip path.
+    pub last_callbacks_at: Option<Instant>,
 }
 
 /// Floor for the vblank watchdog timeout. The watchdog scales with the
@@ -153,10 +167,10 @@ pub struct UdevData {
     /// CPU). Immediate (not interval-delayed) so a freshly-committed frame is
     /// queued well before the next vblank instead of racing it.
     pub(crate) render_timer: Option<smithay::reexports::calloop::RegistrationToken>,
-    /// Separate one-shot slot for the dropped-flip recovery watchdog. Kept apart
-    /// from `render_timer` so the watchdog can never block a demand render (and
-    /// vice-versa); cancelled in `frame_finish` once the flip actually lands.
-    pub(crate) watchdog_timer: Option<smithay::reexports::calloop::RegistrationToken>,
+    /// When `render_timer` is due. Lets a delayed (refresh-interval paced)
+    /// arm be replaced by an immediate one, but never the other way round.
+    /// The dropped-flip watchdog lives per output on `OutputSurface`.
+    pub(crate) render_timer_deadline: Option<Instant>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -209,7 +223,7 @@ pub fn init_udev(
         backdrop_shader: None,
         blur_states: HashMap::new(),
         render_timer: None,
-        watchdog_timer: None,
+        render_timer_deadline: None,
     };
     state.udev = Some(udev_data);
 
@@ -485,7 +499,7 @@ pub(crate) fn frame_finish(
 
     // Release the just-scanned-out buffer and pull the feedback we stashed for
     // this frame. Scoped so the udev borrow ends before we touch space/output.
-    let (feedback, pending_render) = {
+    let (feedback, pending_render, watchdog_tok, noflip_tok) = {
         let udev = match state.udev.as_mut() {
             Some(u) => u,
             None => return,
@@ -501,6 +515,7 @@ pub(crate) fn frame_finish(
 
         surface.frame_pending = false;
         surface.frame_pending_since = None;
+        surface.last_callbacks_at = Some(Instant::now());
 
         trace!("vblank: frame_submitted starting");
         if let Err(e) = surface.drm_output.frame_submitted() {
@@ -508,14 +523,22 @@ pub(crate) fn frame_finish(
         }
         trace!("vblank: frame_submitted done");
 
-        (surface.pending_feedback.take(), surface.pending_render)
+        (
+            surface.pending_feedback.take(),
+            surface.pending_render,
+            surface.watchdog_timer.take(),
+            surface.noflip_timer.take(),
+        )
     };
 
-    // The flip landed — cancel the dropped-flip watchdog so it can't fire a
-    // spurious recovery render. (take() first to drop the udev borrow before
-    // touching loop_handle.)
-    let watchdog_tok = state.udev.as_mut().and_then(|u| u.watchdog_timer.take());
+    // The flip landed — cancel THIS output's dropped-flip watchdog so it can't
+    // fire a spurious recovery render, and its no-flip callback timer (the
+    // vblank below answers those callbacks for real). Tokens were taken above
+    // so the udev borrow is already released.
     if let Some(tok) = watchdog_tok {
+        state.loop_handle.remove(tok);
+    }
+    if let Some(tok) = noflip_tok {
         state.loop_handle.remove(tok);
     }
 
@@ -577,26 +600,142 @@ pub fn schedule_render_all(state: &mut Lantern) {
 /// DRM well before the following vblank, hitting full refresh instead of racing
 /// the deadline (the old interval timer structurally lost every other vblank).
 fn arm_render_timer(state: &mut Lantern) {
-    let already = state
-        .udev
-        .as_ref()
-        .map(|u| u.render_timer.is_some())
-        .unwrap_or(true);
-    if already {
+    arm_render_timer_in(state, Duration::ZERO);
+}
+
+/// Like `arm_render_timer` but fires after `delay`. Used to pace renders that
+/// a no-damage frame would otherwise re-arm immediately (animation flags set,
+/// nothing on screen changed): without a flip there is no vblank to wait on,
+/// so the timer stands in for it at the refresh interval. An armed timer that
+/// is due no later than the request is kept; a later one is replaced, so an
+/// immediate request never waits behind a paced one.
+fn arm_render_timer_in(state: &mut Lantern, delay: Duration) {
+    let deadline = Instant::now() + delay;
+    let keep_existing = match state.udev.as_ref() {
+        Some(u) => u.render_timer.is_some() && u.render_timer_deadline.map_or(true, |d| d <= deadline),
+        None => return,
+    };
+    if keep_existing {
         return;
     }
-    let token = state
-        .loop_handle
-        .insert_source(Timer::immediate(), |_, _, state| {
-            if let Some(udev) = state.udev.as_mut() {
-                udev.render_timer = None;
-            }
-            flush_pending_renders(state, false);
-            TimeoutAction::Drop
-        });
+    if let Some(tok) = state.udev.as_mut().and_then(|u| u.render_timer.take()) {
+        state.loop_handle.remove(tok);
+    }
+    let timer = if delay.is_zero() {
+        Timer::immediate()
+    } else {
+        Timer::from_duration(delay)
+    };
+    let token = state.loop_handle.insert_source(timer, |_, _, state| {
+        if let Some(udev) = state.udev.as_mut() {
+            udev.render_timer = None;
+            udev.render_timer_deadline = None;
+        }
+        flush_pending_renders(state, false);
+        TimeoutAction::Drop
+    });
     if let Ok(token) = token {
         if let Some(udev) = state.udev.as_mut() {
             udev.render_timer = Some(token);
+            udev.render_timer_deadline = Some(deadline);
+        }
+    }
+}
+
+/// `schedule_render_output` with a delay: marks the output dirty and arms the
+/// render timer to fire after `delay` (sooner if a shorter timer is already
+/// armed). Nothing is armed while a flip is in flight — its vblank re-renders.
+pub fn schedule_render_output_in(
+    state: &mut Lantern,
+    output: &smithay::output::Output,
+    delay: Duration,
+) {
+    let Some(id) = output.user_data().get::<UdevOutputId>().copied() else {
+        schedule_render(state, false);
+        return;
+    };
+    let arm = {
+        let Some(udev) = state.udev.as_mut() else {
+            return;
+        };
+        match udev
+            .backends
+            .get_mut(&id.device_id)
+            .and_then(|b| b.surfaces.get_mut(&id.crtc))
+        {
+            Some(surface) => {
+                surface.pending_render = true;
+                !surface.frame_pending
+            }
+            None => false,
+        }
+    };
+    if arm {
+        arm_render_timer_in(state, delay);
+    }
+}
+
+/// Answer `wl_surface.frame` for a frame that produced no damage — paced.
+///
+/// A no-damage frame queues no flip, so `frame_finish` never runs for it and
+/// the callbacks a client registered with that commit would never fire. They
+/// used to be sent right from the render path, immediately: a client whose
+/// loop is "request frame → commit → wait for the callback" was answered in
+/// under a millisecond and looped at whatever rate the round trip allowed,
+/// every lap costing a full element pass. This arms a one-shot timer for
+/// the remainder of the output's refresh interval since callbacks last went
+/// out, so the client is paced exactly as a vblank would pace it. A real
+/// flip landing first cancels the timer (`frame_finish`) and answers them.
+pub fn schedule_noflip_callbacks(
+    state: &mut Lantern,
+    node: DrmNode,
+    crtc: crtc::Handle,
+    output: &smithay::output::Output,
+) {
+    let interval = frame_callback_interval(output);
+    let delay = {
+        let Some(s) = state
+            .udev
+            .as_mut()
+            .and_then(|u| u.backends.get_mut(&node))
+            .and_then(|b| b.surfaces.get_mut(&crtc))
+        else {
+            return;
+        };
+        if s.noflip_timer.is_some() {
+            return;
+        }
+        let elapsed = s
+            .last_callbacks_at
+            .map(|t| t.elapsed())
+            .unwrap_or(interval);
+        interval.saturating_sub(elapsed)
+    };
+    let output = output.clone();
+    let token = state
+        .loop_handle
+        .insert_source(Timer::from_duration(delay), move |_, _, state| {
+            if let Some(s) = state
+                .udev
+                .as_mut()
+                .and_then(|u| u.backends.get_mut(&node))
+                .and_then(|b| b.surfaces.get_mut(&crtc))
+            {
+                s.noflip_timer = None;
+                s.last_callbacks_at = Some(Instant::now());
+            }
+            let now: Duration = Duration::from(state.clock.now());
+            crate::render::scanout::send_frame_callbacks(state, &output, now);
+            TimeoutAction::Drop
+        });
+    if let Ok(token) = token {
+        if let Some(s) = state
+            .udev
+            .as_mut()
+            .and_then(|u| u.backends.get_mut(&node))
+            .and_then(|b| b.surfaces.get_mut(&crtc))
+        {
+            s.noflip_timer = Some(token);
         }
     }
 }
@@ -644,32 +783,45 @@ pub fn schedule_render_output(state: &mut Lantern, output: &smithay::output::Out
 /// Arm a one-shot timer that will run shortly after VBLANK_TIMEOUT, so that
 /// `flush_pending_renders` gets a chance to detect a dropped page-flip and
 /// recover. Called from the render path right after `queue_frame` succeeds.
-pub fn arm_vblank_watchdog(state: &mut Lantern) {
+/// One per output: `frame_finish` for this `crtc` cancels it.
+pub fn arm_vblank_watchdog(state: &mut Lantern, node: DrmNode, crtc: crtc::Handle) {
     let timeout = vblank_timeout(state);
     let already = state
         .udev
         .as_ref()
-        .map(|u| u.watchdog_timer.is_some())
+        .and_then(|u| u.backends.get(&node))
+        .and_then(|b| b.surfaces.get(&crtc))
+        .map(|s| s.watchdog_timer.is_some())
         .unwrap_or(true);
     if already {
-        return; // a watchdog is already armed
+        return; // a watchdog is already armed for this output
     }
     let delay = timeout + Duration::from_millis(20);
     let token = state
         .loop_handle
-        .insert_source(Timer::from_duration(delay), |_, _, state| {
+        .insert_source(Timer::from_duration(delay), move |_, _, state| {
             if state.debug_counters.enabled {
                 state.debug_counters.timer_fires += 1;
             }
-            if let Some(udev) = state.udev.as_mut() {
-                udev.watchdog_timer = None;
+            if let Some(s) = state
+                .udev
+                .as_mut()
+                .and_then(|u| u.backends.get_mut(&node))
+                .and_then(|b| b.surfaces.get_mut(&crtc))
+            {
+                s.watchdog_timer = None;
             }
             flush_pending_renders(state, false);
             TimeoutAction::Drop
         });
     if let Ok(token) = token {
-        if let Some(udev) = state.udev.as_mut() {
-            udev.watchdog_timer = Some(token);
+        if let Some(s) = state
+            .udev
+            .as_mut()
+            .and_then(|u| u.backends.get_mut(&node))
+            .and_then(|b| b.surfaces.get_mut(&crtc))
+        {
+            s.watchdog_timer = Some(token);
         }
     }
 }

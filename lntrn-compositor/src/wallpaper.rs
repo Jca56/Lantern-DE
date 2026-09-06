@@ -1,4 +1,19 @@
-use std::collections::HashMap;
+//! Wallpaper: per-output, output-sized background buffers.
+//!
+//! Decoding and scaling run on a worker thread; the main thread only ever
+//! holds the final output-sized RGBA buffers, one per output. It used to keep
+//! every decoded source image resident forever — and with `[appearance]
+//! wallpaper` and a `[[monitors]] wallpaper` naming the SAME file, that file
+//! was decoded twice and held twice (200 MB for a 25-megapixel PNG). The
+//! CatmullRom resize to output size also ran on the main thread: a ~550 ms
+//! freeze at startup and on every scale change / gaming-mode toggle.
+//!
+//! Flow: the render path asks for `(output, physical size)`. On a miss a job
+//! is spawned and, until its result lands through a calloop channel (which
+//! then schedules a render), the output's previous buffer — any size — is
+//! drawn stretched, so a scale change never flashes the bare clear colour.
+
+use std::collections::{HashMap, HashSet};
 
 use image::{imageops::FilterType, DynamicImage, GenericImageView};
 use smithay::{
@@ -12,67 +27,77 @@ use smithay::{
             gles::GlesRenderer,
         },
     },
-    utils::{Logical, Physical, Point, Rectangle, Size},
+    reexports::calloop::channel::{channel, Channel, Event, Sender},
+    utils::{Logical, Physical, Point, Rectangle, Size, Transform},
 };
 
+/// `(output name, physical width, physical height)`.
+type Key = (String, i32, i32);
+
+/// A finished decode + resize, sent from the worker thread. `rgba` is empty
+/// when the source could not be decoded.
+pub struct WallpaperResult {
+    key: Key,
+    generation: u64,
+    rgba: Vec<u8>,
+}
+
 pub struct WallpaperState {
-    /// Default/global wallpaper source image.
-    source: Option<DynamicImage>,
-    /// Size-keyed render buffer cache: (output_name, phys_w, phys_h) -> buffer.
-    cache: HashMap<(String, i32, i32), MemoryRenderBuffer>,
-    /// Path to the currently loaded global wallpaper (empty = embedded default).
-    current_path: String,
-    /// Per-output wallpaper overrides: output_name -> (source, path).
-    per_output: HashMap<String, (Option<DynamicImage>, String)>,
+    /// `[appearance].wallpaper` — empty = embedded default.
+    global_path: String,
+    /// `[[monitors]] wallpaper` overrides: output name → path.
+    per_output_paths: HashMap<String, String>,
+    /// Output-sized buffers. At most one entry per output (its latest size).
+    cache: HashMap<Key, MemoryRenderBuffer>,
+    /// Keys with a worker job in flight.
+    pending: HashSet<Key>,
+    /// Bumped whenever the configured paths change or the cache is
+    /// invalidated; results carrying an older generation are dropped.
+    generation: u64,
+    tx: Sender<WallpaperResult>,
+    /// Receiver half, handed to the event loop by `install_source`.
+    rx: Option<Channel<WallpaperResult>>,
 }
 
 impl WallpaperState {
-    /// Load wallpaper from config, falling back to embedded default.
+    /// Read the configured paths. No decoding happens here (or anywhere on
+    /// the main thread) — buffers are produced on demand by `buffer_for`.
     pub fn load_from_config() -> Self {
-        let wallpaper_path = read_wallpaper_setting();
-        let source = load_wallpaper_image(&wallpaper_path);
-        let per_output = load_per_output_wallpapers();
+        let (tx, rx) = channel();
         Self {
-            source,
+            global_path: read_wallpaper_setting(),
+            per_output_paths: read_per_output_paths(),
             cache: HashMap::new(),
-            current_path: wallpaper_path,
-            per_output,
+            pending: HashSet::new(),
+            generation: 0,
+            tx,
+            rx: Some(rx),
         }
     }
 
-    /// Clear the render cache (e.g. after resolution/scale change).
+    /// Called after an output mode / scale / position change. Buffers are
+    /// keyed by physical size, so a new size simply misses and re-requests;
+    /// the old-size buffer stays as the stretched stand-in until the worker
+    /// delivers. In-flight jobs are abandoned (their generation is stale).
     pub fn clear_cache(&mut self) {
-        self.cache.clear();
+        self.pending.clear();
+        self.generation = self.generation.wrapping_add(1);
     }
 
-    /// Check if any wallpaper config changed and reload if so.
-    /// Compares only paths — image decoding only happens on actual change.
-    /// Previously this decoded all wallpapers every 300 frames, causing
-    /// 30+ms render stalls.
+    /// Re-read the configured paths; on any change drop the buffers so the
+    /// new images get decoded (on the worker) at the next render.
     pub fn reload_if_changed(&mut self) {
-        let new_path = read_wallpaper_setting();
-        let new_per_paths: Vec<(String, String)> = crate::read_monitor_configs()
-            .into_iter()
-            .filter_map(|cfg| {
-                cfg.wallpaper
-                    .filter(|w| !w.is_empty())
-                    .map(|w| (cfg.name, w))
-            })
-            .collect();
-
-        let global_changed = new_path != self.current_path;
-        let per_changed = new_per_paths.len() != self.per_output.len()
-            || new_per_paths.iter().any(|(name, path)| {
-                self.per_output
-                    .get(name)
-                    .map(|(_, p)| p != path)
-                    .unwrap_or(true)
-            });
-
-        if global_changed || per_changed {
-            tracing::info!("[wallpaper] config changed, reloading");
-            *self = Self::load_from_config();
+        let global = read_wallpaper_setting();
+        let per_output = read_per_output_paths();
+        if global == self.global_path && per_output == self.per_output_paths {
+            return;
         }
+        tracing::info!("[wallpaper] config changed, reloading");
+        self.global_path = global;
+        self.per_output_paths = per_output;
+        self.cache.clear();
+        self.pending.clear();
+        self.generation = self.generation.wrapping_add(1);
     }
 
     /// Render wallpaper for a specific output (uses per-output override if set).
@@ -83,11 +108,13 @@ impl WallpaperState {
         output_size: Size<i32, Logical>,
         scale: f64,
     ) -> Option<MemoryRenderBufferRenderElement<GlesRenderer>> {
-        let phys_w = (output_size.w as f64 * scale).round() as i32;
-        let phys_h = (output_size.h as f64 * scale).round() as i32;
-        let phys_size = Size::from((phys_w, phys_h));
-        let buffer = self.buffer_for_output(output_name, phys_size)?;
-        let src = Rectangle::from_size(Size::from((phys_w as f64, phys_h as f64)));
+        let phys_w = ((output_size.w as f64 * scale).round() as i32).max(1);
+        let phys_h = ((output_size.h as f64 * scale).round() as i32).max(1);
+        let key = (output_name.to_string(), phys_w, phys_h);
+        let (buffer, buf_w, buf_h) = self.buffer_for(key)?;
+        // The source spans the buffer we actually have; a stand-in of another
+        // size is stretched to the output by the element's destination size.
+        let src = Rectangle::from_size(Size::from((buf_w as f64, buf_h as f64)));
         MemoryRenderBufferRenderElement::from_buffer(
             renderer,
             Point::<f64, Physical>::from((0.0, 0.0)),
@@ -110,47 +137,118 @@ impl WallpaperState {
         self.render_element_for_output(renderer, "", output_size, scale)
     }
 
-    fn buffer_for_output(
-        &mut self,
-        output_name: &str,
-        size: Size<i32, Physical>,
-    ) -> Option<&MemoryRenderBuffer> {
-        // Pick per-output source if available, else global
-        let source = self
-            .per_output
-            .get(output_name)
-            .and_then(|(src, _)| src.as_ref())
-            .or(self.source.as_ref())?;
-
-        let key = (output_name.to_string(), size.w.max(1), size.h.max(1));
-        if !self.cache.contains_key(&key) {
-            let (src_w, src_h) = source.dimensions();
-            tracing::info!(
-                "[wallpaper] resize {}x{} -> {}x{} phys for {}",
-                src_w,
-                src_h,
-                key.1,
-                key.2,
-                if output_name.is_empty() {
-                    "default"
-                } else {
-                    output_name
-                }
-            );
-            let resized_img = resize_to_fill(source, key.1 as u32, key.2 as u32);
-            let resized = resized_img.to_rgba8();
-            let bytes = resized.into_raw();
-            let buffer = MemoryRenderBuffer::from_slice(
-                &bytes,
-                Fourcc::Abgr8888,
-                (key.1, key.2),
-                1,
-                smithay::utils::Transform::Normal,
-                None,
-            );
-            self.cache.insert(key.clone(), buffer);
+    /// The buffer to draw for `key`: the exact one if present, else the
+    /// output's stand-in of another size. Kicks off a worker job on a miss.
+    fn buffer_for(&mut self, key: Key) -> Option<(&MemoryRenderBuffer, i32, i32)> {
+        if !self.cache.contains_key(&key) && !self.pending.contains(&key) {
+            self.spawn_job(key.clone());
         }
-        self.cache.get(&key)
+        if let Some(buffer) = self.cache.get(&key) {
+            return Some((buffer, key.1, key.2));
+        }
+        self.cache
+            .iter()
+            .find(|(k, _)| k.0 == key.0)
+            .map(|(k, b)| (b, k.1, k.2))
+    }
+
+    fn spawn_job(&mut self, key: Key) {
+        let path = self
+            .per_output_paths
+            .get(&key.0)
+            .cloned()
+            .unwrap_or_else(|| self.global_path.clone());
+        let generation = self.generation;
+        let tx = self.tx.clone();
+        self.pending.insert(key.clone());
+        tracing::info!(
+            "[wallpaper] decoding '{}' for {} at {}x{} (worker thread)",
+            if path.is_empty() {
+                "<embedded default>"
+            } else {
+                path.as_str()
+            },
+            if key.0.is_empty() {
+                "default"
+            } else {
+                key.0.as_str()
+            },
+            key.1,
+            key.2
+        );
+        let job_key = key.clone();
+        let spawned = std::thread::Builder::new()
+            .name("lntrn-wallpaper".into())
+            .spawn(move || {
+                let rgba = load_wallpaper_image(&path)
+                    .map(|img| {
+                        resize_to_fill(&img, key.1 as u32, key.2 as u32)
+                            .to_rgba8()
+                            .into_raw()
+                    })
+                    .unwrap_or_default();
+                let _ = tx.send(WallpaperResult {
+                    key,
+                    generation,
+                    rgba,
+                });
+            });
+        if let Err(e) = spawned {
+            tracing::warn!("[wallpaper] worker thread spawn failed: {e}");
+            self.pending.remove(&job_key);
+        }
+    }
+
+    /// Worker result: install the buffer (evicting the output's other-size
+    /// stand-in) unless it belongs to a superseded generation.
+    fn accept(&mut self, result: WallpaperResult) {
+        self.pending.remove(&result.key);
+        if result.generation != self.generation {
+            return;
+        }
+        let (name, w, h) = result.key.clone();
+        if result.rgba.is_empty() {
+            tracing::warn!(
+                "[wallpaper] decode failed for {} — keeping the clear colour",
+                if name.is_empty() { "default" } else { &name }
+            );
+            return;
+        }
+        let buffer = MemoryRenderBuffer::from_slice(
+            &result.rgba,
+            Fourcc::Abgr8888,
+            (w, h),
+            1,
+            Transform::Normal,
+            None,
+        );
+        self.cache.retain(|k, _| k.0 != name);
+        self.cache.insert(result.key, buffer);
+        tracing::info!(
+            "[wallpaper] ready for {} at {}x{}",
+            if name.is_empty() { "default" } else { &name },
+            w,
+            h
+        );
+    }
+}
+
+/// Hook the worker channel into the event loop: every finished job installs
+/// its buffer and schedules a frame. Call once after `Lantern::new`.
+pub fn install_source(state: &mut crate::Lantern) {
+    let Some(rx) = state.wallpaper.rx.take() else {
+        return;
+    };
+    let res = state
+        .loop_handle
+        .insert_source(rx, |event, _, state: &mut crate::Lantern| {
+            if let Event::Msg(result) = event {
+                state.wallpaper.accept(result);
+                state.schedule_render();
+            }
+        });
+    if let Err(e) = res {
+        tracing::warn!(?e, "failed to install the wallpaper worker channel");
     }
 }
 
@@ -217,17 +315,14 @@ fn read_wallpaper_setting() -> String {
     String::new()
 }
 
-/// Read per-output wallpaper paths from [[monitors]] entries in lantern.toml.
-fn load_per_output_wallpapers() -> HashMap<String, (Option<DynamicImage>, String)> {
-    let configs = crate::read_monitor_configs();
-    let mut result = HashMap::new();
-    for cfg in configs {
-        if let Some(wp) = &cfg.wallpaper {
-            if !wp.is_empty() {
-                let source = load_wallpaper_image(wp);
-                result.insert(cfg.name.clone(), (source, wp.clone()));
-            }
-        }
-    }
-    result
+/// Per-output wallpaper paths from the `[[monitors]]` entries in lantern.toml.
+fn read_per_output_paths() -> HashMap<String, String> {
+    crate::read_monitor_configs()
+        .into_iter()
+        .filter_map(|cfg| {
+            cfg.wallpaper
+                .filter(|w| !w.is_empty())
+                .map(|w| (cfg.name, w))
+        })
+        .collect()
 }

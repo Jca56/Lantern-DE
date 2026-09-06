@@ -51,7 +51,9 @@ fn sync_x11_position(workspaces: &Lantern, window: &Window, location: Point<i32,
         let offset = x11_root_offset(workspaces);
         let x11_loc = Point::<i32, Logical>::from((location.x + offset.x, location.y + offset.y));
         let new_rect = Rectangle::new(x11_loc, size);
-        tracing::info!(
+        // Trace, not info: this runs on every motion event of a drag (up to
+        // 1000/s), each line a synchronous flush to compositor.log.
+        tracing::trace!(
             class = x11.class(),
             title = x11.title(),
             compositor_loc = format!("({}, {})", location.x, location.y),

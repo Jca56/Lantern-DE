@@ -193,7 +193,12 @@ impl Dispatch<wl_callback::WlCallback, ()> for State {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        state.frame_done = true;
+        // The compositor presented our last frame: we may submit another.
+        // This is deliberately NOT a repaint trigger — treating it as one
+        // re-presented an identical desktop every vblank (240 fps of
+        // compositor work for a static screen). Repaints come from input,
+        // the widget tick timers and inotify, gated in `wayland::run`.
+        state.frame_pending = false;
     }
 }
 

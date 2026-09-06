@@ -82,6 +82,9 @@ pub fn disable_output(state: &mut Lantern, name: &str) -> bool {
     state.space.unmap_output(&output);
     state.workspaces.unregister_output(&output);
     state.hdr_ipc.remove_output(name);
+    // Panels / notifications assigned to this output would otherwise stop
+    // rendering entirely (its render pass bails once it's unregistered).
+    state.reroute_layer_surfaces_from(&output);
 
     state
         .disabled_outputs

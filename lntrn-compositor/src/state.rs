@@ -294,6 +294,11 @@ pub struct Lantern {
     pub udev: Option<UdevData>,
     pub winit_redraw_requested: Arc<AtomicBool>,
     pub pending_client_frame_callbacks: bool,
+    /// Per-output edge for the no-flip frame-callback path (udev backend):
+    /// output names whose clients committed since that output last answered
+    /// callbacks. A single global flag was consumed by whichever output
+    /// rendered first, stranding a client on the other monitor.
+    pub noflip_callbacks_wanted: HashSet<String>,
     pub last_pointer_render_location: Option<(i32, i32)>,
     /// The (surface, surface_loc) the pointer was over after the last motion
     /// event — i.e. surface_under(prev_loc) for the NEXT event. Caching this
@@ -623,6 +628,7 @@ impl Lantern {
             udev: None,
             winit_redraw_requested: Arc::new(AtomicBool::new(false)),
             pending_client_frame_callbacks: false,
+            noflip_callbacks_wanted: HashSet::new(),
             last_pointer_render_location: None,
             last_pointer_under: None,
             last_callback_render: std::time::Instant::now() - std::time::Duration::from_secs(60),
@@ -1118,6 +1124,8 @@ impl Lantern {
 
     pub fn schedule_client_render(&mut self) {
         self.pending_client_frame_callbacks = true;
+        let all: Vec<String> = self.workspaces.outputs().cloned().collect();
+        self.noflip_callbacks_wanted.extend(all);
         self.schedule_render();
     }
 
@@ -1132,11 +1140,40 @@ impl Lantern {
             self.request_winit_redraw();
             return;
         }
+        // Layer surfaces (desktop, Command Center, notifications) aren't
+        // workspace-tracked, but the layer-shell handler recorded their
+        // output; a client-drawn cursor surface belongs to the pointer's
+        // output. Both used to fall through to "every output", so a desktop
+        // repaint on the primary dragged the secondary monitor through a full
+        // render pass per commit.
         let output = self
             .workspaces
             .window_workspace_ref(surface)
             .and_then(|(name, _)| self.workspaces.output_by_name(name))
-            .cloned();
+            .cloned()
+            .or_else(|| self.layer_surface_outputs.get(surface).cloned())
+            .or_else(|| {
+                let is_cursor = matches!(
+                    &self.cursor.status,
+                    smithay::input::pointer::CursorImageStatus::Surface(s) if s == surface
+                );
+                if !is_cursor {
+                    return None;
+                }
+                self.seat
+                    .get_pointer()
+                    .map(|p| p.current_location())
+                    .and_then(|pos| self.output_at_point(pos))
+            });
+        match &output {
+            Some(o) => {
+                self.noflip_callbacks_wanted.insert(o.name());
+            }
+            None => {
+                let all: Vec<String> = self.workspaces.outputs().cloned().collect();
+                self.noflip_callbacks_wanted.extend(all);
+            }
+        }
         match output {
             Some(o) => crate::udev::schedule_render_output(self, &o),
             None => crate::udev::schedule_render_all(self),
@@ -1298,6 +1335,42 @@ impl Lantern {
         match self.layer_surface_outputs.get(ls.wl_surface()) {
             Some(assigned) => assigned.name() == output.name(),
             None => true,
+        }
+    }
+
+    /// Re-home every layer surface assigned to `gone` onto the first output
+    /// still in the layout (the primary, in config order). Left alone, a
+    /// panel or notification that lived on an unplugged or barrier-disabled
+    /// monitor would never render again: its per-output check fails on every
+    /// remaining output. The surface keeps its current size until its next
+    /// commit, which the commit handler then sizes against the new output.
+    pub fn reroute_layer_surfaces_from(&mut self, gone: &Output) {
+        let Some(target) = self
+            .workspaces
+            .outputs_iter()
+            .find(|o| o.name() != gone.name())
+            .cloned()
+        else {
+            return;
+        };
+        let mut moved = 0usize;
+        for (surface, assigned) in self.layer_surface_outputs.iter_mut() {
+            if assigned.name() != gone.name() {
+                continue;
+            }
+            gone.leave(surface);
+            target.enter(surface);
+            *assigned = target.clone();
+            moved += 1;
+        }
+        if moved > 0 {
+            tracing::info!(
+                from = %gone.name(),
+                to = %target.name(),
+                moved,
+                "re-routed layer surfaces off a departed output"
+            );
+            self.exclusive_zones_dirty = true;
         }
     }
 

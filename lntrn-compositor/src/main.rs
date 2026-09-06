@@ -675,6 +675,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Every other IPC socket is fd-driven too — accept/read only when the
     // event loop says a socket is readable, never polled from the render path.
     crate::ipc_source::install_all(&mut state);
+    // Wallpaper decode + resize results arrive from a worker thread.
+    crate::wallpaper::install_source(&mut state);
     // Idle / battery actions on their own 1s timer, independent of rendering.
     crate::power::install_tick_timer(&mut state);
     // Prime the SSD geometry cache (refreshed every 500ms from the render path).

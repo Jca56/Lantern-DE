@@ -524,6 +524,9 @@ pub(crate) fn connector_connected(
             scanout_active: false,
             cursor_plane_active: false,
             pending_feedback: None,
+            watchdog_timer: None,
+            noflip_timer: None,
+            last_callbacks_at: None,
         },
     );
 
@@ -573,7 +576,20 @@ pub fn connector_disconnected(state: &mut Lantern, node: DrmNode, crtc: crtc::Ha
 
     if let Some(surface) = backend.surfaces.remove(&crtc) {
         udev.display_handle.remove_global::<Lantern>(surface.global);
+        // Its one-shot timers would otherwise fire into a missing surface.
+        for tok in [surface.watchdog_timer, surface.noflip_timer]
+            .into_iter()
+            .flatten()
+        {
+            state.loop_handle.remove(tok);
+        }
     }
+    // GPU-side state this output owned — blur textures and the screencopy
+    // readback buffer used to leak across every unplug / replug.
+    udev.blur_states.remove(&UdevOutputId {
+        device_id: node,
+        crtc,
+    });
 
     let output = state
         .space
@@ -587,11 +603,20 @@ pub fn connector_disconnected(state: &mut Lantern, node: DrmNode, crtc: crtc::Ha
         .cloned();
 
     if let Some(output) = output {
-        state.output_management_state.remove_head(&output.name());
+        let name = output.name();
+        if let Some(slot) = state.screencopy_pbos.remove(&name) {
+            if let Some(renderer) = udev.renderer.as_mut() {
+                slot.release(renderer);
+            }
+        }
+        state.screencopy_offscreen.remove(&name);
+        state.window_chrome_cache.remove(&name);
+        state.output_management_state.remove_head(&name);
         state.output_management_state.broadcast_done();
-        state.hdr_ipc.remove_output(&output.name());
+        state.hdr_ipc.remove_output(&name);
         state.space.unmap_output(&output);
         state.workspaces.unregister_output(&output);
+        state.reroute_layer_surfaces_from(&output);
     }
 }
 

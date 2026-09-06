@@ -1,7 +1,7 @@
 use std::ffi::c_void;
-use std::os::fd::RawFd;
+use std::os::fd::{AsRawFd, RawFd};
 use std::ptr::NonNull;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use lntrn_render::{Color, GpuContext, Painter, TextRenderer, TexturePass};
@@ -10,6 +10,7 @@ use raw_window_handle::{
     RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle, WindowHandle,
 };
 use wayland_client::{
+    backend::WaylandError,
     protocol::{wl_compositor, wl_pointer, wl_seat},
     Connection, EventQueue, Proxy,
 };
@@ -51,7 +52,13 @@ impl HasWindowHandle for WaylandHandle {
 pub struct State {
     pub running: bool,
     pub configured: bool,
+    /// Something changed and the desktop should repaint (input, a widget
+    /// tick, inotify, configure). Cleared when a frame is submitted.
     pub frame_done: bool,
+    /// A submitted frame's callback hasn't arrived yet — don't submit
+    /// another until it does (or `frame_sent_at` is over a second old).
+    pub frame_pending: bool,
+    pub frame_sent_at: Option<Instant>,
     pub width: u32,
     pub height: u32,
     pub output_scale: i32,
@@ -84,6 +91,8 @@ impl State {
             running: true,
             configured: false,
             frame_done: true,
+            frame_pending: false,
+            frame_sent_at: None,
             width: 0,
             height: 0,
             output_scale: 1,
@@ -251,11 +260,33 @@ pub fn run() -> Result<()> {
     let mut last_radial_tick = Instant::now();
     const RADIAL_TICK_MS: u128 = 16;
 
-    surface.frame(&qh, ());
-    surface.commit();
-
     while state.running {
-        if let Err(e) = event_queue.blocking_dispatch(&mut state) {
+        // Wake-up budget for this iteration. While a widget animates we wait
+        // only until its next tick is due; otherwise the 500 ms cadence the
+        // inotify / clock checks below want. A dirty frame that may be
+        // submitted right now doesn't wait at all. (The old loop blocked on
+        // the Wayland socket and relied on a frame callback per vblank to
+        // wake it, which is what made it repaint at the refresh rate.)
+        let until = |last: Instant, period_ms: u128| -> Duration {
+            Duration::from_millis(period_ms.saturating_sub(last.elapsed().as_millis()) as u64)
+        };
+        let mut timeout = Duration::from_millis(500);
+        if app.widgets.visualizer_enabled {
+            timeout = timeout.min(until(last_viz_tick, VIZ_TICK_MS));
+        }
+        if app.widgets.rainbow_enabled {
+            timeout = timeout.min(until(last_rainbow_tick, RAINBOW_TICK_MS));
+        }
+        if app.radial.as_ref().map_or(false, |r| r.needs_anim()) {
+            timeout = timeout.min(until(last_radial_tick, RADIAL_TICK_MS));
+        }
+        if thumbs.has_pending() {
+            timeout = timeout.min(Duration::from_millis(33));
+        }
+        if state.frame_done && !state.frame_pending {
+            timeout = Duration::ZERO;
+        }
+        if let Err(e) = dispatch_with_timeout(&mut event_queue, &mut state, timeout) {
             tracing::error!("[desktop] dispatch error: {e}");
             break;
         }
@@ -284,42 +315,30 @@ pub fn run() -> Result<()> {
             state.frame_done = true;
         }
 
-        // Visualizer drives continuous repaint while enabled. We tick
-        // the FFT at ~60 Hz and only repaint when the tick produced new
-        // bar values — between ticks we'd be redrawing identical pixels.
-        if app.widgets.visualizer_enabled {
-            if last_viz_tick.elapsed().as_millis() >= VIZ_TICK_MS {
-                last_viz_tick = Instant::now();
-                viz.tick(&audio);
-                if viz.has_motion() {
-                    state.frame_done = true;
-                }
-            } else if viz.has_motion() && !state.frame_done {
-                // Bars still animating but FFT is throttled. Keep the
-                // wakeup pump alive (re-arm the frame callback) without
-                // redoing the wgpu paint — we'd be drawing the same
-                // bars again.
-                surface.frame(&qh, ());
-                surface.commit();
-                continue;
-            }
-        }
-
-        // Rainbow widget — same throttling pattern as the visualizer.
-        if app.widgets.rainbow_enabled {
-            if last_rainbow_tick.elapsed().as_millis() >= RAINBOW_TICK_MS {
-                last_rainbow_tick = Instant::now();
+        // Visualizer drives repaints while enabled: the FFT ticks at ~30 Hz
+        // and only a tick that produced new bar values marks the frame
+        // dirty — between ticks we'd be redrawing identical pixels. The
+        // tick cadence itself is kept by the dispatch timeout above, so no
+        // empty frame+commit pump is needed to stay awake.
+        if app.widgets.visualizer_enabled && last_viz_tick.elapsed().as_millis() >= VIZ_TICK_MS {
+            last_viz_tick = Instant::now();
+            viz.tick(&audio);
+            if viz.has_motion() {
                 state.frame_done = true;
-            } else if !state.frame_done {
-                surface.frame(&qh, ());
-                surface.commit();
-                continue;
             }
         }
 
-        // Thumbnails: upload any finished decodes, queue any image files not
-        // yet handled, and keep the frame pump alive while decodes are out so
-        // the results actually get painted on an otherwise idle desktop.
+        // Rainbow widget — same cadence as the visualizer.
+        if app.widgets.rainbow_enabled
+            && last_rainbow_tick.elapsed().as_millis() >= RAINBOW_TICK_MS
+        {
+            last_rainbow_tick = Instant::now();
+            state.frame_done = true;
+        }
+
+        // Thumbnails: upload any finished decodes and queue any image files
+        // not yet handled. While decodes are out the dispatch timeout polls
+        // at ~30 Hz so the results get painted on an otherwise idle desktop.
         if thumbs.drain(&gpu, &tex_pass) {
             state.frame_done = true;
         }
@@ -328,23 +347,14 @@ pub fn run() -> Result<()> {
                 thumbs.request(&item.path, item.mtime);
             }
         }
-        if thumbs.has_pending() && !state.frame_done {
-            surface.frame(&qh, ());
-            surface.commit();
-            continue;
-        }
 
-        // Radial menu bloom drives continuous repaint until it settles; once
-        // open and idle it costs nothing (repaints come from pointer motion).
-        if app.radial.as_ref().map_or(false, |r| r.needs_anim()) {
-            if last_radial_tick.elapsed().as_millis() >= RADIAL_TICK_MS {
-                last_radial_tick = Instant::now();
-                state.frame_done = true;
-            } else if !state.frame_done {
-                surface.frame(&qh, ());
-                surface.commit();
-                continue;
-            }
+        // Radial menu bloom repaints until it settles; once open and idle it
+        // costs nothing (repaints come from pointer motion).
+        if app.radial.as_ref().map_or(false, |r| r.needs_anim())
+            && last_radial_tick.elapsed().as_millis() >= RADIAL_TICK_MS
+        {
+            last_radial_tick = Instant::now();
+            state.frame_done = true;
         }
 
         // Persist widget position after a drag finishes.
@@ -353,7 +363,21 @@ pub fn run() -> Result<()> {
             app.widgets_dirty = false;
         }
 
-        if !state.frame_done {
+        // A frame is pending from the moment we commit until the compositor
+        // answers its callback (it presented, we may draw again). Draw only
+        // when something asked for a repaint AND nothing is pending, so input
+        // bursts coalesce to the refresh rate and an idle desktop submits
+        // nothing at all. If the compositor stops answering (our surface is
+        // fully covered by a fullscreen window) the pending flag expires
+        // after a second so input-driven repaints can never wedge.
+        if state.frame_pending
+            && state
+                .frame_sent_at
+                .map_or(false, |t| t.elapsed() > Duration::from_secs(1))
+        {
+            state.frame_pending = false;
+        }
+        if !state.frame_done || state.frame_pending {
             continue;
         }
         state.frame_done = false;
@@ -570,10 +594,71 @@ pub fn run() -> Result<()> {
             frame.submit(&gpu.queue);
         }
 
+        // Ask to be told when this frame is on screen; until then no further
+        // frame is submitted (see the gate above).
+        state.frame_pending = true;
+        state.frame_sent_at = Some(Instant::now());
         surface.frame(&qh, ());
         surface.commit();
     }
 
     app.save_positions_if_dirty();
+    Ok(())
+}
+
+/// Dispatch Wayland events, blocking for at most `timeout`
+/// (`Duration::ZERO` = don't block). `dispatch_pending` alone never reads the
+/// socket and `blocking_dispatch` has no timeout, so this is the
+/// prepare_read / poll / read / dispatch sequence from the wayland-client
+/// docs, with a plain `poll(2)` supplying the timeout.
+fn dispatch_with_timeout(
+    event_queue: &mut EventQueue<State>,
+    state: &mut State,
+    timeout: Duration,
+) -> Result<()> {
+    // Flush our requests first so the compositor can react while we wait,
+    // then drain anything already queued — nothing to wait on in that case.
+    event_queue.flush()?;
+    if event_queue.dispatch_pending(state)? > 0 {
+        return Ok(());
+    }
+
+    let guard = match event_queue.prepare_read() {
+        Some(g) => g,
+        None => {
+            event_queue.dispatch_pending(state)?;
+            return Ok(());
+        }
+    };
+
+    let timeout_ms = timeout.as_millis().min(i32::MAX as u128 - 1) as i32;
+    let mut fds = [libc::pollfd {
+        fd: guard.connection_fd().as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    }];
+    let ret = unsafe { libc::poll(fds.as_mut_ptr(), 1, timeout_ms) };
+    if ret < 0 {
+        let err = std::io::Error::last_os_error();
+        // Dropping the guard cancels the prepared read either way.
+        drop(guard);
+        if err.kind() == std::io::ErrorKind::Interrupted {
+            return Ok(());
+        }
+        return Err(err.into());
+    }
+
+    if fds[0].revents & libc::POLLIN != 0 {
+        match guard.read() {
+            Ok(_) => {}
+            // Spurious wakeup: poll said readable but the socket had nothing.
+            Err(WaylandError::Io(io)) if io.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(e) => return Err(e.into()),
+        }
+        event_queue.dispatch_pending(state)?;
+    } else {
+        // Timed out: cancel the prepared read so the next call can re-prepare.
+        drop(guard);
+    }
     Ok(())
 }

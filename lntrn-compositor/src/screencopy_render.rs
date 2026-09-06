@@ -318,3 +318,20 @@ fn deliver_pixels(pending: Vec<PendingScreencopy>, pixels: &[u8], phys_w: usize,
         );
     }
 }
+
+impl ScreencopyPbo {
+    /// Free the GL buffer object and fail any capture still waiting on it.
+    /// Called when its output goes away — the raw `pbo` id is otherwise
+    /// leaked on the GPU with every unplug.
+    pub fn release(self, renderer: &mut GlesRenderer) {
+        let pbo = self.pbo;
+        if let Some((pending, _, _, _)) = self.inflight {
+            fail_all(pending);
+        }
+        if pbo != 0 {
+            let _ = renderer.with_context(|gl| unsafe {
+                gl.DeleteBuffers(1, &pbo);
+            });
+        }
+    }
+}

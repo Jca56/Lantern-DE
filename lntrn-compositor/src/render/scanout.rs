@@ -53,6 +53,17 @@ where
     for window in state.space.elements() {
         window.with_surfaces(&mut f);
     }
+    // Minimized windows are unmapped from every Space, so they'd otherwise be
+    // invisible here and never get a frame callback at all — a client that
+    // blocks on `wl_surface.frame` (Mesa's swap interval, media players)
+    // hung for as long as it stayed minimized. Visiting them clears their
+    // primary-output mark, which is exactly what routes them onto the
+    // 1 Hz `HIDDEN_SURFACE_THROTTLE` trickle hidden workspaces already get.
+    for entry in &state.minimized_windows {
+        if entry.window.alive() {
+            entry.window.with_surfaces(&mut f);
+        }
+    }
     for ls in &state.layer_surfaces {
         if ls.alive() {
             with_surfaces_surface_tree(ls.wl_surface(), &mut f);
@@ -99,6 +110,14 @@ pub(crate) fn send_frame_callbacks(state: &Lantern, output: &Output, time: Durat
     let throttle = Some(HIDDEN_SURFACE_THROTTLE);
     for window in state.space.elements() {
         window.send_frame(output, time, throttle, surface_primary_scanout_output);
+    }
+    // Minimized windows: throttled trickle only (see for_each_presentable_surface).
+    for entry in &state.minimized_windows {
+        if entry.window.alive() {
+            entry
+                .window
+                .send_frame(output, time, throttle, surface_primary_scanout_output);
+        }
     }
     for ls in &state.layer_surfaces {
         if ls.alive() {

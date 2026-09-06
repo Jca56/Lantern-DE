@@ -113,11 +113,16 @@ impl Lantern {
         // Confined: reject any move that would leave the confine region (or,
         // if the client gave no region, the constrained surface itself).
         if pointer_confined {
-            if let Some((_, surface_loc)) = under_now {
-                let point = (pos - surface_loc).to_i32_round();
+            if let Some((surface, surface_loc)) = under_now.as_ref() {
+                let point = (pos - *surface_loc).to_i32_round();
                 let inside = match confine_region.as_ref() {
                     Some(r) => r.contains(point),
-                    None => self.surface_under(pos).is_some(),
+                    // No region means the whole constrained surface: the
+                    // pointer must stay over THAT surface, not merely over
+                    // any surface (which let it wander onto a neighbour).
+                    None => self
+                        .surface_under(pos)
+                        .map_or(false, |(s, _)| s == *surface),
                 };
                 if !inside {
                     pos = prev_loc;

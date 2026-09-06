@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::{
     backend::{
-        drm::compositor::FrameFlags,
+        drm::compositor::{FrameFlags, PrimaryPlaneElement},
         renderer::{
             element::{
                 surface::{render_elements_from_surface_tree, WaylandSurfaceRenderElement},
@@ -35,9 +35,7 @@ use super::helpers::{
     capture_window_snapshot, snapshot_is_stale, window_content_key, SlowRenderBreakdown,
     SlowRenderReport,
 };
-use super::scanout::{
-    collect_presentation_feedback, send_frame_callbacks, update_primary_scanout_outputs,
-};
+use super::scanout::{collect_presentation_feedback, update_primary_scanout_outputs};
 use super::CustomRenderElements;
 
 /// Inputs that parameterize a cached window-chrome shader element (shadow
@@ -102,12 +100,6 @@ pub fn render_surface(
 ) {
     let render_start = Instant::now();
 
-    // Pick up live cursor-color changes from the settings panel without
-    // requiring a session restart. Cheap — `read_input_setting` is
-    // mtime-cached, and the rebuild only fires when fill/outline actually
-    // differ from the last sampled values.
-    state.cursor.tick_colors();
-
     // Tick the click ripple before any borrows of state fields land. Cleans
     // up expired rings and reschedules another frame so the animation keeps
     // progressing even without further input events.
@@ -132,6 +124,12 @@ pub fn render_surface(
     if periodic_due {
         state.last_periodic_tick = Some(Instant::now());
         crate::udev_device::reload_monitor_positions(state);
+        // Pick up live cursor-color changes from the settings panel without
+        // requiring a session restart. Each of its seven config reads walks
+        // the cached lantern.toml text, so it belongs on the half-second
+        // tick — it used to run on every composited frame (1,700 scans a
+        // second at 240 Hz).
+        state.cursor.tick_colors();
     }
 
     // Clear pending state FIRST so early returns don't leave flags stuck.
@@ -2175,8 +2173,22 @@ pub fn render_surface(
                     use std::hash::{Hash, Hasher};
                     let mut h = std::collections::hash_map::DefaultHasher::new();
                     let scale_pt: smithay::utils::Scale<f64> = (output_scale, output_scale).into();
+                    // Only the elements a backdrop can actually sample count:
+                    // backdrop `i` reads `window_elements[end_i..]`, so the
+                    // union over every backdrop is the tail from the smallest
+                    // `end`. The transparent window itself and anything above
+                    // it are NOT in that tail — hashing them (as this used to)
+                    // re-ran the full blur every 100 ms whenever the terminal
+                    // redrew its own text, even though its backdrop's source
+                    // hadn't changed at all.
+                    let min_end = blur_backdrops
+                        .iter()
+                        .map(|b| b.1)
+                        .min()
+                        .unwrap_or(0)
+                        .min(window_elements.len());
                     let fp_groups: [&[CustomRenderElements]; 3] =
-                        [&wp_elements, &bottom_layer_elements, &window_elements];
+                        [&wp_elements, &bottom_layer_elements, &window_elements[min_end..]];
                     for group in &fp_groups {
                         for elem in group.iter() {
                             elem.id().hash(&mut h);
@@ -2395,6 +2407,16 @@ pub fn render_surface(
     // which routes frame callbacks + presentation feedback below.
     let (rendered, frame_is_empty, render_states, cursor_on_plane) = match result {
         Ok(mut result) => {
+            // Smithay leaves GPU/KMS synchronisation to us when the driver
+            // can't take an in-fence on the plane (no IN_FENCE_FD, or a
+            // non-exportable sync): the swapchain buffer would otherwise be
+            // flipped while the GPU is still drawing into it. No-op on a
+            // stack with fencing (NVIDIA ≥ 560 here); matters on the laptop.
+            if result.needs_sync() {
+                if let PrimaryPlaneElement::Swapchain(element) = &result.primary_element {
+                    let _ = element.sync.wait();
+                }
+            }
             let states = std::mem::take(&mut result.states);
             (
                 !result.is_empty,
@@ -2526,7 +2548,7 @@ pub fn render_surface(
         // queued never produces a vblank (e.g. DRM master timing during early
         // session activation). Without this, frame_pending would stay true
         // forever and the compositor would visually freeze.
-        crate::udev::arm_vblank_watchdog(state);
+        crate::udev::arm_vblank_watchdog(state, node, crtc);
     } else {
         // No flip this frame — drain any queued presentation feedback for these
         // surfaces and discard it so clients aren't left waiting on a
@@ -2541,23 +2563,23 @@ pub fn render_surface(
         // (no flip → no vblank → no callback). The frame-callback contract
         // requires firing even when we decide NOT to present.
         //
-        // CRITICAL: this is EDGE-triggered, not level-triggered. We only send
-        // when a client commit actually created an obligation this cycle, and we
-        // CONSUME that edge here. Sending on EVERY no-flip render instead would
-        // let each callback provoke the client to commit again → another no-flip
-        // render → another callback → an unbounded commit/render storm (that is
-        // exactly what black-screened the boot once). With the edge consumed: no
-        // fresh commit → flag stays false → no callback → the loop cannot sustain
-        // itself. Firefox's answered frame carries real content next time, which
-        // damages → normal flip → vblank callback resumes.
+        // Two guards keep this from becoming a commit/render storm:
+        //  * EDGE-triggered: only a client commit sets the flag, and it is
+        //    consumed here — a no-flip render on its own never answers.
+        //  * PACED: the callbacks go out from a timer aligned to this
+        //    output's refresh interval (`schedule_noflip_callbacks`), not
+        //    right now. Answering instantly let a client whose loop is
+        //    "request frame → commit → wait" spin at round-trip speed, each
+        //    lap a full element pass here.
         //
         // Scoped to surfaces presented on THIS output. A client on a hidden
         // workspace committing into an idle output used to get answered here
         // instantly, every time — the storm above, just one client wide.
-        if state.pending_client_frame_callbacks {
-            state.pending_client_frame_callbacks = false;
-            let now: Duration = Duration::from(state.clock.now());
-            send_frame_callbacks(state, &output, now);
+        if state.noflip_callbacks_wanted.remove(&output.name()) {
+            if state.noflip_callbacks_wanted.is_empty() {
+                state.pending_client_frame_callbacks = false;
+            }
+            crate::udev::schedule_noflip_callbacks(state, node, crtc, &output);
         }
     }
 
@@ -2583,8 +2605,21 @@ pub fn render_surface(
     // their own vblank stream by committing; each commit calls
     // schedule_client_render, so frame callbacks still flow (now from the
     // vblank handler — `last_callback_render` is bumped there).
+    //
+    // Per output, and paced: a flip was queued → its vblank re-renders this
+    // output. No flip (the animation flag is set but nothing on screen
+    // changed: a smooth-resize hold waiting for the client, the silent
+    // Alt+Tab hold, the hover-preview grace period) → wait one refresh
+    // interval. An immediate re-arm here used to spin the whole element
+    // pass at CPU speed for the length of the hold, and it did so on every
+    // output at once.
     if needs_anim_redraw {
-        state.schedule_render();
+        if queued {
+            crate::udev::schedule_render_output(state, &output);
+        } else {
+            let interval = crate::udev::frame_callback_interval(&output);
+            crate::udev::schedule_render_output_in(state, &output, interval);
+        }
     }
     // A capture readback started this frame needs one follow-up frame on
     // this output to map + deliver its pixels.
