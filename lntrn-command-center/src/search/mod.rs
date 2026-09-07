@@ -201,8 +201,9 @@ const RESULT_ICON_SIZE: f32 = 36.0;
 const RESULT_ICON_PAD_LEFT: f32 = 12.0;
 const RESULT_TEXT_PAD_LEFT: f32 = 16.0;
 
-/// Grid layout (used in `all_apps_mode`).
-pub const GRID_COLS: usize = 5;
+/// Grid layout (used in `all_apps_mode`). Column count is derived from
+/// the panel width — see [`grid_cols`] — so the grid fills the panel
+/// the same way the pinned rows do.
 pub const GRID_TILE_SIZE: f32 = 120.0;
 pub const GRID_TILE_GAP: f32 = 32.0;
 pub const GRID_LABEL_FONT: f32 = 18.0;
@@ -221,6 +222,17 @@ fn text_color(alpha: f32) -> Color {
 }
 fn accent_color(alpha: f32) -> Color {
     Color::from_rgb8(ACCENT_RGB.0, ACCENT_RGB.1, ACCENT_RGB.2).with_alpha(alpha)
+}
+
+/// Number of grid columns that fit inside the panel's content width
+/// (physical px). Same formula as the pinned grid in `launcher` so the
+/// two layouts line up column-for-column.
+pub fn grid_cols(panel: Rect, scale: f32) -> usize {
+    let pad = input::SEARCH_HORIZONTAL_PAD * scale;
+    let tile = GRID_TILE_SIZE * scale;
+    let tile_gap = GRID_TILE_GAP * scale;
+    let avail_w = panel.w - pad * 2.0;
+    (((avail_w + tile_gap) / (tile + tile_gap)).floor() as usize).max(1)
 }
 
 /// Y-coordinate (physical px) where content beneath the search input
@@ -451,7 +463,7 @@ pub fn max_scroll(search: &Search, panel: Rect, scale: f32) -> f32 {
         let label_gap = GRID_LABEL_GAP * scale;
         let label_font = GRID_LABEL_FONT * scale;
         let cell_h = tile + label_gap + label_font;
-        let rows = ((n + GRID_COLS - 1) / GRID_COLS) as f32;
+        let rows = n.div_ceil(grid_cols(panel, scale)) as f32;
         rows * cell_h + (rows - 1.0).max(0.0) * row_gap
     } else {
         let row_h = RESULT_ROW_HEIGHT * scale;
@@ -504,9 +516,9 @@ fn draw_results_grid(
         return;
     }
 
-    // Center the grid horizontally inside the available width.
-    let cols_total = GRID_COLS as f32 * tile + (GRID_COLS as f32 - 1.0) * tile_gap;
-    let grid_x0 = list_x + (list_w - cols_total).max(0.0) / 2.0;
+    // Left-aligned, as many columns as fit — mirrors the pinned grid.
+    let cols = grid_cols(panel, scale);
+    let grid_x0 = list_x;
 
     let clip = Rect::new(
         list_x,
@@ -524,8 +536,8 @@ fn draw_results_grid(
         // skip any non-app row defensively rather than rendering it.
         let Some(idx) = r.app_idx() else { continue };
         let Some(entry) = apps.get(idx) else { continue };
-        let col = i % GRID_COLS;
-        let row = i / GRID_COLS;
+        let col = i % cols;
+        let row = i / cols;
         let cell_x = grid_x0 + col as f32 * (tile + tile_gap);
         let cell_y = list_y_start + row as f32 * (cell_h + row_gap) - scroll;
 

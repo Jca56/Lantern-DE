@@ -219,7 +219,7 @@ fn read_one(pid: i32, pgsz: u64) -> Option<ProcRaw> {
     // the *last* ')' and parse around it.
     let close = stat.rfind(')')?;
     let open = stat.find('(')?;
-    let comm = stat[open + 1..close].to_string();
+    let comm = full_name(pid, &stat[open + 1..close]);
     let after = &stat[close + 1..];
     let parts: Vec<&str> = after.split_whitespace().collect();
     // After comm, fields are 1-indexed in the man page starting at
@@ -239,6 +239,30 @@ fn read_one(pid: i32, pgsz: u64) -> Option<ProcRaw> {
         cpu_jiffies,
         rss_bytes,
     })
+}
+
+/// The kernel caps `comm` at 15 bytes (TASK_COMM_LEN − 1), so anything
+/// that long is probably truncated ("lntrn-command-c"). Recover the
+/// full name from argv[0]'s basename in /proc/<pid>/cmdline when it
+/// extends the truncated comm; otherwise keep comm as-is (kernel
+/// threads have an empty cmdline, and renamed threads shouldn't be
+/// second-guessed).
+fn full_name(pid: i32, comm: &str) -> String {
+    const TASK_COMM_MAX: usize = 15;
+    if comm.len() < TASK_COMM_MAX {
+        return comm.to_string();
+    }
+    let Ok(cmdline) = fs::read(format!("/proc/{pid}/cmdline")) else {
+        return comm.to_string();
+    };
+    let argv0 = cmdline.split(|b| *b == 0).next().unwrap_or(&[]);
+    let argv0 = String::from_utf8_lossy(argv0);
+    let base = argv0.rsplit('/').next().unwrap_or("");
+    if base.len() > comm.len() && base.starts_with(comm) {
+        base.to_string()
+    } else {
+        comm.to_string()
+    }
 }
 
 /// Format a byte count as a human-friendly string (e.g. "1.2 GB").

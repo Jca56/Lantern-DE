@@ -156,10 +156,6 @@ pub struct AppState {
     /// Pinned-app index currently under the cursor in the mini-dock
     /// (the icon row that floats below the panel while collapsed).
     pub mini_dock_hover: Option<usize>,
-    /// True when the currently-open control view was launched from a
-    /// collapsed panel. When set, clicking the same tile again collapses
-    /// the panel; otherwise we just fall back to the Launcher view.
-    pub opened_from_collapsed: bool,
     /// Top-level panel view selected by the left/right floating arrows.
     /// `Default` runs the existing Launcher / Control behavior; the
     /// other variants replace the body with their own content.
@@ -338,7 +334,6 @@ impl AppState {
             collapse_anim_target: if saved_collapsed { 1.0 } else { 0.0 },
             close_after_collapse: false,
             mini_dock_hover: None,
-            opened_from_collapsed: false,
             panel_view: saved_view,
             view_arrow_hover: None,
             desktop_button_hover: false,

@@ -138,8 +138,9 @@ pub fn contains(menu: &ContextMenu, panel: Rect, scale: f32, phys_x: f32, phys_y
     phys_x >= r.x && phys_x <= r.x + r.w && phys_y >= r.y && phys_y <= r.y + r.h
 }
 
-/// Draw the menu. Caller is responsible for switching to overlay layer
-/// before calling, and for restoring layer 0 afterward.
+/// Draw the menu. Caller is responsible for switching to the overlay
+/// layer first and for queueing this after everything it must cover
+/// (layers only ever move up).
 pub fn draw(
     painter: &mut Painter,
     text: &mut TextRenderer,
@@ -162,7 +163,7 @@ pub fn draw(
         4.0 * scale,
     );
 
-    let bg = Color::from_rgb8(BG_RGB.0, BG_RGB.1, BG_RGB.2).with_alpha(0.98);
+    let bg = Color::from_rgb8(BG_RGB.0, BG_RGB.1, BG_RGB.2);
     painter.rect_filled(rect, radius, bg);
     painter.rect_stroke_sdf(
         rect,

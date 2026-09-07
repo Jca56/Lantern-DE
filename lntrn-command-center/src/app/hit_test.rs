@@ -117,7 +117,7 @@ impl AppState {
 
         if self.search.all_apps_mode {
             use crate::search::{
-                GRID_COLS, GRID_LABEL_FONT, GRID_LABEL_GAP, GRID_ROW_GAP, GRID_TILE_GAP,
+                grid_cols, GRID_LABEL_FONT, GRID_LABEL_GAP, GRID_ROW_GAP, GRID_TILE_GAP,
                 GRID_TILE_SIZE,
             };
             let tile = GRID_TILE_SIZE * scale;
@@ -126,11 +126,14 @@ impl AppState {
             let label_gap = GRID_LABEL_GAP * scale;
             let label_font = GRID_LABEL_FONT * scale;
             let cell_h = tile + label_gap + label_font;
-            let cols_total = GRID_COLS as f32 * tile + (GRID_COLS as f32 - 1.0) * tile_gap;
-            let grid_x0 = list_x + (list_w - cols_total).max(0.0) / 2.0;
+            let cols = grid_cols(
+                lntrn_render::Rect::new(panel_rect.x, panel_rect.y, panel_rect.w, panel_rect.h),
+                scale,
+            );
+            let grid_x0 = list_x;
             for i in 0..results.len() {
-                let col = i % GRID_COLS;
-                let row = i / GRID_COLS;
+                let col = i % cols;
+                let row = i / cols;
                 let cell_x = grid_x0 + col as f32 * (tile + tile_gap);
                 let cell_y = list_y_start + row as f32 * (cell_h + row_gap) - scroll;
                 if phys_x >= cell_x

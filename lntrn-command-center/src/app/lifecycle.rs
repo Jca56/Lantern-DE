@@ -108,27 +108,15 @@ impl AppState {
         // get out of the way first so the view is actually visible.
         self.close_overlays();
         if self.mode == PanelMode::Control(id) {
-            // Toggling the active tile back off. If this view was opened
-            // from a collapsed panel, fold the panel back down too —
-            // otherwise just drop to the launcher view.
-            if self.opened_from_collapsed {
-                self.opened_from_collapsed = false;
-                if !self.collapsed {
-                    self.toggle_collapsed();
-                }
-            }
+            // Toggling the active tile back off drops to the launcher
+            // view (pinned apps) — never re-collapses the panel, even if
+            // the view was opened from the collapsed bar.
             self.mode = PanelMode::Launcher;
         } else {
-            // Opening (or switching to) a control view. Only update the
-            // "opened from collapsed" intent when we're coming from the
-            // Launcher mode — switching between two control views keeps
-            // the original intent so a later toggle-off still respects
-            // the panel's starting state.
-            if matches!(self.mode, PanelMode::Launcher) {
-                self.opened_from_collapsed = self.collapsed;
-                if self.collapsed {
-                    self.toggle_collapsed();
-                }
+            // Opening (or switching to) a control view — the view is
+            // body content, so a collapsed panel has to expand first.
+            if self.collapsed {
+                self.toggle_collapsed();
             }
             self.mode = PanelMode::Control(id);
         }

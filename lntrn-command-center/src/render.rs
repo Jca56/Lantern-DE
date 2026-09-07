@@ -191,6 +191,53 @@ pub fn draw_content(
     // caller (it has the wl_output state). `None` = unknown yet / hide.
     workspace_num: Option<u32>,
 ) -> Vec<IconRequest> {
+    let icons = draw_content_body(
+        painter,
+        text,
+        mono_text,
+        state,
+        panel,
+        surface_w,
+        surface_h,
+        workspace_num,
+    );
+
+    // Right-click context menu — queued LAST so it lands above every
+    // body element. `set_layer` is monotonic (it can only move up and
+    // never back down), so anything queued after a layer-2 bump stays
+    // on layer 2 in queue order; drawing the menu early used to put
+    // the whole body on top of it. Drawn outside the body so dock
+    // right-click menus still render in the collapsed state where the
+    // body bails early. Clamped to the full surface so the menu can
+    // anchor outside the panel rect.
+    if let Some(menu) = &state.context_menu {
+        painter.set_layer(2);
+        text.set_layer(2);
+        let surface_bounds = lntrn_render::Rect::new(0.0, 0.0, surface_w as f32, surface_h as f32);
+        crate::launcher::context_menu::draw(
+            painter,
+            text,
+            menu,
+            surface_bounds,
+            panel.scale_factor,
+            surface_w,
+            surface_h,
+        );
+    }
+    icons
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_content_body(
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    mono_text: &mut TextRenderer,
+    state: &mut AppState,
+    panel: &PanelDraw,
+    surface_w: u32,
+    surface_h: u32,
+    workspace_num: Option<u32>,
+) -> Vec<IconRequest> {
     let mut icons = Vec::new();
 
     // Highlight the tile whose view is currently showing.
@@ -654,29 +701,6 @@ pub fn draw_content(
         pop_panel_clip(painter, text, mono_text);
     }
 
-    // Right-click context menu — drawn here (before the collapsed
-    // early return below) so dock-right-click menus still render in
-    // the collapsed state where the body is fully faded out. Layer 2
-    // (the modal tier — layer 0 is sticky notes, 1 is panel/content)
-    // so it sits above the dock + any panel content, and clamped to
-    // the full surface so the menu can anchor outside the panel rect.
-    if let Some(menu) = &state.context_menu {
-        painter.set_layer(2);
-        text.set_layer(2);
-        let surface_bounds = lntrn_render::Rect::new(0.0, 0.0, surface_w as f32, surface_h as f32);
-        crate::launcher::context_menu::draw(
-            painter,
-            text,
-            menu,
-            surface_bounds,
-            panel.scale_factor,
-            surface_w,
-            surface_h,
-        );
-        painter.set_layer(0);
-        text.set_layer(0);
-    }
-
     // 2. Body of the panel, based on mode. Faded out during collapse
     //    so the content gracefully disappears as the panel shrinks
     //    (and back in on expand).
@@ -951,8 +975,6 @@ pub fn draw_content(
             surface_w,
             surface_h,
         );
-        painter.set_layer(0);
-        text.set_layer(0);
     }
 
     // 5. Power confirm modal — overlay so it sits above everything.
@@ -969,8 +991,6 @@ pub fn draw_content(
             panel.scale_factor,
             panel.alpha,
         );
-        painter.set_layer(0);
-        text.set_layer(0);
     }
 
     icons
