@@ -81,6 +81,12 @@ pub const COPY_REL_PATH: &str = "files.copy_rel_path";
 /// A copy of the file in the `path` arg beside it.
 pub const DUPLICATE: &str = "files.duplicate";
 pub const TERMINAL_HERE: &str = "files.terminal_here";
+/// The right-clicked terminal's selection to the clipboard.
+pub const TERM_COPY: &str = "term.copy";
+pub const TERM_PASTE: &str = "term.paste";
+pub const TERM_CLEAR: &str = "term.clear";
+/// Start the right-clicked terminal's shell again.
+pub const TERM_RESTART: &str = "term.restart";
 /// Show the folder in the `path` arg as the tree's root.
 pub const GO: &str = "files.go";
 /// Make the folder in the `path` arg the project.
@@ -294,6 +300,60 @@ fn files_menu(app: &App, context: bool) -> Menu {
     Menu::new(&title, items)
 }
 
+/// The right-click menu of the code: the clipboard, what the language
+/// server can do when there is one, the line and fold commands.
+fn editor_context_menu(app: &App) -> Menu {
+    let item = |label: &str, id: &str| MenuItem::new(label, Action::new(id));
+    let doc = app.focus_doc();
+    let has_sel = doc.is_some_and(|d| d.has_selection());
+    let lsp = doc.is_some_and(|d| app.lsp.serves(d.lang()));
+    let mut items = vec![item("Cut", CUT).hint("Ctrl+X"), item("Copy", COPY).hint("Ctrl+C"), item("Paste", PASTE).hint("Ctrl+V"), item("Select All", SELECT_ALL).hint("Ctrl+A"), MenuItem::separator()];
+    if lsp {
+        items.push(item("Go to Definition", GOTO_DEF));
+        items.push(item("Find References", REFERENCES));
+        items.push(item("Rename Symbol…", RENAME_SYMBOL));
+        items.push(item("Code Actions…", CODE_ACTIONS));
+        items.push(item("Format Document", FORMAT));
+        items.push(MenuItem::separator());
+    }
+    items.push(item("Toggle Comment", TOGGLE_COMMENT));
+    items.push(item("Duplicate Line", DUPLICATE_LINE));
+    items.push(item("Delete Line", DELETE_LINE));
+    items.push(MenuItem::separator());
+    items.push(item("Fold Block", FOLD));
+    items.push(item("Unfold Block", UNFOLD));
+    items.push(MenuItem::separator());
+    items.push(item("Find in Project…", SHOW_SEARCH));
+    items.push(item(if has_sel { "Send Selection to Claude" } else { "Send Line to Claude" }, IDE_SEND));
+    Menu::new(doc.map_or("Editor", |d| d.title.as_str()), items)
+}
+
+/// The right-click menu of a terminal: its clipboard, its screen, its
+/// shell, and where it is.
+fn terminal_menu(app: &App) -> Menu {
+    let item = |label: &str, id: &str| MenuItem::new(label, Action::new(id));
+    let term = app.context_term.and_then(|id| app.terminals.iter().find(|t| t.id == id));
+    let has_sel = term.is_some_and(|t| t.selection.is_some());
+    let cwd = term.and_then(|t| t.cwd_now());
+    let with_path = |id: &str, p: &Path| Action::new(id).with("path", Value::Str(p.display().to_string()));
+    let mut items = vec![
+        item("Copy", TERM_COPY).enabled(has_sel).hint("Ctrl+Shift+C"),
+        item("Paste", TERM_PASTE).hint("Ctrl+Shift+V"),
+        MenuItem::separator(),
+        item("Clear", TERM_CLEAR),
+        item("Restart Shell", TERM_RESTART),
+        MenuItem::separator(),
+        item("New Terminal", NEW_TERMINAL),
+    ];
+    if let Some(d) = &cwd {
+        items.push(MenuItem::new("New Terminal Here", with_path(TERMINAL_HERE, d)));
+        items.push(MenuItem::separator());
+        items.push(MenuItem::new(&format!("Show {} in Files", tilde(d)), with_path(GO, d)));
+        items.push(MenuItem::new("Copy Path", with_path(COPY_PATH, d)));
+    }
+    Menu::new(&term.map(|t| t.title()).unwrap_or_else(|| "Terminal".to_owned()), items)
+}
+
 pub fn menu(app: &App, name: &str) -> Option<Menu> {
     let doc = app.focus_doc();
     let has_doc = doc.is_some();
@@ -301,6 +361,8 @@ pub fn menu(app: &App, name: &str) -> Option<Menu> {
     Some(match name {
         "files" => files_menu(app, false),
         "files-context" => files_menu(app, true),
+        "editor-context" => editor_context_menu(app),
+        "terminal" => terminal_menu(app),
         "file" => Menu::new(
             "File",
             vec![

@@ -258,6 +258,10 @@ impl App {
             }
             again = true;
         }
+        if std::mem::take(&mut self.pending_clipboard_wanted) {
+            shell.state.clipboard_wanted = true;
+            again = true;
+        }
         if let Some(id) = self.pending_focus.take() {
             shell.state.focus = Some(id);
             shell.state.focus_visible = false;

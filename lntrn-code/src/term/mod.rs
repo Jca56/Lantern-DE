@@ -130,6 +130,14 @@ impl Terminal {
         any
     }
 
+    /// Wipe the screen and the scrollback, as `clear` would.
+    pub fn clear(&mut self) {
+        let Self { parser, grid, .. } = self;
+        parser.feed(b"\x1b[H\x1b[2J\x1b[3J", |a| csi::dispatch(grid, a));
+        grid.view_offset = 0;
+        self.selection = None;
+    }
+
     /// The file a path printed in this terminal means, looked for from
     /// the shell's folder; the last answer is kept for the next frame.
     pub fn resolve_link(&mut self, path: &str) -> Option<PathBuf> {

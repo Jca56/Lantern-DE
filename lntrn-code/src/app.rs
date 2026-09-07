@@ -70,6 +70,10 @@ pub struct App {
     pub focus_doc: Option<DocId>,
     pub focus_area: Option<AreaId>,
     pub last_editor_focus: Option<WidgetId>,
+    /// The terminal last right-clicked: what its menu acts on.
+    pub context_term: Option<crate::term::TermId>,
+    /// A terminal paste asked for: the shell reads the clipboard next frame.
+    pub pending_clipboard_wanted: bool,
     pub prefs_tab: usize,
     /// Text typed into the open dialog's field.
     pub dialog_text: String,
@@ -135,6 +139,8 @@ impl App {
             focus_doc: None,
             focus_area: None,
             last_editor_focus: None,
+            context_term: None,
+            pending_clipboard_wanted: false,
             prefs_tab: 0,
             dialog_text: String::new(),
             pending_paths: Vec::new(),

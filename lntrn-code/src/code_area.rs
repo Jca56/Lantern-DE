@@ -130,8 +130,7 @@ impl App {
         if let Some(at) = out.context {
             self.focus_doc = Some(doc_id);
             self.focus_area = Some(area);
-            let served = self.docs.iter().find(|d| d.id == doc_id).is_some_and(|d| self.lsp.serves(d.lang()));
-            cx.request(ShellRequest::ContextMenu(Box::new(crate::actions::editor_menu(at, served))));
+            cx.request(ShellRequest::MenuAt("editor-context".to_owned(), at));
         }
         if let Some(id) = close_id {
             self.focus_doc = Some(id);

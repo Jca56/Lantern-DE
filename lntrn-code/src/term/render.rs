@@ -63,6 +63,8 @@ pub struct TermOut {
     /// A path was clicked: the file, and the 1-based line and column it
     /// named.
     pub open: Option<(PathBuf, Option<usize>, Option<usize>)>,
+    /// A right click: where the terminal's menu goes.
+    pub context: Option<Vec2>,
 }
 
 /// The file path under a point of the terminal, if it names a file
@@ -91,7 +93,7 @@ pub fn draw_terminal(ui: &mut Ui, term: &mut Terminal, settings: &Settings, area
     let r = ui.interact(id, rect, Sense::FOCUS);
     let focused = ui.focusable(id, rect);
     let popup_blocks = ui.state.popup.is_some_and(|(p, layer)| layer > ui.layer() && p.contains(ui.state.pointer));
-    let mut out = TermOut { focused, open: None };
+    let mut out = TermOut { focused, open: None, context: None };
     // The pointer as a cell (row, column) and as a boundary between cells.
     let cell_at = |p: Vec2| -> (usize, usize) {
         let y = (((p.y - inner.min.y) / lh).floor().max(0.0) as usize).min(rows - 1);
@@ -178,6 +180,9 @@ pub fn draw_terminal(ui: &mut Ui, term: &mut Terminal, settings: &Settings, area
     }
     if focused {
         input::handle(ui, term);
+    }
+    if ui.state.right_pressed && rect.contains(ui.state.pointer) {
+        out.context = Some(ui.state.pointer);
     }
 
     // ---- draw ----

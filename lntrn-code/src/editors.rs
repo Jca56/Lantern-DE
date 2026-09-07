@@ -107,6 +107,10 @@ impl App {
                         self.pending_goto = Some((path, Goto::Printed { line, col }));
                         cx.rebuild();
                     }
+                    if let Some(at) = out.context {
+                        self.context_term = Some(id);
+                        cx.request(ShellRequest::MenuAt("terminal".to_owned(), at));
+                    }
                 }
                 false
             }

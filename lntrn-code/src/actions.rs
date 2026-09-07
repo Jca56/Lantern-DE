@@ -4,9 +4,8 @@
 
 use std::path::{Path, PathBuf};
 
-use lntrn_math::Vec2;
 use lntrn_props::Value;
-use lntrn_ui::{Action, ContextMenu, Dialog, HostCx, Item, ShellRequest};
+use lntrn_ui::{Action, Dialog, HostCx, ShellRequest};
 
 use crate::app::{App, ClipOp, Editor};
 use crate::buffer::Pos;
@@ -27,24 +26,6 @@ fn arg_i64(action: &Action, name: &str) -> Option<i64> {
         Some(Value::I64(n)) => Some(*n),
         _ => None,
     }
-}
-
-/// The right-click menu of the code: the clipboard, then what the
-/// language server can do when there is one.
-pub fn editor_menu(at: Vec2, lsp: bool) -> ContextMenu {
-    let a = Action::new;
-    let mut items = vec![Item::action("Cut", a(CUT)), Item::action("Copy", a(COPY)), Item::action("Paste", a(PASTE)), Item::action("Select All", a(SELECT_ALL))];
-    if lsp {
-        items.push(Item::Separator);
-        items.push(Item::action("Go to Definition", a(GOTO_DEF)));
-        items.push(Item::action("Find References", a(REFERENCES)));
-        items.push(Item::action("Rename Symbol…", a(RENAME_SYMBOL)));
-        items.push(Item::action("Code Actions…", a(CODE_ACTIONS)));
-        items.push(Item::action("Format Document", a(FORMAT)));
-    }
-    items.push(Item::Separator);
-    items.push(Item::action("Send Selection to Claude", a(IDE_SEND)));
-    ContextMenu::new("Editor", at).tab("Edit", items)
 }
 
 /// `name copy.ext`, then `name copy 2.ext` and on: the first that is free.
@@ -399,6 +380,24 @@ impl App {
                 }
             }
             TERMINAL_HERE => self.pending_new_terminal = Some(Some(path())),
+            TERM_COPY | TERM_PASTE | TERM_CLEAR | TERM_RESTART => {
+                let Some(t) = self.context_term.and_then(|id| self.terminals.iter_mut().find(|t| t.id == id)) else {
+                    return;
+                };
+                match action.id.as_str() {
+                    TERM_COPY => {
+                        if let Some(text) = t.selection_text() {
+                            self.pending_clip = Some(ClipOp::Set(text));
+                        }
+                    }
+                    TERM_PASTE => {
+                        t.paste_pending = true;
+                        self.pending_clipboard_wanted = true;
+                    }
+                    TERM_CLEAR => t.clear(),
+                    _ => t.respawn(),
+                }
+            }
             IDE_ACCEPT | IDE_REJECT => {
                 if let Some(id) = self.focus_diff {
                     self.pending_diff_resolve.push((id, action.id == IDE_ACCEPT));

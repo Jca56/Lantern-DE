@@ -24,14 +24,20 @@ pub fn draw_tabs(ui: &mut Ui, items: &[TabItem], current: usize) -> TabsOut {
     let m = ui.m;
     let theme = ui.theme;
     let style = ui.text_style();
-    let h = m.widget_h;
-    let close_w = (h * 0.55).round();
+    let close_w = (m.widget_h * 0.55).round();
+    // The strip runs from the area's top edge to the text below it, edge
+    // to edge, and the tabs fill its whole height.
+    let clip = ui.clip();
+    let row = ui.alloc(Vec2::new(FILL, m.widget_h));
+    let strip = Rect::new(Vec2::new(clip.min.x, clip.min.y), Vec2::new(clip.max.x, row.max.y + m.gap));
+    let h = strip.height();
+    ui.fill(strip, theme.panel.bottom);
+    ui.draw.hline(strip.min.x, strip.max.x, strip.max.y - m.border, m.border, theme.border_dark);
     let widths: Vec<f64> = items.iter().map(|t| ui.measure(t.label, &style) + m.pad * 2.0 + close_w + m.gap).collect();
     let total: f64 = widths.iter().sum::<f64>() + m.gap * (items.len() as f64 - 1.0);
-    let avail = ui.avail_width();
+    let avail = strip.width() - m.border * 2.0;
     let scale = if total > avail { avail / total } else { 1.0 };
-    let strip = ui.alloc(Vec2::new(FILL, h));
-    let mut x = strip.min.x;
+    let mut x = strip.min.x + m.border;
     for (i, item) in items.iter().enumerate() {
         let w = (widths[i] * scale).floor().max(close_w * 2.5);
         let rect = Rect::from_min_size(Vec2::new(x.round(), strip.min.y), Vec2::new(w, h));
