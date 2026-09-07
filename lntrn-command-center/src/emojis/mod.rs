@@ -115,6 +115,18 @@ pub struct EmojisState {
     /// Brief post-click highlight on the entry just copied. We display
     /// the flash for ~280 ms.
     pub recent_copy: Option<(usize, std::time::Instant)>,
+    /// Memoized result of [`Self::visible_indices`] keyed on the filter
+    /// text + category it was computed for. The filter walk lowercases
+    /// the name and every keyword of all ~1.4k entries; render alone
+    /// asked for it twice per frame, input and click paths more, and it
+    /// only actually changes when the user types or switches tab.
+    visible_cache: std::cell::RefCell<Option<VisibleCache>>,
+}
+
+struct VisibleCache {
+    filter: String,
+    category: Category,
+    indices: Vec<usize>,
 }
 
 impl Default for EmojisState {
@@ -127,6 +139,7 @@ impl Default for EmojisState {
             hover_entry: None,
             hover_category: None,
             recent_copy: None,
+            visible_cache: std::cell::RefCell::new(None),
         }
     }
 }
@@ -138,28 +151,49 @@ impl EmojisState {
     }
 
     /// Return the indices into [`data::EMOJIS`] visible under the
-    /// current category / filter.
+    /// current category / filter. Memoized: the walk only reruns when
+    /// the filter text or the active category changed since last call.
     pub fn visible_indices(&self) -> Vec<usize> {
-        let needle = self.filter.query().to_lowercase();
-        let needle = needle.trim();
-        data::EMOJIS
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| {
-                if needle.is_empty() {
-                    e.category == self.active_category
-                } else {
-                    e.name.to_lowercase().contains(needle)
-                        || e.keywords.iter().any(|k| k.to_lowercase().contains(needle))
+        let query = self.filter.query();
+        {
+            let cache = self.visible_cache.borrow();
+            if let Some(c) = cache.as_ref() {
+                if c.filter == query && c.category == self.active_category {
+                    return c.indices.clone();
                 }
-            })
-            .map(|(i, _)| i)
-            .collect()
+            }
+        }
+        let indices = compute_visible(query, self.active_category);
+        *self.visible_cache.borrow_mut() = Some(VisibleCache {
+            filter: query.to_string(),
+            category: self.active_category,
+            indices: indices.clone(),
+        });
+        indices
     }
 
     pub fn reset_scroll(&mut self) {
         self.scroll = 0.0;
     }
+}
+
+/// The actual filter walk behind [`EmojisState::visible_indices`].
+fn compute_visible(query: &str, category: Category) -> Vec<usize> {
+    let needle = query.to_lowercase();
+    let needle = needle.trim();
+    data::EMOJIS
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| {
+            if needle.is_empty() {
+                e.category == category
+            } else {
+                e.name.to_lowercase().contains(needle)
+                    || e.keywords.iter().any(|k| k.to_lowercase().contains(needle))
+            }
+        })
+        .map(|(i, _)| i)
+        .collect()
 }
 
 // ── Layout ──────────────────────────────────────────────────────────────────

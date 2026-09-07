@@ -14,6 +14,7 @@
 //! - `stats.rs` — plain-data containers shared with `view.rs`
 //! - `view.rs` — overlay rendering + hit-testing
 
+mod cache;
 pub mod limits;
 pub mod model_status;
 pub mod pricing;

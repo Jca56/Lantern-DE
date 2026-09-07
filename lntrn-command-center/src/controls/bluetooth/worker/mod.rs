@@ -1,15 +1,20 @@
-//! Bluetooth worker thread — drives `bluetoothctl` for power / discoverable
-//! / scan / connect / disconnect / pair operations, and runs the long-lived
-//! interactive obexctl agent for incoming file transfers + the obexctl
-//! shell-out for outgoing transfers.
+//! Bluetooth worker thread — polls BlueZ over D-Bus for power /
+//! discoverable / device state, drives `bluetoothctl` for the
+//! user-triggered power / discoverable / connect / disconnect / pair
+//! operations, and runs the long-lived obex agent for incoming file
+//! transfers + outgoing sends.
 //!
 //! Communicates with `super::Bluetooth` via two mpsc channels:
 //! - `BtCmd` flows in from the UI thread
 //! - `BtEvent` flows back out so `Bluetooth::tick` can update its mirror of
 //!   reality on each render frame.
 //!
-//! All bluetoothctl / obexctl calls are synchronous; the worker thread
-//! is what keeps them off the render thread.
+//! All bluetoothctl calls are synchronous; the worker thread is what
+//! keeps them off the render thread. The periodic state poll used to be
+//! ten-plus of those spawns every 5 s around the clock; it is now one
+//! `GetManagedObjects` round trip (see [`dbus`]), paced by panel
+//! visibility, with the CLI readers kept as a fallback for an
+//! unreachable bus.
 
 use std::process::Command;
 use std::sync::mpsc;
@@ -18,25 +23,35 @@ use std::time::{Duration, Instant};
 
 use super::obex::{self, ObexCmd};
 use super::{BtCmd, BtEvent};
+use crate::panel_visible::VisGate;
 
+mod dbus;
 mod devices;
 mod legacy_obex;
 mod pair;
 mod pair_agent;
 mod scan;
 
+use dbus::{BluezBus, SnapError};
 use devices::{forward_bt_result, read_devices, read_discoverable, read_powered};
 use pair::interactive_pair;
 use pair_agent::PairAgent;
 use scan::ScanSession;
 
-const POLL_INTERVAL: Duration = Duration::from_secs(5);
+/// Full-state poll cadence while the panel is on screen. Cheap now that
+/// it's a single D-Bus call, so a bit snappier than the old 5 s.
+const POLL_INTERVAL: Duration = Duration::from_secs(3);
+/// …and while hidden: just enough to keep the cached list from going
+/// badly stale before the show-burst refreshes it.
+const HIDDEN_POLL_INTERVAL: Duration = Duration::from_secs(30);
+/// Device-list refresh while a scan is running and the panel is visible.
+const SCAN_POLL_INTERVAL: Duration = Duration::from_millis(1500);
 
 pub(super) fn worker(tx: mpsc::Sender<BtEvent>, cmd_rx: mpsc::Receiver<BtCmd>) {
+    let mut bluez = BluezBus::connect();
+
     // Initial poll.
-    let _ = tx.send(BtEvent::Powered(read_powered()));
-    let _ = tx.send(BtEvent::Discoverable(read_discoverable()));
-    let _ = tx.send(BtEvent::Devices(read_devices()));
+    poll_all(&mut bluez, &tx);
 
     // Spawn the OBEX D-Bus thread. It handles both sends and the
     // incoming-file agent over a single org.bluez.obex session-bus
@@ -59,17 +74,18 @@ pub(super) fn worker(tx: mpsc::Sender<BtEvent>, cmd_rx: mpsc::Receiver<BtCmd>) {
     // While scanning, poll the device list more often so newly
     // discovered devices appear quickly.
     let mut scan_poll = Instant::now();
+    let mut gate = VisGate::new();
 
     loop {
+        let (visible, just_shown) = gate.poll();
+
         while let Ok(cmd) = cmd_rx.try_recv() {
             match cmd {
                 BtCmd::SetPowered(on) => {
                     let arg = if on { "on" } else { "off" };
                     let _ = Command::new("bluetoothctl").args(["power", arg]).output();
                     thread::sleep(Duration::from_millis(300));
-                    let _ = tx.send(BtEvent::Powered(read_powered()));
-                    let _ = tx.send(BtEvent::Discoverable(read_discoverable()));
-                    let _ = tx.send(BtEvent::Devices(read_devices()));
+                    poll_all(&mut bluez, &tx);
                     last_poll = Instant::now();
                 }
                 BtCmd::SetDiscoverable(on) => {
@@ -78,7 +94,8 @@ pub(super) fn worker(tx: mpsc::Sender<BtEvent>, cmd_rx: mpsc::Receiver<BtCmd>) {
                         .args(["discoverable", arg])
                         .output();
                     thread::sleep(Duration::from_millis(200));
-                    let _ = tx.send(BtEvent::Discoverable(read_discoverable()));
+                    poll_all(&mut bluez, &tx);
+                    last_poll = Instant::now();
                 }
                 BtCmd::SetScan(on) => {
                     if on {
@@ -98,7 +115,8 @@ pub(super) fn worker(tx: mpsc::Sender<BtEvent>, cmd_rx: mpsc::Receiver<BtCmd>) {
                     } else if let Some(session) = scan_session.take() {
                         session.stop();
                         let _ = tx.send(BtEvent::Scan(false));
-                        let _ = tx.send(BtEvent::Devices(read_devices()));
+                        poll_all(&mut bluez, &tx);
+                        last_poll = Instant::now();
                     }
                 }
                 BtCmd::Connect(mac) => {
@@ -106,7 +124,7 @@ pub(super) fn worker(tx: mpsc::Sender<BtEvent>, cmd_rx: mpsc::Receiver<BtCmd>) {
                         .args(["connect", &mac])
                         .output();
                     forward_bt_result(&tx, result);
-                    let _ = tx.send(BtEvent::Devices(read_devices()));
+                    poll_all(&mut bluez, &tx);
                     last_poll = Instant::now();
                 }
                 BtCmd::Disconnect(mac) => {
@@ -114,7 +132,7 @@ pub(super) fn worker(tx: mpsc::Sender<BtEvent>, cmd_rx: mpsc::Receiver<BtCmd>) {
                         .args(["disconnect", &mac])
                         .output();
                     forward_bt_result(&tx, result);
-                    let _ = tx.send(BtEvent::Devices(read_devices()));
+                    poll_all(&mut bluez, &tx);
                     last_poll = Instant::now();
                 }
                 BtCmd::Pair(mac) => {
@@ -130,7 +148,7 @@ pub(super) fn worker(tx: mpsc::Sender<BtEvent>, cmd_rx: mpsc::Receiver<BtCmd>) {
                     if let Some(agent) = pair_agent.as_mut() {
                         agent.reassert_default();
                     }
-                    let _ = tx.send(BtEvent::Devices(read_devices()));
+                    poll_all(&mut bluez, &tx);
                     last_poll = Instant::now();
                 }
                 BtCmd::PairReply(_) | BtCmd::PairCancel => {
@@ -196,32 +214,75 @@ pub(super) fn worker(tx: mpsc::Sender<BtEvent>, cmd_rx: mpsc::Receiver<BtCmd>) {
                         // so the device auto-reconnects later, then
                         // refresh the list so the new device appears.
                         let _ = Command::new("bluetoothctl").args(["trust", &mac]).output();
-                        let _ = tx.send(BtEvent::Devices(read_devices()));
+                        poll_all(&mut bluez, &tx);
                         last_poll = Instant::now();
                     }
                 }
             }
         }
 
-        // Poll the system-bus agent for incoming pair prompts.
+        // Poll the system-bus agent for incoming pair prompts. Always —
+        // an incoming pair request is exactly what wakes the hidden
+        // panel, so this can't follow visibility.
         if let Some(agent) = pair_agent.as_mut() {
             agent.poll(&tx);
         }
 
         // Faster device polling while scanning so newly discovered
-        // devices appear quickly.
-        if scan_session.is_some() && scan_poll.elapsed() >= Duration::from_millis(1500) {
-            let _ = tx.send(BtEvent::Devices(read_devices()));
+        // devices appear quickly (only worth it when someone's looking).
+        if visible && scan_session.is_some() && scan_poll.elapsed() >= SCAN_POLL_INTERVAL {
+            poll_all(&mut bluez, &tx);
             scan_poll = Instant::now();
+            last_poll = Instant::now();
         }
 
-        if last_poll.elapsed() >= POLL_INTERVAL {
-            let _ = tx.send(BtEvent::Powered(read_powered()));
-            let _ = tx.send(BtEvent::Discoverable(read_discoverable()));
-            let _ = tx.send(BtEvent::Devices(read_devices()));
+        let interval = if visible {
+            POLL_INTERVAL
+        } else {
+            HIDDEN_POLL_INTERVAL
+        };
+        if just_shown || last_poll.elapsed() >= interval {
+            poll_all(&mut bluez, &tx);
             last_poll = Instant::now();
         }
 
         thread::sleep(Duration::from_millis(150));
     }
+}
+
+/// Read adapter + device state and forward it as three events. Prefers
+/// the D-Bus snapshot (one round trip); reconnects a dropped bus on the
+/// next call; falls back to the `bluetoothctl` readers only when the
+/// system bus itself is unreachable.
+fn poll_all(bluez: &mut Option<BluezBus>, tx: &mpsc::Sender<BtEvent>) {
+    if bluez.is_none() {
+        *bluez = BluezBus::connect();
+    }
+    if let Some(bus) = bluez.as_ref() {
+        match bus.snapshot() {
+            Ok(snap) => {
+                let _ = tx.send(BtEvent::Powered(snap.powered));
+                let _ = tx.send(BtEvent::Discoverable(snap.discoverable));
+                let _ = tx.send(BtEvent::Devices(snap.devices));
+                return;
+            }
+            Err(SnapError::NoBluez) => {
+                // bluetoothd isn't running: that's "off, no devices",
+                // exactly what the CLI path would have reported after
+                // failing five times over. No need to spawn anything.
+                let _ = tx.send(BtEvent::Powered(false));
+                let _ = tx.send(BtEvent::Discoverable(false));
+                let _ = tx.send(BtEvent::Devices(Vec::new()));
+                return;
+            }
+            Err(SnapError::Bus) => {
+                // Connection died (dbus restart). Drop it so the next poll
+                // reconnects; use the CLI this once.
+                *bluez = None;
+            }
+        }
+    }
+    let _ = tx.send(BtEvent::Powered(read_powered()));
+    let _ = tx.send(BtEvent::Discoverable(read_discoverable()));
+    let _ = tx.send(BtEvent::Devices(read_devices()));
 }

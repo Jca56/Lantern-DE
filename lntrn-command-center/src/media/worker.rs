@@ -21,8 +21,13 @@ const MPRIS_PATH: &str = "/org/mpris/MediaPlayer2";
 const PLAYER_IFACE: &str = "org.mpris.MediaPlayer2.Player";
 const PROPS_IFACE: &str = "org.freedesktop.DBus.Properties";
 
-/// How often to re-read the active player's state.
+/// How often to re-read the active player's state while the panel is
+/// on screen.
 const POLL_INTERVAL: Duration = Duration::from_millis(600);
+/// …and while it's hidden. Nothing is drawn then; this just keeps the
+/// cached track from being wildly stale for the first frame after a
+/// show (the show itself also triggers an immediate poll).
+const HIDDEN_POLL_INTERVAL: Duration = Duration::from_secs(10);
 /// Loop granularity — small so transport clicks feel instant.
 const TICK: Duration = Duration::from_millis(120);
 /// Backoff when the session bus isn't reachable yet.
@@ -34,6 +39,7 @@ pub(super) fn run(tx: mpsc::Sender<MediaEvent>, cmd_rx: mpsc::Receiver<MediaCmd>
     let mut last_conn_try = Instant::now();
     // Bus name of the player we last read — transport commands target it.
     let mut current: Option<String> = None;
+    let mut gate = crate::panel_visible::VisGate::new();
 
     loop {
         // (Re)establish the session connection if we lost it.
@@ -42,7 +48,8 @@ pub(super) fn run(tx: mpsc::Sender<MediaEvent>, cmd_rx: mpsc::Receiver<MediaCmd>
             last_conn_try = Instant::now();
         }
 
-        let mut force_poll = false;
+        let (visible, just_shown) = gate.poll();
+        let mut force_poll = just_shown;
         while let Ok(cmd) = cmd_rx.try_recv() {
             if let (Some(c), Some(player)) = (&conn, &current) {
                 let method = match cmd {
@@ -62,9 +69,12 @@ pub(super) fn run(tx: mpsc::Sender<MediaEvent>, cmd_rx: mpsc::Receiver<MediaCmd>
             force_poll = true;
         }
 
-        let due = last_poll
-            .map(|t| t.elapsed() >= POLL_INTERVAL)
-            .unwrap_or(true);
+        let interval = if visible {
+            POLL_INTERVAL
+        } else {
+            HIDDEN_POLL_INTERVAL
+        };
+        let due = last_poll.map(|t| t.elapsed() >= interval).unwrap_or(true);
         if conn.is_some() && (due || force_poll) {
             let c = conn.as_ref().unwrap();
             let (track, player) = poll(c);

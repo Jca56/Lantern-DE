@@ -5,6 +5,16 @@
 //! size, upload to a `GpuTexture`, and cache by app_id so we never pay
 //! the rasterization cost twice.
 //!
+//! Resolution + rasterization run on a small pool of background threads.
+//! Resolving an unknown name probes ~60 directories × 6 candidate
+//! filenames (≈360 `stat` calls) and an SVG rasterize is several ms;
+//! doing that on the render thread the first time the all-apps grid
+//! opened stalled the frame for a visible beat. Now `ensure_loaded`
+//! just enqueues, the workers decode to RGBA, and `pump()` uploads the
+//! results to the GPU on the main thread a frame or two later. The
+//! render loop treats a finished upload as a dirty frame so icons pop in
+//! as soon as they're ready.
+//!
 //! Search order (mirrors freedesktop spec, biased toward modern icon
 //! themes that look good on dark surfaces):
 //!
@@ -19,52 +29,132 @@
 //! Implementation is read-only-reference parallel to `lntrn-bar`'s; no
 //! shared code per the self-contained-crate rule.
 
-use std::collections::HashMap;
+mod video_thumbs;
+
+pub use video_thumbs::{ensure_video_thumb_async, video_thumb_path};
+
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 
 use lntrn_render::{GpuContext, GpuTexture, TexturePass};
+
+/// Background rasterizer threads. Two is enough to stream a hundred
+/// fresh icons in well under a second without competing with the
+/// render thread for cores.
+const WORKERS: usize = 2;
+
+/// Work item for the rasterizer pool.
+struct Job {
+    app_id: String,
+    icon_name: String,
+    size: u32,
+}
+
+/// Finished rasterization. `rgba` is `None` when the icon couldn't be
+/// resolved or decoded — cached as a negative entry so we never retry.
+struct Done {
+    app_id: String,
+    rgba: Option<Vec<u8>>,
+    size: u32,
+}
 
 /// LRU-ish cache: app_id → loaded GPU texture.
 /// (We don't bound the cache size for now — typical user has <500 apps,
 ///  each ~16KB at 64×64 RGBA. ~8MB ceiling.)
 pub struct IconCache {
     map: HashMap<String, Option<GpuTexture>>,
+    /// Keys handed to the pool whose result hasn't come back yet.
+    pending: HashSet<String>,
     /// Phys-pixel icon size for all entries in this cache. Cache is
     /// invalidated if scale changes (we re-rasterize at the new size).
     icon_size: u32,
+    jobs: Sender<Job>,
+    done: Receiver<Done>,
 }
 
 impl IconCache {
     pub fn new(icon_size: u32) -> Self {
+        let (jobs, job_rx) = mpsc::channel::<Job>();
+        let (done_tx, done) = mpsc::channel::<Done>();
+        let job_rx = Arc::new(Mutex::new(job_rx));
+        for i in 0..WORKERS {
+            let rx = Arc::clone(&job_rx);
+            let tx = done_tx.clone();
+            std::thread::Builder::new()
+                .name(format!("icon-raster-{i}"))
+                .spawn(move || worker(rx, tx))
+                .ok();
+        }
         Self {
             map: HashMap::new(),
+            pending: HashSet::new(),
             icon_size,
+            jobs,
+            done,
         }
     }
 
-    /// Ensure the icon for `app_id` is loaded into the cache. Returns
-    /// `true` if a (re)load happened; `false` if the slot was already
-    /// populated. Callers usually don't care about the return value —
-    /// they invoke `peek` afterward to grab the texture reference.
+    /// Make sure the icon for `app_id` is loaded or loading. Returns
+    /// `true` if a request was enqueued this call; `false` if the slot is
+    /// already populated or in flight. Callers usually don't care about
+    /// the return value — they invoke `peek` afterward to grab whatever
+    /// texture is available right now.
     pub fn ensure_loaded(
         &mut self,
-        gpu: &GpuContext,
-        tex_pass: &TexturePass,
+        _gpu: &GpuContext,
+        _tex_pass: &TexturePass,
         app_id: &str,
         icon_name: Option<&str>,
     ) -> bool {
-        if self.map.contains_key(app_id) {
+        if self.map.contains_key(app_id) || self.pending.contains(app_id) {
             return false;
         }
-        let tex = icon_name
-            .and_then(|n| resolve_path(n))
-            .and_then(|p| rasterize(gpu, tex_pass, &p, self.icon_size));
-        self.map.insert(app_id.to_string(), tex);
+        let Some(name) = icon_name else {
+            // Nothing to look up — negative-cache right away.
+            self.map.insert(app_id.to_string(), None);
+            return true;
+        };
+        let job = Job {
+            app_id: app_id.to_string(),
+            icon_name: name.to_string(),
+            size: self.icon_size,
+        };
+        if self.jobs.send(job).is_err() {
+            // Pool is gone (all workers died) — degrade to "no icon"
+            // rather than re-queueing forever.
+            self.map.insert(app_id.to_string(), None);
+            return true;
+        }
+        self.pending.insert(app_id.to_string());
         true
     }
 
-    /// Read-only lookup. Caller is responsible for having called
-    /// `ensure_loaded` first if the entry might not exist yet.
+    /// Upload every finished rasterization to the GPU. Returns how many
+    /// new textures became available (so the caller can schedule a
+    /// redraw). Cheap when nothing is pending.
+    pub fn pump(&mut self, gpu: &GpuContext, tex_pass: &TexturePass) -> usize {
+        let mut fresh = 0;
+        while let Ok(d) = self.done.try_recv() {
+            self.pending.remove(&d.app_id);
+            if d.size != self.icon_size {
+                // Rasterized for a size we no longer use (resize() ran in
+                // between). Drop it; the next frame re-requests at the
+                // right size.
+                continue;
+            }
+            let tex = d.rgba.map(|rgba| tex_pass.upload(gpu, &rgba, d.size, d.size));
+            if tex.is_some() {
+                fresh += 1;
+            }
+            self.map.insert(d.app_id, tex);
+        }
+        fresh
+    }
+
+    /// Read-only lookup. `None` while the icon is still loading (or if
+    /// it could not be resolved at all).
     pub fn peek(&self, app_id: &str) -> Option<&GpuTexture> {
         self.map.get(app_id).and_then(|opt| opt.as_ref())
     }
@@ -75,7 +165,36 @@ impl IconCache {
     pub fn resize(&mut self, new_icon_size: u32) {
         if new_icon_size != self.icon_size {
             self.map.clear();
+            self.pending.clear();
             self.icon_size = new_icon_size;
+        }
+    }
+}
+
+/// Pool thread: pull a job, resolve + decode it off the render thread,
+/// hand the RGBA back. A panic inside resvg / the image decoders on a
+/// hostile file is caught so the key never gets stuck in `pending`.
+fn worker(rx: Arc<Mutex<Receiver<Job>>>, tx: Sender<Done>) {
+    loop {
+        let job = {
+            let Ok(guard) = rx.lock() else { return };
+            guard.recv()
+        };
+        let Ok(job) = job else { return };
+        let size = job.size;
+        let rgba = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            resolve_path(&job.icon_name).and_then(|p| rasterize(&p, size))
+        }))
+        .unwrap_or(None);
+        if tx
+            .send(Done {
+                app_id: job.app_id,
+                rgba,
+                size,
+            })
+            .is_err()
+        {
+            return;
         }
     }
 }
@@ -193,97 +312,22 @@ fn icon_dirs() -> Vec<String> {
 
 // ── Rasterization ───────────────────────────────────────────────────────────
 
-fn rasterize(
-    gpu: &GpuContext,
-    tex_pass: &TexturePass,
-    path: &Path,
-    size: u32,
-) -> Option<GpuTexture> {
+/// Decode `path` to a `size × size` straight-alpha RGBA buffer. Pure CPU
+/// — runs on the pool threads; the GPU upload happens in `pump()`.
+fn rasterize(path: &Path, size: u32) -> Option<Vec<u8>> {
     let ext = path
         .extension()
         .and_then(|s| s.to_str())
         .map(|s| s.to_ascii_lowercase());
 
     let data = std::fs::read(path).ok()?;
-    let rgba = match ext.as_deref() {
-        Some("svg") | Some("svgz") => rasterize_svg(&data, size, size)?,
-        Some("png") => rasterize_png(&data, size, size)?,
+    match ext.as_deref() {
+        Some("svg") | Some("svgz") => rasterize_svg(&data, size, size),
+        Some("png") => rasterize_png(&data, size, size),
         Some("jpg") | Some("jpeg") | Some("gif") | Some("webp") | Some("bmp") | Some("tif")
-        | Some("tiff") | Some("ico") => rasterize_image_crate(&data, size, size)?,
-        _ => return None,
-    };
-
-    Some(tex_pass.upload(gpu, &rgba, size, size))
-}
-
-/// Disk cache location for a video thumbnail. Keyed by hash of the
-/// absolute path so two files at the same name don't collide. Public
-/// so the Files view can probe existence before pushing an IconRequest.
-pub fn video_thumb_path(src: &Path) -> std::path::PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    let mut dir = std::path::PathBuf::from(home);
-    dir.push(".cache/lntrn-cc/thumbs");
-    let _ = std::fs::create_dir_all(&dir);
-    let key = simple_hash(src.to_string_lossy().as_bytes());
-    dir.push(format!("{:016x}.png", key));
-    dir
-}
-
-/// Cheap FNV-1a hash — good enough for cache keys, not cryptographic.
-fn simple_hash(bytes: &[u8]) -> u64 {
-    let mut h: u64 = 0xcbf29ce484222325;
-    for &b in bytes {
-        h ^= b as u64;
-        h = h.wrapping_mul(0x100000001b3);
+        | Some("tiff") | Some("ico") => rasterize_image_crate(&data, size, size),
+        _ => None,
     }
-    h
-}
-
-/// Kick off a background ffmpeg job to extract `src`'s thumbnail to
-/// the on-disk cache. Idempotent — a second call for the same path
-/// while a previous job is still running is a no-op. Returns
-/// immediately; the cache file appears whenever ffmpeg finishes.
-pub fn ensure_video_thumb_async(src: std::path::PathBuf, size: u32) {
-    use std::collections::HashSet;
-    use std::sync::{Mutex, OnceLock};
-    static PENDING: OnceLock<Mutex<HashSet<std::path::PathBuf>>> = OnceLock::new();
-    let pending = PENDING.get_or_init(|| Mutex::new(HashSet::new()));
-    let dst = video_thumb_path(&src);
-    if dst.exists() {
-        return;
-    }
-    {
-        let mut g = pending.lock().unwrap();
-        if g.contains(&src) {
-            return;
-        }
-        g.insert(src.clone());
-    }
-    std::thread::spawn(move || {
-        let _ = extract_video_thumb(&src, &dst, size);
-        if let Ok(mut g) = pending.lock() {
-            g.remove(&src);
-        }
-    });
-}
-
-/// Shell out to ffmpeg to extract a thumbnail frame at ~1s in. PNG so
-/// our existing decoder can pick it up. Returns whether the file now
-/// exists.
-fn extract_video_thumb(src: &Path, dst: &Path, size: u32) -> bool {
-    use std::process::{Command, Stdio};
-    let scale = format!("scale={}:-1:force_original_aspect_ratio=decrease", size);
-    let status = Command::new("ffmpeg")
-        .args(["-y", "-ss", "1", "-i"])
-        .arg(src)
-        .args(["-vframes", "1", "-vf"])
-        .arg(&scale)
-        .arg(dst)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    matches!(status, Ok(s) if s.success() && dst.exists())
 }
 
 /// Decode any image format the `image` crate handles and resize to
@@ -344,7 +388,7 @@ fn rasterize_svg(data: &[u8], w: u32, h: u32) -> Option<Vec<u8>> {
     Some(rgba)
 }
 
-/// Decode PNG and nearest-neighbor resize to `w × h`.
+/// Decode PNG and resize to `w × h`.
 fn rasterize_png(data: &[u8], w: u32, h: u32) -> Option<Vec<u8>> {
     let decoder = png::Decoder::new(std::io::Cursor::new(data));
     let mut reader = decoder.read_info().ok()?;

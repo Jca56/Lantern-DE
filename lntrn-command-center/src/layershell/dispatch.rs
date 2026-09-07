@@ -174,7 +174,19 @@ impl Dispatch<wl_output::WlOutput, u32> for WlState {
                 data.scale = factor;
                 state.fallback_scale = factor;
             }
-            wl_output::Event::Mode { width, .. } => data.phys_width = width as u32,
+            wl_output::Event::Mode { flags, width, .. } => {
+                // Compositors may advertise every supported mode; only
+                // the one flagged `current` describes the live raster.
+                // Fall back to the first mode we see so a compositor
+                // that never sets the flag still gives us a width.
+                let is_current = matches!(
+                    flags,
+                    wayland_client::WEnum::Value(f) if f.contains(wl_output::Mode::Current)
+                );
+                if is_current || data.phys_width == 0 {
+                    data.phys_width = width as u32;
+                }
+            }
             _ => {}
         }
     }
@@ -217,6 +229,7 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for WlState {
                 }
                 state.configured = true;
                 state.frame_done = true;
+                state.input_dirty = true;
             }
             zwlr_layer_surface_v1::Event::Closed => state.running = false,
             _ => {}
@@ -310,7 +323,10 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WlState {
             }
             _ => {}
         }
-        state.frame_done = true;
+        // Input marks the frame dirty; the render gate pairs that with
+        // the compositor's frame callback so a 1 kHz mouse can't drive
+        // a 1 kHz re-render.
+        state.input_dirty = true;
     }
 }
 
@@ -394,7 +410,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WlState {
             }
             _ => {}
         }
-        state.frame_done = true;
+        state.input_dirty = true;
     }
 }
 

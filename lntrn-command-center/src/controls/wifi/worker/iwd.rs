@@ -59,11 +59,21 @@ pub(super) fn is_available() -> bool {
     name_has_owner(&conn, IWD_BUS)
 }
 
-pub(super) fn poll_status() -> WifiState {
-    let Ok(conn) = Connection::system() else {
-        return WifiState::Off;
-    };
-    let Some(objects) = managed_objects(&conn) else {
+/// True if the bus answers a trivial call — used by the worker to tell
+/// "iwd is off" from "our connection died".
+pub(super) fn bus_alive(conn: &Connection) -> bool {
+    conn.call_method(
+        Some("org.freedesktop.DBus"),
+        "/org/freedesktop/DBus",
+        Some("org.freedesktop.DBus"),
+        "GetId",
+        &(),
+    )
+    .is_ok()
+}
+
+pub(super) fn poll_status(conn: &Connection) -> WifiState {
+    let Some(objects) = managed_objects(conn) else {
         return WifiState::Off;
     };
     let Some((station_path, station_props)) = find_station(&objects) else {
@@ -83,7 +93,7 @@ pub(super) fn poll_status() -> WifiState {
         .and_then(|p| string_prop(p, "Name"))
         .unwrap_or_default();
 
-    let signal = ordered_networks(&conn, &station_path)
+    let signal = ordered_networks(conn, &station_path)
         .into_iter()
         .find(|(p, _)| p == &net_path)
         .map(|(_, dbm)| dbm_to_pct(dbm))
@@ -92,18 +102,15 @@ pub(super) fn poll_status() -> WifiState {
     WifiState::Connected { ssid, signal }
 }
 
-pub(super) fn scan_networks() -> Vec<Network> {
-    let Ok(conn) = Connection::system() else {
-        return Vec::new();
-    };
-    let Some(objects) = managed_objects(&conn) else {
+pub(super) fn scan_networks(conn: &Connection) -> Vec<Network> {
+    let Some(objects) = managed_objects(conn) else {
         return Vec::new();
     };
     let Some((station_path, _)) = find_station(&objects) else {
         return Vec::new();
     };
 
-    let ordered = ordered_networks(&conn, &station_path);
+    let ordered = ordered_networks(conn, &station_path);
 
     let mut nets = Vec::with_capacity(ordered.len());
     for (path, dbm) in ordered {
@@ -172,7 +179,7 @@ pub(super) fn scan_networks() -> Vec<Network> {
     // rich fields (BSSID, freq, channel, rate, cipher) into its row so
     // the expanded panel has something to show. iwd only exposes these
     // for the *active* connection — other rows stay sparse.
-    if let Some(diag) = fetch_diagnostics(&conn, &station_path) {
+    if let Some(diag) = fetch_diagnostics(conn, &station_path) {
         if let Some(net) = nets.iter_mut().find(|n| n.in_use) {
             apply_diagnostics(net, diag);
         }
@@ -181,18 +188,16 @@ pub(super) fn scan_networks() -> Vec<Network> {
     nets
 }
 
-pub(super) fn handle_cmd(cmd: WifiCmd, tx: &mpsc::Sender<WifiEvent>) {
+pub(super) fn handle_cmd(conn: &Connection, cmd: WifiCmd, tx: &mpsc::Sender<WifiEvent>) {
     match cmd {
         WifiCmd::Rescan => {
-            if let Ok(conn) = Connection::system() {
-                if let Some(objects) = managed_objects(&conn) {
-                    if let Some((station_path, _)) = find_station(&objects) {
-                        // Fire-and-forget; iwd refuses if a scan is already
-                        // in progress, which is fine — the next periodic
-                        // poll picks up whatever it produced.
-                        let _: zbus::Result<()> =
-                            iwd_call(&conn, station_path.as_str(), IFACE_STATION, "Scan", &());
-                    }
+            if let Some(objects) = managed_objects(conn) {
+                if let Some((station_path, _)) = find_station(&objects) {
+                    // Fire-and-forget; iwd refuses if a scan is already
+                    // in progress, which is fine — the next periodic
+                    // poll picks up whatever it produced.
+                    let _: zbus::Result<()> =
+                        iwd_call(conn, station_path.as_str(), IFACE_STATION, "Scan", &());
                 }
             }
             // Give the radio a beat to finish before the shared
@@ -207,32 +212,31 @@ pub(super) fn handle_cmd(cmd: WifiCmd, tx: &mpsc::Sender<WifiEvent>) {
         } => {
             // iwd doesn't expose per-profile band / BSSID pinning the way
             // NetworkManager does, so those args are intentionally dropped.
-            connect_by_ssid(&ssid, password.as_deref(), tx);
+            connect_by_ssid(conn, &ssid, password.as_deref(), tx);
         }
         WifiCmd::DeleteProfile { uuid } => {
             // `uuid` is the KnownNetwork object path we stuffed in during
             // scan_networks. Call Forget on it.
-            if let Ok(conn) = Connection::system() {
-                let _: zbus::Result<()> = iwd_call(&conn, uuid.as_str(), IFACE_KNOWN, "Forget", &());
-            }
+            let _: zbus::Result<()> = iwd_call(conn, uuid.as_str(), IFACE_KNOWN, "Forget", &());
         }
         WifiCmd::ActivateProfile { name } => {
             // iwd reuses the same Network object for both first-time
             // connect and reactivation, so just call Connect with no
             // passphrase — iwd uses the stored credentials.
-            connect_by_ssid(&name, None, tx);
+            connect_by_ssid(conn, &name, None, tx);
         }
     }
 }
 
 // ─── connect helpers ────────────────────────────────────────────────────────
 
-fn connect_by_ssid(ssid: &str, password: Option<&str>, tx: &mpsc::Sender<WifiEvent>) {
-    let Ok(conn) = Connection::system() else {
-        let _ = tx.send(WifiEvent::ConnectFail("system bus unavailable".into()));
-        return;
-    };
-    let Some(objects) = managed_objects(&conn) else {
+fn connect_by_ssid(
+    conn: &Connection,
+    ssid: &str,
+    password: Option<&str>,
+    tx: &mpsc::Sender<WifiEvent>,
+) {
+    let Some(objects) = managed_objects(conn) else {
         let _ = tx.send(WifiEvent::ConnectFail("iwd not responding".into()));
         return;
     };
@@ -248,7 +252,7 @@ fn connect_by_ssid(ssid: &str, password: Option<&str>, tx: &mpsc::Sender<WifiEve
     // password to provide. Open networks and reconnects to saved
     // networks skip this and let iwd do its thing.
     let agent_handle = match password {
-        Some(pw) if !pw.is_empty() => match register_agent(&conn, pw.to_string()) {
+        Some(pw) if !pw.is_empty() => match register_agent(conn, pw.to_string()) {
             Ok(h) => Some(h),
             Err(e) => {
                 let _ = tx.send(WifiEvent::ConnectFail(format!(
@@ -262,10 +266,10 @@ fn connect_by_ssid(ssid: &str, password: Option<&str>, tx: &mpsc::Sender<WifiEve
     };
 
     let result: zbus::Result<()> =
-        iwd_call(&conn, network_path.as_str(), IFACE_NETWORK, "Connect", &());
+        iwd_call(conn, network_path.as_str(), IFACE_NETWORK, "Connect", &());
 
     if let Some(h) = agent_handle {
-        h.unregister(&conn);
+        h.unregister(conn);
     }
 
     match result {

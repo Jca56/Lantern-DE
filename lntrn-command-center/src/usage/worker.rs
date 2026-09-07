@@ -1,17 +1,21 @@
 //! Background scanner for Claude Code transcript JSONL files.
 //!
-//! Walks `~/.claude/projects/*/*.jsonl` on startup, then loops every
-//! `TICK_MS` re-stat-ing each file and reading any newly-appended lines.
-//! Aggregated stats are pushed through an mpsc on every change so the
-//! main render thread only has to `try_recv` on tick.
+//! Restores the last checkpoint from [`super::cache`], then loops every
+//! `TICK` re-stat-ing each `~/.claude/projects/*/*.jsonl` and folding in
+//! any newly-appended *complete* lines. Aggregated stats are pushed
+//! through an mpsc on every change so the main render thread only has
+//! to `try_recv` on tick. The checkpoint is rewritten at most every
+//! `CACHE_WRITE_INTERVAL` while anything changed, so a daemon restart
+//! only re-parses the tail written since then instead of the whole
+//! transcript history.
 
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde::Deserialize;
 
@@ -19,6 +23,11 @@ use super::pricing::price_for;
 use super::stats::{DayBucket, ProjectBucket, UsageStats};
 
 const TICK: Duration = Duration::from_millis(1000);
+/// Minimum spacing between checkpoint writes while data keeps changing.
+/// Claude Code appends every few seconds during a session; rewriting a
+/// ~100 KB JSON each time would be silly, and a restart within this
+/// window just re-reads a few seconds' worth of lines.
+const CACHE_WRITE_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Spawn the worker thread. Returns the mpsc receiver the main loop
 /// drains for stat snapshots.
@@ -37,25 +46,26 @@ fn projects_dir() -> Option<PathBuf> {
 }
 
 /// Per-file scan state. We remember the byte offset we've already
-/// consumed so a follow-up scan only parses the appended tail.
-struct FileState {
-    offset: u64,
-    mtime: SystemTime,
+/// consumed (always at a line boundary) so a follow-up scan only parses
+/// the appended tail.
+pub(super) struct FileState {
+    pub(super) offset: u64,
+    pub(super) mtime: SystemTime,
 }
 
-struct Accumulator {
-    stats: UsageStats,
-    by_project: HashMap<String, ProjectBucket>,
-    by_day: HashMap<String, DayBucket>,
-    by_model: HashMap<String, ProjectBucket>,
-    sessions: std::collections::HashSet<String>,
+pub(super) struct Accumulator {
+    pub(super) stats: UsageStats,
+    pub(super) by_project: HashMap<String, ProjectBucket>,
+    pub(super) by_day: HashMap<String, DayBucket>,
+    pub(super) by_model: HashMap<String, ProjectBucket>,
+    pub(super) sessions: std::collections::HashSet<String>,
     /// First and last observed timestamps (ISO8601 strings sort lexicographically).
-    first_ts: Option<String>,
-    last_ts: Option<String>,
+    pub(super) first_ts: Option<String>,
+    pub(super) last_ts: Option<String>,
 }
 
 impl Accumulator {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             stats: UsageStats::default(),
             by_project: HashMap::new(),
@@ -90,30 +100,70 @@ impl Accumulator {
     }
 }
 
+/// Outcome of one pass over the transcript directory.
+enum Sweep {
+    /// Nothing new.
+    Unchanged,
+    /// At least one new assistant turn was folded in.
+    Changed,
+    /// A file shrank below its recorded offset (truncated / rewritten).
+    /// The fold is append-only, so the only safe move is to start over.
+    Truncated,
+}
+
 fn run(tx: Sender<UsageStats>) {
     let Some(root) = projects_dir() else {
         tracing::warn!("usage worker: no $HOME");
         return;
     };
 
-    let mut files: HashMap<PathBuf, FileState> = HashMap::new();
-    let mut acc = Accumulator::new();
+    let (mut files, mut acc) = match super::cache::load() {
+        Some((files, acc)) => {
+            // Show the checkpointed totals immediately; the first sweep
+            // below tops them up with whatever was appended since.
+            let _ = tx.send(acc.snapshot());
+            (files, acc)
+        }
+        None => (HashMap::new(), Accumulator::new()),
+    };
+
+    let mut last_cache_write: Option<Instant> = None;
+    let mut cache_dirty = false;
 
     loop {
-        let changed = sweep(&root, &mut files, &mut acc);
-        if changed {
-            let _ = tx.send(acc.snapshot());
+        match sweep(&root, &mut files, &mut acc) {
+            Sweep::Changed => {
+                let _ = tx.send(acc.snapshot());
+                cache_dirty = true;
+            }
+            Sweep::Truncated => {
+                tracing::info!("usage worker: transcript truncated — rebuilding from scratch");
+                files.clear();
+                acc = Accumulator::new();
+                cache_dirty = true;
+                // Rescan right away rather than showing zeros for a tick.
+                continue;
+            }
+            Sweep::Unchanged => {}
         }
+
+        if cache_dirty
+            && last_cache_write.map_or(true, |t| t.elapsed() >= CACHE_WRITE_INTERVAL)
+        {
+            super::cache::save(&files, &acc);
+            last_cache_write = Some(Instant::now());
+            cache_dirty = false;
+        }
+
         thread::sleep(TICK);
     }
 }
 
-/// One pass over every transcript file. Returns true if anything new
-/// was consumed (so the caller publishes a fresh snapshot).
-fn sweep(root: &PathBuf, files: &mut HashMap<PathBuf, FileState>, acc: &mut Accumulator) -> bool {
+/// One pass over every transcript file.
+fn sweep(root: &PathBuf, files: &mut HashMap<PathBuf, FileState>, acc: &mut Accumulator) -> Sweep {
     let mut any = false;
     let Ok(project_dirs) = fs::read_dir(root) else {
-        return false;
+        return Sweep::Unchanged;
     };
     for entry in project_dirs.flatten() {
         let pdir = entry.path();
@@ -138,47 +188,71 @@ fn sweep(root: &PathBuf, files: &mut HashMap<PathBuf, FileState>, acc: &mut Accu
                 mtime: SystemTime::UNIX_EPOCH,
             });
 
-            // mtime is the cheap "did anything change" gate; size+offset
-            // is how we read only the appended tail.
+            // File got truncated/rewritten. Rare — Claude Code appends —
+            // but our fold can't un-count, so the caller restarts.
+            if size < st.offset {
+                return Sweep::Truncated;
+            }
+            // mtime is the cheap "did anything change" gate; offset vs
+            // size is how we read only the appended tail.
             if st.offset >= size && st.mtime == mtime {
                 continue;
             }
-            // File got truncated/rewritten: restart from zero. (Rare —
-            // Claude Code appends — but cheap to handle.)
-            if size < st.offset {
-                st.offset = 0;
+            // Advance by the bytes actually consumed (up to the last
+            // newline), never by the stat size: the file can grow
+            // between the stat and the read (which would double-count
+            // the lines in between next sweep), and a half-written last
+            // line must stay unconsumed until its newline lands.
+            if let Some((consumed, folded)) = read_tail(&p, st.offset, &project, acc) {
+                st.offset += consumed;
+                if folded {
+                    any = true;
+                }
             }
-            if read_tail(&p, st.offset, &project, acc) {
-                any = true;
-            }
-            st.offset = size;
             st.mtime = mtime;
         }
     }
-    any
+    if any {
+        Sweep::Changed
+    } else {
+        Sweep::Unchanged
+    }
 }
 
-/// Read from `start_off` to EOF, parse each line, fold into `acc`.
-fn read_tail(path: &PathBuf, start_off: u64, project: &str, acc: &mut Accumulator) -> bool {
-    let Ok(mut f) = File::open(path) else {
-        return false;
+/// Read from `start_off` to EOF and fold every *complete* line into
+/// `acc`. Returns `(bytes consumed, any assistant turn folded)`; the
+/// consumed count stops at the last newline so a partial trailing line
+/// is picked up whole on a later sweep. `None` if the file couldn't be
+/// read this time (retry next sweep).
+fn read_tail(
+    path: &PathBuf,
+    start_off: u64,
+    project: &str,
+    acc: &mut Accumulator,
+) -> Option<(u64, bool)> {
+    let mut f = File::open(path).ok()?;
+    f.seek(SeekFrom::Start(start_off)).ok()?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).ok()?;
+
+    let Some(last_nl) = buf.iter().rposition(|&b| b == b'\n') else {
+        return Some((0, false));
     };
-    if f.seek(SeekFrom::Start(start_off)).is_err() {
-        return false;
-    }
-    let reader = BufReader::new(f);
     let mut any = false;
-    for line in reader.lines() {
-        let Ok(line) = line else { break };
+    for line in buf[..=last_nl].split(|&b| b == b'\n') {
         if line.is_empty() {
             continue;
         }
-        if let Some(entry) = parse_assistant(&line) {
+        // Skip (don't abort on) a line that isn't valid UTF-8.
+        let Ok(line) = std::str::from_utf8(line) else {
+            continue;
+        };
+        if let Some(entry) = parse_assistant(line) {
             fold(entry, project, acc);
             any = true;
         }
     }
-    any
+    Some(((last_nl + 1) as u64, any))
 }
 
 #[derive(Deserialize)]

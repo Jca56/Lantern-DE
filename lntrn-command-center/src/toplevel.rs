@@ -26,6 +26,11 @@ pub struct ToplevelInfo {
 
 pub struct ToplevelTracker {
     entries: Vec<Entry>,
+    /// Set whenever the committed state of any toplevel changes (new
+    /// window, `done` after a title/state update, close). The main
+    /// loop re-snapshots only when this is set instead of cloning every
+    /// title string on every iteration.
+    dirty: bool,
 }
 
 struct Entry {
@@ -48,7 +53,14 @@ impl ToplevelTracker {
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
+            dirty: true,
         }
+    }
+
+    /// True (once) if the committed toplevel state changed since the
+    /// last call. Clears the flag.
+    pub fn take_dirty(&mut self) -> bool {
+        std::mem::replace(&mut self.dirty, false)
     }
 
     /// Snapshot of all tracked toplevels. Order matches creation order.
@@ -145,6 +157,7 @@ impl ToplevelTracker {
             pending_fullscreen: false,
             pending_activated: false,
         });
+        self.dirty = true;
     }
 
     pub fn on_app_id(&mut self, handle: &fth::ZwlrForeignToplevelHandleV1, app_id: String) {
@@ -184,10 +197,15 @@ impl ToplevelTracker {
             if let Some(t) = e.pending_title.take() {
                 e.title = t;
             }
+            self.dirty = true;
         }
     }
 
     pub fn on_closed(&mut self, handle: &fth::ZwlrForeignToplevelHandleV1) {
+        let before = self.entries.len();
         self.entries.retain(|e| e.handle != *handle);
+        if self.entries.len() != before {
+            self.dirty = true;
+        }
     }
 }

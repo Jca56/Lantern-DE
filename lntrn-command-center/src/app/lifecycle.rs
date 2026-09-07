@@ -27,6 +27,9 @@ impl AppState {
                 self.selection = Selection::Pin(0);
                 self.mode = PanelMode::Launcher;
                 self.files.reset_to_home();
+                // Pick up apps installed since the last open; the result
+                // lands a few ms later via `poll_apps_rescan`.
+                self.kick_apps_rescan();
                 self.visibility = Visibility::Opening;
                 self.anim_start = now;
                 // Collapsed is the default open state; the "open in

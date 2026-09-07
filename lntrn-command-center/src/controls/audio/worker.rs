@@ -1,6 +1,12 @@
 //! Worker thread + wpctl invocations. The render thread never blocks
 //! on wpctl; it talks to this module via `AudioCmd` / `AudioEvent` mpsc
 //! channels.
+//!
+//! Polling follows panel visibility: the normal cadence while the panel
+//! is on screen, a slow trickle while hidden (each poll is two `wpctl`
+//! process spawns — running them at 750 ms around the clock was the
+//! single largest slice of the daemon's CPU), and an immediate burst the
+//! moment the panel comes back so the first visible frame is fresh.
 
 use std::process::Command;
 use std::sync::mpsc;
@@ -8,11 +14,16 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::{AudioCmd, AudioEvent, Sink};
+use crate::panel_visible::VisGate;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(750);
 /// `wpctl status` is more expensive than get-volume; only re-fetch the
 /// sink list every few seconds.
 const SINK_LIST_POLL_INTERVAL: Duration = Duration::from_secs(3);
+/// Cadences while the panel is hidden. Nothing is drawn, so these only
+/// keep the cached values roughly current for the show-burst to refine.
+const HIDDEN_POLL_INTERVAL: Duration = Duration::from_secs(30);
+const HIDDEN_SINK_LIST_POLL_INTERVAL: Duration = Duration::from_secs(120);
 
 pub(super) fn worker(tx: mpsc::Sender<AudioEvent>, cmd_rx: mpsc::Receiver<AudioCmd>) {
     // Prime the UI with whatever we can read right away.
@@ -21,16 +32,19 @@ pub(super) fn worker(tx: mpsc::Sender<AudioEvent>, cmd_rx: mpsc::Receiver<AudioC
 
     let mut last_poll = Instant::now();
     let mut last_sink_list_poll = Instant::now();
+    let mut gate = VisGate::new();
 
     loop {
+        let (visible, just_shown) = gate.poll();
+
         // Drain pending commands. Any setter triggers an immediate
         // re-poll so the cached state catches up without waiting for
         // the next tick. Volume sets coalesce — slider drags emit one
         // SetVolume per drag-pixel, and each wpctl shellout blocks for
         // ~50ms; without coalescing the worker falls dozens of frames
         // behind a quick drag.
-        let mut force_volume_repoll = false;
-        let mut force_devices_repoll = false;
+        let mut force_volume_repoll = just_shown;
+        let mut force_devices_repoll = just_shown;
         let mut latest_sink_volume: Option<f32> = None;
         let mut latest_source_volume: Option<f32> = None;
         let mut toggle_mute_pending = false;
@@ -105,11 +119,16 @@ pub(super) fn worker(tx: mpsc::Sender<AudioEvent>, cmd_rx: mpsc::Receiver<AudioC
             force_volume_repoll = true;
         }
 
-        if force_volume_repoll || last_poll.elapsed() >= POLL_INTERVAL {
+        let (poll_interval, sink_interval) = if visible {
+            (POLL_INTERVAL, SINK_LIST_POLL_INTERVAL)
+        } else {
+            (HIDDEN_POLL_INTERVAL, HIDDEN_SINK_LIST_POLL_INTERVAL)
+        };
+        if force_volume_repoll || last_poll.elapsed() >= poll_interval {
             poll_volumes(&tx);
             last_poll = Instant::now();
         }
-        if force_devices_repoll || last_sink_list_poll.elapsed() >= SINK_LIST_POLL_INTERVAL {
+        if force_devices_repoll || last_sink_list_poll.elapsed() >= sink_interval {
             poll_devices(&tx);
             last_sink_list_poll = Instant::now();
         }

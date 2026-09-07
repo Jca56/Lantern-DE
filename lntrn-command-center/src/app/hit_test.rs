@@ -3,15 +3,13 @@
 //! `activate_at` resolver. Pulled out of `app.rs` so the top-level
 //! module stays close to the 700-line guideline.
 
-use std::process::Command;
-
 use crate::app::{
     AppState, HitTarget, MenuAction, PanelRect, PanelView, Selection, WindowAction,
     WindowActionKind,
 };
 use crate::launcher::context_menu::{ContextMenu, MenuItem};
 
-use super::{open_path_detached, reap, spawn_detached};
+use super::{open_path_detached, spawn_detached};
 
 impl AppState {
     pub fn hit_test_launcher(
@@ -367,9 +365,10 @@ impl AppState {
                 {
                     let exec = entry.exec.clone();
                     let app_id = entry.app_id.clone();
-                    if let Ok(child) = Command::new("sh").arg("-c").arg(&exec).spawn() {
-                        reap(child);
-                    }
+                    // Same detached spawn as the launcher: null stdio +
+                    // own session. A plain `sh -c` inherited our log file
+                    // as the app's stdout/stderr.
+                    spawn_detached(&exec);
                     tracing::info!(%app_id, %exec, "launched app via context menu");
                     self.close();
                 }
@@ -433,9 +432,7 @@ impl AppState {
                 {
                     let exec = entry.exec.clone();
                     let app_id = entry.app_id.clone();
-                    if let Ok(child) = Command::new("sh").arg("-c").arg(&exec).spawn() {
-                        reap(child);
-                    }
+                    spawn_detached(&exec);
                     tracing::info!(%app_id, %exec, "dock → open new window");
                     self.close();
                 }

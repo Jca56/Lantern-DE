@@ -288,6 +288,10 @@ pub struct AppState {
     /// Now-playing media (MPRIS). Drives the centerpiece widget in the
     /// middle of the controls row.
     pub media: crate::media::Media,
+    /// Result slot for the background `.desktop` rescan kicked off on
+    /// every fresh open (see `kick_apps_rescan`). `None` when no rescan
+    /// is in flight.
+    apps_rescan: Option<std::sync::mpsc::Receiver<AppsProvider>>,
 }
 
 #[derive(Debug, Clone)]
@@ -385,6 +389,52 @@ impl AppState {
             pending_terminal_input: None,
             workspace_ipc: crate::workspace_ipc::WorkspaceIpc::new(),
             media: crate::media::Media::new(),
+            apps_rescan: None,
+        }
+    }
+
+    /// Re-read the `.desktop` directories on a background thread so apps
+    /// installed since the daemon started show up without a restart. The
+    /// result is swapped in by [`Self::poll_apps_rescan`] once nothing on
+    /// screen holds indices into the current set. A scan is a few
+    /// milliseconds of file IO — cheap per open, but not something the
+    /// render thread should block on.
+    pub fn kick_apps_rescan(&mut self) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("apps-rescan".into())
+            .spawn(move || {
+                let _ = tx.send(AppsProvider::scan());
+            })
+            .is_ok();
+        if spawned {
+            self.apps_rescan = Some(rx);
+        }
+    }
+
+    /// Swap in a finished rescan. Search results and all-apps mode
+    /// reference entries by index, so the swap waits until neither is
+    /// live; pins, the dock and the hidden list key on `app_id` and are
+    /// unaffected. Cheap `try_recv`, safe to call every loop iteration.
+    pub fn poll_apps_rescan(&mut self) {
+        let Some(rx) = &self.apps_rescan else {
+            return;
+        };
+        let indices_live = !self.search.input.is_empty()
+            || self.search.all_apps_mode
+            || self.context_menu.is_some();
+        if indices_live {
+            return;
+        }
+        match rx.try_recv() {
+            Ok(apps) => {
+                self.apps = apps;
+                self.apps_rescan = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.apps_rescan = None;
+            }
         }
     }
 
@@ -652,6 +702,34 @@ pub(crate) fn spawn_detached(exec: &str) {
             reap(child);
         }
         Err(e) => tracing::error!(?e, exec = %exec, "spawn failed"),
+    }
+}
+
+/// Like [`spawn_detached`] but with an explicit argv — no shell. Same
+/// null stdio + `setsid` + reaper, so the child neither inherits our log
+/// file as its stdout/stderr nor lingers as a zombie in our process
+/// table until the daemon restarts.
+pub(crate) fn spawn_detached_args(cmd: &str, args: &[&str]) {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    match unsafe {
+        Command::new(cmd)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            })
+            .spawn()
+    } {
+        Ok(child) => {
+            tracing::info!(pid = child.id(), cmd, ?args, "spawned");
+            reap(child);
+        }
+        Err(e) => tracing::error!(?e, cmd, ?args, "spawn failed"),
     }
 }
 

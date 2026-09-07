@@ -119,7 +119,14 @@ struct OutputData {
 struct WlState {
     running: bool,
     configured: bool,
+    /// The compositor has consumed our last commit (frame callback
+    /// fired). Together with `input_dirty` this paces rendering to the
+    /// output's refresh rate instead of the raw input-event rate.
     frame_done: bool,
+    /// Something happened that needs a redraw: pointer / keyboard
+    /// input, a configure, a synthesized key repeat, a freshly loaded
+    /// icon. Cleared when a frame is rendered.
+    input_dirty: bool,
     width: u32,
     height: u32,
     /// All advertised outputs, keyed by wl_output proxy id.
@@ -184,6 +191,7 @@ impl WlState {
             running: true,
             configured: false,
             frame_done: true,
+            input_dirty: true,
             width: 0,
             height: 0,
             outputs: HashMap::new(),
@@ -269,10 +277,24 @@ impl WlState {
 
 // ── Entry point ─────────────────────────────────────────────────────────────
 
-/// Idle tick when the panel is hidden — bound the loop to ~20Hz so we
-/// promptly notice IPC commands without burning CPU. When animating
-/// or visible we use the wayland frame callback for pacing.
+/// Poll timeout while the panel is visible but nothing is animating —
+/// ~20Hz so worker-pushed state (audio / wifi / bluetooth events) and
+/// hover tracking stay responsive even with zero input.
 const IDLE_TICK: Duration = Duration::from_millis(50);
+
+/// Poll timeout while the panel is hidden. The poll also watches the
+/// IPC fd, so a Super-tap wakes us instantly regardless of this value;
+/// it only bounds how quickly we notice worker-side wake-ups (an
+/// incoming Bluetooth file / pair request) and pump the hidden
+/// terminal's PTY. 4 Hz instead of the old 20 Hz sleep loop.
+const HIDDEN_TICK: Duration = Duration::from_millis(250);
+
+/// How long we wait for the compositor's frame callback before treating
+/// it as lost and rendering anyway. Callbacks normally arrive within
+/// one refresh interval (≤ 17 ms at 60 Hz); if the surface is not being
+/// painted (covered, unmapped mid-transition) we still want input to
+/// produce a frame promptly rather than after the 500 ms fallback.
+const CALLBACK_GRACE: Duration = Duration::from_millis(50);
 
 /// Safety-net upper bound on the active-path poll. When something is
 /// animating we expect frame callbacks at refresh rate, so this only
@@ -495,7 +517,10 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
     // Wall-clock of the last completed render. Used to guarantee a
     // fallback redraw every FALLBACK_REDRAW_INTERVAL while visible so
     // timer-driven UI (clock minutes, sysmon graphs, battery %) stays
-    // current even when the user isn't touching the panel.
+    // current even when the user isn't touching the panel. It doubles
+    // as the reference for CALLBACK_GRACE: every render commits with a
+    // frame request, so "rendered long ago and still no callback"
+    // means the callback is not coming.
     let mut last_render = std::time::Instant::now();
 
     if initial_visible {
@@ -520,6 +545,11 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
             wl.held_key = None;
             wl.last_repeat = None;
             wl.pending_key = None;
+            // A frame callback requested just before we hid may never
+            // have fired (the surface was unmapped) — don't let that
+            // stale "waiting" state gate the first frame of the open.
+            wl.frame_done = true;
+            wl.input_dirty = true;
             match cmd {
                 Cmd::Toggle => app.toggle(),
                 Cmd::Show => app.open(),
@@ -527,8 +557,22 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
             }
         }
 
-        // Refresh toplevel snapshot for the renderer.
-        app.toplevels = wl.toplevels.toplevels();
+        // Let the worker threads know whether anything is on screen so
+        // they can drop to their slow hidden cadence (or burst-poll on
+        // show). Opening / Closing count as visible.
+        crate::panel_visible::set(!app.is_hidden());
+
+        // Refresh the toplevel snapshot for the renderer — only when the
+        // tracker saw a change, not on every iteration.
+        if wl.toplevels.take_dirty() {
+            app.toplevels = wl.toplevels.toplevels();
+            wl.input_dirty = true;
+        }
+
+        // Swap in a freshly rescanned .desktop set if the background
+        // rescan kicked off by the last open has landed (and nothing on
+        // screen is holding indices into the old set).
+        app.poll_apps_rescan();
 
         // Dispatch any pending window actions queued by click handlers.
         if !app.window_actions.is_empty() {
@@ -569,12 +613,27 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         }
 
         // Pump wayland events. When the panel is animating or visible we
-        // expect frame callbacks → blocking_dispatch wakes promptly. When
-        // hidden we use a short idle tick so IPC stays responsive.
+        // expect frame callbacks → the poll wakes promptly. When hidden
+        // we park in the same poll with a longer timeout.
         if app.is_hidden() {
-            // Non-blocking dispatch: process anything queued, then sleep.
-            event_queue.dispatch_pending(&mut wl)?;
-            event_queue.flush()?;
+            // Tell the sysmon worker to stop walking /proc. This is the
+            // only place `tick(false)` can run: the active path below is
+            // never reached while hidden, and the Closing → Hidden
+            // transition `continue`s before it too. (The worker used to
+            // keep scanning every process — and spawning `nvidia-smi`
+            // every 1.5 s — forever after the first open.)
+            app.controls.sysmon.tick(false);
+
+            // Park on the wayland fd + IPC fd. `dispatch_pending` alone
+            // never reads the socket, so the old sleep loop left every
+            // event the compositor sent while we were hidden sitting
+            // unread in the kernel buffer — and, worse, could not notice
+            // a dead connection (compositor restart) until the next
+            // Super-tap tried to commit, which then killed the daemon
+            // and ate that tap. Reading here means a dead compositor
+            // ends the daemon within one tick, so the very next tap
+            // starts a fresh one that actually opens.
+            dispatch_with_timeout(&mut event_queue, ipc_fd, &mut wl, Some(HIDDEN_TICK))?;
 
             // While hidden, still tick the bluetooth control so an
             // incoming-file request can wake the panel and switch us
@@ -596,8 +655,6 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
             // long-running commands (e.g. `yay -Syu`) stay current and
             // we don't flood the grid on next open.
             app.terminal.pump();
-
-            std::thread::sleep(IDLE_TICK);
             continue;
         }
 
@@ -631,7 +688,9 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         // sysfs poll, etc.). Both are cheap; rate limiting lives inside
         // each tile's `tick`.
         let was_hidden_before_tick = app.is_hidden();
-        app.tick();
+        if app.tick() {
+            wl.input_dirty = true;
+        }
         // Drain workspace state pushed by the compositor. Cheap (non-blocking
         // socket); skip while hidden since nothing reads the value then.
         app.workspace_ipc.poll();
@@ -690,11 +749,16 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
             app.terminal.ensure_spawned(cols.max(20), rows.max(5));
         }
         // Drain any pending PTY output into the grid so new bytes
-        // appear in the next render.
-        app.terminal.pump();
+        // appear in the next render (and request one — a scrolling
+        // build log shouldn't wait for the 500 ms fallback).
+        if app.terminal.pump() {
+            wl.input_dirty = true;
+        }
 
         // Drain any new snapshot the usage worker has produced.
-        app.usage.pump();
+        if app.usage.pump() {
+            wl.input_dirty = true;
+        }
 
         // Flush any queued PTY input (e.g. from Files "Open in Terminal
         // tab"). Only meaningful once the PTY has been spawned.
@@ -881,22 +945,37 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         // Drag continuations (sliders + notes editor text drag-select).
         handle_drag(&mut wl, &mut app, &mut text);
 
-        // Render gate: render if a wayland event signalled fresh state
-        // (frame_done), OR if FALLBACK_REDRAW_INTERVAL has elapsed
-        // since the last render so timer-driven UI (clock, sysmon)
-        // doesn't go stale while the panel is idle-visible, OR if an
-        // animation is in flight. The last one matters when the
-        // animation was started by something other than a wayland
-        // event (IPC toggle, Esc with a stationary mouse): the screen
-        // is static so no frame callback is pending, and waiting for
-        // the fallback timer froze the first half-second of the
-        // collapse-then-close fold. Rendering commits damage, which
-        // restarts the frame-callback chain at refresh rate.
+        // Upload any icons the background rasterizer finished. A fresh
+        // texture is a visual change, so it counts as dirty.
+        if icon_cache.pump(&gpu, &tex_pass) > 0 {
+            wl.input_dirty = true;
+        }
+
+        // Render gate. Two questions:
+        //
+        //   want: is there anything new to show? Input arrived, an
+        //         animation is in flight, an icon finished loading, or
+        //         the FALLBACK_REDRAW_INTERVAL timer says timer-driven UI
+        //         (clock, sysmon graphs) is due for a refresh.
+        //   can:  has the compositor consumed our previous buffer? Every
+        //         render commits with a frame request, so `frame_done`
+        //         paces us to the output's refresh rate. If the callback
+        //         is overdue (surface not being painted) or the fallback
+        //         timer fired, render anyway so input never stalls.
+        //
+        // Both must hold. A steady panel with no input renders nothing
+        // even though a callback is sitting satisfied; a 1 kHz mouse
+        // sweeping the panel renders once per refresh, not once per
+        // motion event.
         let fallback_due = last_render.elapsed() >= FALLBACK_REDRAW_INTERVAL;
-        if !wl.frame_done && !fallback_due && !app.is_animating() {
+        let callback_overdue = !wl.frame_done && last_render.elapsed() >= CALLBACK_GRACE;
+        let want = wl.input_dirty || app.is_animating() || fallback_due;
+        let can = wl.frame_done || callback_overdue || fallback_due;
+        if !(want && can) {
             continue;
         }
         wl.frame_done = false;
+        wl.input_dirty = false;
         last_render = std::time::Instant::now();
 
         let scale_f = wl.fractional_scale() as f32;

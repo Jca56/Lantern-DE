@@ -21,6 +21,7 @@ mod mini_dock;
 mod notes;
 mod outer_edit;
 mod outer_zones;
+mod panel_visible;
 mod persisted_state;
 mod power;
 mod render;
@@ -36,6 +37,16 @@ mod view_indicator;
 mod workspace_ipc;
 
 fn main() {
+    // zbus (tokio feature) lazily builds one multi-thread tokio runtime
+    // for its blocking API and sizes it to the core count — 28 parked
+    // worker threads on the desktop for a handful of tiny D-Bus calls.
+    // tokio's builder honours this env var when no explicit worker count
+    // is set, so cap it before the first D-Bus call anywhere in the
+    // process. Respect an explicit override from the environment.
+    if std::env::var_os("TOKIO_WORKER_THREADS").is_none() {
+        std::env::set_var("TOKIO_WORKER_THREADS", "2");
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -103,7 +114,10 @@ fn main() {
     let initial_visible = matches!(mode, Mode::Show | Mode::Toggle);
 
     if let Err(e) = layershell::run(sock, initial_visible) {
-        tracing::error!(?e, "command-center daemon crashed");
+        // Display, not Debug: anyhow's Debug output appends a captured
+        // backtrace (RUST_BACKTRACE is set in the session), which turned
+        // every compositor-restart EPIPE into a 30-line dump in the log.
+        tracing::error!(error = %e, "command-center daemon crashed");
         eprintln!("error: {e}");
         ipc::cleanup();
         std::process::exit(1);

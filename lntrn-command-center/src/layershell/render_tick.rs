@@ -274,17 +274,14 @@ pub(super) fn render_frame(
         Err(_) => {}
     }
 
-    // Only pull another frame callback while something is still in
-    // motion. When the panel is settled (steady Visible, no view /
-    // grow / collapse anim, no chat stream) we commit the rendered
-    // buffer and stop scheduling callbacks — the compositor keeps
-    // displaying our last buffer and the daemon parks in poll() until
-    // input arrives, an IPC command fires, or the idle-tick timeout
-    // expires. The main loop's `dispatch_with_timeout` watches both
-    // the wayland fd and the IPC fd so we never miss a wake.
-    if app.is_animating() {
-        surface.frame(&qh, ());
-    }
+    // Always ask for a frame callback with the commit. The main loop's
+    // render gate only re-renders once the compositor has consumed the
+    // previous buffer (`frame_done`), so this is what paces us to the
+    // output's refresh rate instead of the raw input-event rate — with
+    // Mailbox presentation nothing else throttles a 1 kHz mouse. A
+    // settled panel still parks: no input → nothing dirty → no render,
+    // and the one outstanding callback simply fires and waits.
+    surface.frame(&qh, ());
     surface.commit();
 
     // After the close animation finishes, transition to idle. We

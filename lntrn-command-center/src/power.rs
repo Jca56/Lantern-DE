@@ -194,10 +194,12 @@ pub fn draw(
 /// we don't want a failed power command to crash the panel.
 pub fn run(action: PowerAction) {
     let (cmd, args) = action.command();
-    match std::process::Command::new(cmd).args(args).spawn() {
-        Ok(_) => tracing::info!(?action, "spawned power action"),
-        Err(e) => tracing::error!(?action, error = ?e, "failed to spawn power action"),
-    }
+    // Detached spawn: null stdio (the lockscreen's stderr used to land in
+    // our log), its own session, and a reaper — a bare `spawn()` whose
+    // `Child` was dropped left every finished helper as a zombie in our
+    // process table until the daemon restarted.
+    crate::app::spawn_detached_args(cmd, args);
+    tracing::info!(?action, "spawned power action");
 }
 
 // ── Confirm modal ───────────────────────────────────────────────────────────

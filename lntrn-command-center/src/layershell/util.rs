@@ -2,7 +2,7 @@
 //! main `layershell.rs` orchestrates rather than implements every
 //! supporting function inline.
 
-use lntrn_render::{Color, GpuContext, Painter};
+use lntrn_render::GpuContext;
 use wayland_client::protocol::{wl_region, wl_surface};
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
@@ -100,22 +100,22 @@ pub(super) fn set_active_input(
     surface.commit();
 }
 
-/// Hide the surface from the compositor without destroying it. We first
-/// submit a fully-transparent wgpu frame (so any in-flight buffer is
-/// cleanly transparent), then explicitly attach a NULL buffer to the
-/// `wl_surface`. Per Wayland spec, attaching a NULL buffer + committing
-/// unmaps the surface — the compositor stops compositing it and any
-/// "ghost" of the previous visible buffer disappears immediately.
-/// Re-mapping is automatic on the next `attach + commit` with a real
-/// buffer (which wgpu's `present()` does for us when the user reopens).
-pub(super) fn commit_transparent(gpu: &mut GpuContext, surface: &wl_surface::WlSurface) {
-    if let Ok(mut frame) = gpu.begin_frame("CommandCenter:hidden") {
-        let view = frame.view().clone();
-        let mut painter = Painter::new(gpu);
-        painter.clear();
-        painter.render_pass(gpu, frame.encoder_mut(), &view, Color::TRANSPARENT);
-        frame.submit(&gpu.queue);
-    }
+/// Hide the surface from the compositor without destroying it: attach a
+/// NULL buffer and commit. Per Wayland spec that unmaps the surface —
+/// the compositor stops compositing it and any "ghost" of the previous
+/// visible buffer disappears. Re-mapping is automatic on the next
+/// `attach + commit` with a real buffer (which wgpu's `present()` does
+/// for us when the user reopens).
+///
+/// This used to submit one extra fully-transparent wgpu frame first.
+/// That frame is redundant (the close animation's last frame is already
+/// empty) and it raced the NULL attach: on drivers whose Vulkan WSI
+/// presents from a helper thread, the transparent buffer's attach could
+/// land *after* our NULL attach and re-map a fullscreen invisible
+/// surface the compositor then composites forever. The last real frame
+/// was presented a whole loop iteration earlier, so skipping the extra
+/// present is what makes the NULL attach reliably last.
+pub(super) fn commit_transparent(_gpu: &mut GpuContext, surface: &wl_surface::WlSurface) {
     // Detach buffer → tells the compositor to unmap the surface entirely.
     surface.attach(None, 0, 0);
     surface.commit();
