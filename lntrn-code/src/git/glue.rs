@@ -3,6 +3,8 @@
 
 use std::path::Path;
 
+use lntrn_ui::{Shell, ShellRequest};
+
 use crate::app::App;
 use crate::diff_view::{DiffDoc, DiffId};
 use crate::doc::DocId;
@@ -67,4 +69,35 @@ impl App {
         Some(did)
     }
 
+    /// Take in what git answered: status, toasts for what ran, and diffs
+    /// at a commit opened from the history. Returns whether to rebuild.
+    pub(crate) fn git_poll(&mut self, shell: &mut Shell<Self>) -> bool {
+        let mut again = false;
+        if let Some(g) = self.git.as_mut() {
+        again |= g.poll();
+        if let Some(delay) = g.tick(shell.state.now) {
+            shell.state.request_redraw_after(delay);
+        }
+        if let Some((ok, output)) = g.last_output.take() {
+            let msg = if ok { if output.is_empty() { "Done".to_owned() } else { output } } else { format!("git: {output}") };
+            shell.request(self, ShellRequest::Toast(msg));
+        }
+        }
+        // A file at a commit, asked for in the history: a read-only diff.
+        if let Some(g) = self.git.as_mut() {
+        let root = g.root.clone();
+        let diffs = std::mem::take(&mut g.commit_diffs);
+        for d in diffs {
+            let did = crate::diff_view::DiffId(self.next_diff);
+            self.next_diff += 1;
+            let name = std::path::Path::new(&d.rel).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let mut doc = crate::diff_view::DiffDoc::new(did, &format!("{} · {name}", d.short), &root.join(&d.rel), &d.old, d.new, None);
+            doc.read_only = true;
+            self.diffs.push(doc);
+            self.show_diff(shell, did);
+            again = true;
+        }
+        }
+        again
+    }
 }

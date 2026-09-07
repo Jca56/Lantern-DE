@@ -20,6 +20,7 @@ mod editors;
 mod file_ops;
 mod files;
 mod git;
+mod icons;
 mod ide;
 mod json;
 mod lsp;

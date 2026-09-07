@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use lntrn_app::lntrn_render::DrawList;
+use lntrn_app::lntrn_render::{DrawList, ImageHandle};
 use lntrn_math::{Color, Rect, Vec2};
 use lntrn_text::TextStyle;
 use lntrn_ui::{CursorIcon, FILL, Icon, Key, Sense, Ui, icons};
@@ -18,6 +18,8 @@ pub enum Slot {
     Folder,
     /// A file: its extension chip, when it has one.
     File(Option<(String, Color)>),
+    /// An icon from the theme, for a file or a folder.
+    Icon(ImageHandle),
 }
 
 pub struct RowSpec<'a> {
@@ -111,6 +113,11 @@ pub fn tree_row(ui: &mut Ui, spec: &RowSpec) -> RowOut {
         Slot::Folder => icons::draw(&mut *ui.draw, slot, Icon::Folder, dim, m.px(1.5)),
         Slot::File(Some((ext, color))) => chip(ui, slot, ext, *color),
         Slot::File(None) => {}
+        Slot::Icon(h) => {
+            let side = icon_px(m.widget_h) as f64;
+            let r = Rect::from_center_size(slot.center(), Vec2::splat(side));
+            ui.draw.image(Rect::from_min_size(Vec2::new(r.min.x.round(), r.min.y.round()), Vec2::splat(side)), *h, 0.0, Color::WHITE);
+        }
     }
     x += slot_w + m.gap;
     if let Some(c) = spec.git {
@@ -193,6 +200,11 @@ pub fn ext_of(path: &Path, colors: &SyntaxColors, dim: Color) -> Option<(String,
         Language::Plain => dim,
     };
     Some((ext, color))
+}
+
+/// The side of a theme icon in a row of `widget_h`, in whole pixels.
+pub fn icon_px(widget_h: f64) -> u32 {
+    (widget_h * 0.78).round().max(8.0) as u32
 }
 
 pub fn small_style(ui: &Ui) -> TextStyle {

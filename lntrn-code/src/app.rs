@@ -72,6 +72,12 @@ pub struct App {
     pub last_editor_focus: Option<WidgetId>,
     /// The terminal last right-clicked: what its menu acts on.
     pub context_term: Option<crate::term::TermId>,
+    /// File and folder icons from the theme on disk.
+    pub icons: crate::icons::IconTheme,
+    /// The changed file last right-clicked in the Git editor: its path,
+    /// its path in the repository, whether it was in the staged list,
+    /// whether it is untracked.
+    pub context_change: Option<(PathBuf, String, bool, bool)>,
     /// The tab last right-clicked and the tabs beside it in its area.
     pub context_tab: Option<(DocId, Vec<DocId>)>,
     /// The document and caret line the Preview last scrolled to.
@@ -145,6 +151,8 @@ impl App {
             last_editor_focus: None,
             context_term: None,
             context_tab: None,
+            context_change: None,
+            icons: crate::icons::IconTheme::load(),
             preview_follow: None,
             pending_clipboard_wanted: false,
             prefs_tab: 0,
@@ -261,6 +269,7 @@ impl App {
     /// folders again and the quick-open list is rebuilt.
     pub(crate) fn refresh_tree(&mut self) {
         self.tree.refresh();
+        self.icons.forget_names();
         if let Some(p) = self.project.as_mut() {
             p.refresh();
         }
@@ -557,9 +566,10 @@ impl AppHost for App {
         self.waker = Some(waker);
     }
 
-    fn after_rebuild(&mut self, _gpu: &Gpu, _images: &mut Images, shell: &mut Shell<Self>) -> bool {
+    fn after_rebuild(&mut self, gpu: &Gpu, images: &mut Images, shell: &mut Shell<Self>) -> bool {
         self.ide_sync_roots();
         let mut again = self.ide_pump(shell);
+        again |= self.icons.upload(gpu, images);
         again |= self.ide_settle_writes(shell);
         again |= self.watch_pump(shell);
         again |= self.search.poll();
@@ -571,16 +581,7 @@ impl AppHost for App {
         for t in &mut self.terminals {
             again |= t.pump(now);
         }
-        if let Some(g) = self.git.as_mut() {
-            again |= g.poll();
-            if let Some(delay) = g.tick(shell.state.now) {
-                shell.state.request_redraw_after(delay);
-            }
-            if let Some((ok, output)) = g.last_output.take() {
-                let msg = if ok { if output.is_empty() { "Done".to_owned() } else { output } } else { format!("git: {output}") };
-                shell.request(self, ShellRequest::Toast(msg));
-            }
-        }
+        again |= self.git_poll(shell);
         again |= self.apply_pending(shell);
         if shell.title.is_none() {
             self.reap_terminals(shell);

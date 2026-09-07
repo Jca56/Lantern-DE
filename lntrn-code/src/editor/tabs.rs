@@ -3,12 +3,15 @@
 //! click to close, a right click for the tab's menu, a drag to put a tab
 //! somewhere else in the row.
 
-use lntrn_math::{Rect, Vec2};
+use lntrn_app::lntrn_render::ImageHandle;
+use lntrn_math::{Color, Rect, Vec2};
 use lntrn_ui::{CursorIcon, FILL, Sense, Ui};
 
 pub struct TabItem<'a> {
     pub label: &'a str,
     pub dirty: bool,
+    /// The file's icon from the theme, drawn before the label.
+    pub icon: Option<ImageHandle>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -41,7 +44,8 @@ pub fn draw_tabs(ui: &mut Ui, items: &[TabItem], current: usize) -> TabsOut {
     let h = strip.height();
     ui.fill(strip, theme.panel.bottom);
     ui.draw.hline(strip.min.x, strip.max.x, strip.max.y - m.border, m.border, theme.border_dark);
-    let widths: Vec<f64> = items.iter().map(|t| ui.measure(t.label, &style) + m.pad * 2.0 + close_w + m.gap).collect();
+    let icon_side = (m.widget_h * 0.7).round();
+    let widths: Vec<f64> = items.iter().map(|t| ui.measure(t.label, &style) + m.pad * 2.0 + close_w + m.gap + if t.icon.is_some() { icon_side + m.gap } else { 0.0 }).collect();
     let total: f64 = widths.iter().sum::<f64>() + m.gap * (items.len() as f64 - 1.0);
     let avail = strip.width() - m.border * 2.0;
     let scale = if total > avail { avail / total } else { 1.0 };
@@ -76,7 +80,13 @@ pub fn draw_tabs(ui: &mut Ui, items: &[TabItem], current: usize) -> TabsOut {
             ui.fill(rect, base);
         }
         let ink = if is_current { theme.text } else { theme.text_dim };
-        let label_rect = Rect::new(Vec2::new(rect.min.x + m.pad, rect.min.y), Vec2::new(cr.min.x - m.gap, rect.max.y));
+        let mut label_x = rect.min.x + m.pad;
+        if let Some(h) = item.icon {
+            let ir = Rect::from_min_size(Vec2::new(label_x.round(), (rect.center().y - icon_side * 0.5).round()), Vec2::splat(icon_side));
+            ui.draw.image(ir, h, 0.0, Color::WHITE);
+            label_x += icon_side + m.gap;
+        }
+        let label_rect = Rect::new(Vec2::new(label_x, rect.min.y), Vec2::new(cr.min.x - m.gap, rect.max.y));
         ui.text_in_rect(item.label, &style, label_rect, ink);
         // The close mark: a dot while unsaved, a cross otherwise (and on hover).
         if cres.hovered {

@@ -2416,6 +2416,7 @@ dependencies = [
  "lntrn-core",
  "lntrn-math",
  "lntrn-props",
+ "lntrn-svg",
  "lntrn-text 0.2.0",
  "lntrn-ui 0.2.0",
 ]
@@ -2861,6 +2862,13 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "lntrn-theme",
+]
+
+[[package]]
+name = "lntrn-svg"
+version = "0.2.0"
+dependencies = [
+ "lntrn-image",
 ]
 
 [[package]]

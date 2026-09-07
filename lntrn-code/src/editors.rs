@@ -1,7 +1,8 @@
 //! What each editor kind draws in its header and body: the dispatch the
 //! shell calls through `Host`.
 
-use lntrn_ui::{AreaCx, ShellRequest, Ui, prefs};
+use lntrn_props::Value;
+use lntrn_ui::{Action, Dialog, AreaCx, ShellRequest, Ui, prefs};
 
 use crate::app::{APP_ID, App, Editor, Goto, TabState};
 use crate::diff_view::{draw_diff, draw_diff_header};
@@ -42,19 +43,19 @@ impl App {
                 // The file being edited shows in the tree when it changes.
                 if self.focus_doc != self.last_revealed {
                     self.last_revealed = self.focus_doc;
-                    self.tree.deselected = false;
-                    if let Some(p) = self.focus_doc().and_then(|d| d.path.clone())
-                        && p.starts_with(&self.tree.root)
-                    {
-                        self.tree.reveal = Some(p);
+                    if let Some(p) = self.focus_doc().and_then(|d| d.path.clone()) {
+                        if p.starts_with(&self.tree.root) {
+                            self.tree.reveal = Some(p.clone());
+                        }
+                        self.tree.selected = Some(p);
                     }
                 }
-                let selected = self.focus_doc().and_then(|d| d.path.clone());
                 let counts = self.problem_counts();
-                let git = self.git.as_ref().map(|g| (g, &self.settings.git));
-                let project = self.project.as_ref().map(|p| p.root.as_path());
-                let cxf = FilesCx { selected: selected.as_deref(), git, colors: &self.settings.colors, problems: &counts, project };
-                let out = draw_files(ui, &mut self.tree, cxf);
+                let App { icons, tree, git: git_state, settings, project: proj, .. } = self;
+                let git = git_state.as_ref().map(|g| (g, &settings.git));
+                let project = proj.as_ref().map(|p| p.root.as_path());
+                let cxf = FilesCx { icons, git, colors: &settings.colors, problems: &counts, project };
+                let out = draw_files(ui, tree, cxf);
                 if let Some(p) = out.open {
                     self.pending_paths.push(p);
                     cx.rebuild();
@@ -66,10 +67,13 @@ impl App {
                 if let Some(at) = out.menu_at {
                     cx.request(ShellRequest::MenuAt("files".to_owned(), at));
                 }
+                // A drop asks first: a slip of the mouse must not move a folder.
                 if let Some((from, to_dir)) = out.moved {
-                    let msg = self.move_path(&from, &to_dir);
-                    cx.host().toast(&msg);
-                    cx.rebuild();
+                    let name = from.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    let what = if from.is_dir() { "the folder" } else { "the file" };
+                    let dest = to_dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| to_dir.display().to_string());
+                    let action = Action::new(crate::commands::MOVE_PATH).with("from", Value::Str(from.display().to_string())).with("to", Value::Str(to_dir.display().to_string()));
+                    cx.request(ShellRequest::Dialog(Dialog::confirm("Move", &format!("Move {what} **{name}** into **{dest}**?"), "Move", action)));
                 }
                 if let Some((path, name)) = out.renamed {
                     let msg = self.rename_path(&path, &name);
@@ -148,6 +152,31 @@ impl App {
                 }
                 for args in out.run {
                     g.run(args);
+                }
+                if out.push {
+                    g.push();
+                }
+                if out.pull {
+                    g.pull();
+                }
+                if out.fetch {
+                    g.fetch();
+                }
+                if let Some(b) = out.checkout {
+                    g.checkout(&b);
+                }
+                if out.more_log {
+                    g.more_log();
+                }
+                if let Some((hash, short, rel)) = out.commit_diff {
+                    g.request_commit_diff(&hash, &short, &rel);
+                }
+                if out.new_branch {
+                    self.run_action(&Action::new(crate::commands::GIT_BRANCH_NEW), &mut cx.host());
+                }
+                if let Some((c, staged, at)) = out.context {
+                    self.context_change = Some((c.path.clone(), c.rel.clone(), staged, c.status.untracked()));
+                    cx.request(ShellRequest::MenuAt("git-file".to_owned(), at));
                 }
                 if let Some(p) = out.open {
                     self.pending_paths.push(p);

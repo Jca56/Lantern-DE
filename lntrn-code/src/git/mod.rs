@@ -1,18 +1,22 @@
-//! Git for the project: the branch, what `git status` says about every
-//! file, the HEAD copy of a file for the gutter ([`gutter`]), and staging
-//! and committing from the Git editor ([`view`]). Everything is asked of
-//! the git binary on a thread, so the editor never waits on it.
+//! Git for the project: the branch and its upstream, what `git status`
+//! says about every file, the HEAD copy of a file for the gutter
+//! ([`gutter`]), the log ([`history`]), and staging, committing, pushing,
+//! pulling and branching from the Git editor ([`view`]). Everything is
+//! asked of the git binary on a thread, so the editor never waits on it.
 
 pub mod glue;
 pub mod gutter;
+pub mod history;
 pub mod view;
+mod worker;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use lntrn_app::Waker;
+
+use worker::worker;
 
 /// A file's two status letters from `git status --porcelain`: the index
 /// (staged) side and the work-tree side.
@@ -55,6 +59,33 @@ pub struct Change {
     pub status: FileStatus,
 }
 
+/// One commit of the log.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Commit {
+    pub hash: String,
+    pub short: String,
+    pub author: String,
+    /// Relative, as git words it: "3 days ago".
+    pub when: String,
+    pub subject: String,
+}
+
+/// A file a commit touched: its status letter and path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommitFile {
+    pub letter: char,
+    pub rel: String,
+}
+
+/// A file's text before and after a commit, for a diff view.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommitDiff {
+    pub short: String,
+    pub rel: String,
+    pub old: String,
+    pub new: String,
+}
+
 /// The HEAD copy of a file, once asked for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Blob {
@@ -64,17 +95,37 @@ pub enum Blob {
 }
 
 enum Req {
-    Status,
+    Status { log: usize },
     Blob(PathBuf, String),
     /// Run git with these arguments, then report status again.
-    Run(Vec<String>),
+    Run(Vec<String>, usize),
+    CommitFiles(String),
+    CommitDiff { hash: String, short: String, rel: String },
+}
+
+/// Everything one status round finds out.
+struct Snapshot {
+    branch: String,
+    head: String,
+    upstream: Option<String>,
+    ahead: usize,
+    behind: usize,
+    branches: Vec<String>,
+    log: Vec<Commit>,
+    changes: Vec<(String, FileStatus)>,
+    error: Option<String>,
 }
 
 enum Reply {
-    Status { branch: String, head: String, changes: Vec<(String, FileStatus)>, error: Option<String> },
+    Status(Box<Snapshot>),
     Blob { path: PathBuf, head: String, blob: Blob },
     Ran { ok: bool, output: String },
+    CommitFiles { hash: String, files: Vec<CommitFile> },
+    CommitDiff(Box<CommitDiff>),
 }
+
+/// Commits the log shows at first; *More* adds as many again.
+pub const LOG_PAGE: usize = 60;
 
 /// Status is asked again this long after the last change on disk.
 const REFRESH_DELAY: f64 = 0.5;
@@ -84,6 +135,24 @@ pub struct Git {
     pub branch: String,
     /// The HEAD commit, or empty in a repository with none.
     pub head: String,
+    /// The branch this one tracks, if any (`origin/main`).
+    pub upstream: Option<String>,
+    /// Commits here not there, and there not here.
+    pub ahead: usize,
+    pub behind: usize,
+    pub branches: Vec<String>,
+    pub log: Vec<Commit>,
+    pub log_limit: usize,
+    /// The files of commits opened in the history, by hash.
+    pub commit_files: HashMap<String, Vec<CommitFile>>,
+    /// The commit opened in the history.
+    pub expanded: Option<String>,
+    /// Diffs at a commit that arrived, for the app to show.
+    pub commit_diffs: Vec<CommitDiff>,
+    /// What the worker is doing, for the header: "Pushing…".
+    pub op: Option<&'static str>,
+    /// Which tab the editor shows: changes or history.
+    pub tab: usize,
     pub changes: Vec<Change>,
     by_path: HashMap<PathBuf, FileStatus>,
     /// Folders with a change somewhere inside.
@@ -123,7 +192,37 @@ impl Git {
         let (worker_tx, rx) = channel::<Reply>();
         let wroot = root.clone();
         let _ = std::thread::Builder::new().name("git".into()).spawn(move || worker(&wroot, &worker_rx, &worker_tx, waker.as_ref()));
-        let mut g = Self { root, branch: String::new(), head: String::new(), changes: Vec::new(), by_path: HashMap::new(), dirty_dirs: HashSet::new(), blobs: HashMap::new(), asked: HashSet::new(), status_pending: false, refresh_at: None, busy: false, last_error: None, last_output: None, version: 0, commit_message: String::new(), commit_pending: false, tx, rx };
+        let mut g = Self {
+            root,
+            branch: String::new(),
+            head: String::new(),
+            upstream: None,
+            ahead: 0,
+            behind: 0,
+            branches: Vec::new(),
+            log: Vec::new(),
+            log_limit: LOG_PAGE,
+            commit_files: HashMap::new(),
+            expanded: None,
+            commit_diffs: Vec::new(),
+            op: None,
+            tab: 0,
+            changes: Vec::new(),
+            by_path: HashMap::new(),
+            dirty_dirs: HashSet::new(),
+            blobs: HashMap::new(),
+            asked: HashSet::new(),
+            status_pending: false,
+            refresh_at: None,
+            busy: false,
+            last_error: None,
+            last_output: None,
+            version: 0,
+            commit_message: String::new(),
+            commit_pending: false,
+            tx,
+            rx,
+        };
         g.request_status();
         g
     }
@@ -135,7 +234,14 @@ impl Git {
         self.status_pending = true;
         self.busy = true;
         self.refresh_at = None;
-        let _ = self.tx.send(Req::Status);
+        let _ = self.tx.send(Req::Status { log: self.log_limit });
+    }
+
+    /// Show more of the log.
+    pub fn more_log(&mut self) {
+        self.log_limit += LOG_PAGE;
+        self.status_pending = false;
+        self.request_status();
     }
 
     /// Something changed on disk: status is asked again once it settles.
@@ -158,7 +264,52 @@ impl Git {
     pub fn run(&mut self, args: Vec<String>) {
         self.busy = true;
         self.status_pending = true;
-        let _ = self.tx.send(Req::Run(args));
+        let _ = self.tx.send(Req::Run(args, self.log_limit));
+    }
+
+    /// A slow command with a word for the header while it runs.
+    fn run_op(&mut self, op: &'static str, args: &[&str]) {
+        self.op = Some(op);
+        self.run(args.iter().map(|s| (*s).to_owned()).collect());
+    }
+
+    /// Push the branch; the first push sets its upstream on `origin`.
+    pub fn push(&mut self) {
+        if self.upstream.is_some() {
+            self.run_op("Pushing…", &["push", "-q"]);
+        } else {
+            let b = self.branch.clone();
+            self.op = Some("Pushing…");
+            self.run(vec!["push".into(), "-q".into(), "-u".into(), "origin".into(), b]);
+        }
+    }
+
+    pub fn pull(&mut self) {
+        self.run_op("Pulling…", &["pull", "-q"]);
+    }
+
+    pub fn fetch(&mut self) {
+        self.run_op("Fetching…", &["fetch", "-q", "--all", "--prune"]);
+    }
+
+    pub fn checkout(&mut self, branch: &str) {
+        self.op = Some("Switching…");
+        self.run(vec!["checkout".into(), "-q".into(), branch.to_owned()]);
+    }
+
+    /// The files of a commit, asked for once; `None` while on their way.
+    pub fn files_of(&mut self, hash: &str) -> Option<&[CommitFile]> {
+        if !self.commit_files.contains_key(hash) {
+            self.commit_files.insert(hash.to_owned(), Vec::new());
+            let _ = self.tx.send(Req::CommitFiles(hash.to_owned()));
+            return None;
+        }
+        self.commit_files.get(hash).map(Vec::as_slice)
+    }
+
+    /// Ask for a file's text before and after a commit.
+    pub fn request_commit_diff(&mut self, hash: &str, short: &str, rel: &str) {
+        let _ = self.tx.send(Req::CommitDiff { hash: hash.to_owned(), short: short.to_owned(), rel: rel.to_owned() });
     }
 
     pub fn status_of(&self, path: &Path) -> Option<FileStatus> {
@@ -192,15 +343,22 @@ impl Git {
         while let Ok(r) = self.rx.try_recv() {
             changed = true;
             match r {
-                Reply::Status { branch, head, changes, error } => {
+                Reply::Status(snap) => {
+                    let Snapshot { branch, head, upstream, ahead, behind, branches, log, changes, error } = *snap;
                     self.status_pending = false;
                     self.busy = false;
+                    self.op = None;
                     self.last_error = error;
                     if head != self.head {
                         self.asked.clear();
                     }
                     self.branch = branch;
                     self.head = head;
+                    self.upstream = upstream;
+                    self.ahead = ahead;
+                    self.behind = behind;
+                    self.branches = branches;
+                    self.log = log;
                     self.changes = changes.into_iter().map(|(rel, status)| Change { path: self.root.join(&rel), rel, status }).collect();
                     self.by_path = self.changes.iter().map(|c| (c.path.clone(), c.status)).collect();
                     self.dirty_dirs.clear();
@@ -225,6 +383,11 @@ impl Git {
                     }
                     self.last_output = Some((ok, output));
                 }
+                Reply::CommitFiles { hash, files } => {
+                    self.commit_files.insert(hash, files);
+                    self.version += 1;
+                }
+                Reply::CommitDiff(d) => self.commit_diffs.push(*d),
             }
         }
         changed
@@ -239,91 +402,11 @@ impl Git {
     }
 }
 
-/// A git command in `root`. Optional locks are off so a status never
-/// rewrites the index: the app watches `.git`, and its own status
-/// touching the index would ask for another status, forever.
-fn command(root: &Path) -> Command {
-    let mut c = Command::new("git");
-    c.arg("-C").arg(root).env("GIT_OPTIONAL_LOCKS", "0");
-    c
-}
-
-fn git(root: &Path, args: &[&str]) -> Result<String, String> {
-    let out = command(root).args(args).output().map_err(|e| format!("git: {e}"))?;
-    let text = String::from_utf8_lossy(&out.stdout).into_owned();
-    if out.status.success() { Ok(text) } else { Err(String::from_utf8_lossy(&out.stderr).trim().to_owned()) }
-}
-
-/// `git status --porcelain=v1 -z`: `XY path\0`, renames adding `\0old`.
-fn parse_status(raw: &[u8]) -> Vec<(String, FileStatus)> {
-    let mut out = Vec::new();
-    let mut parts = raw.split(|b| *b == 0).peekable();
-    while let Some(entry) = parts.next() {
-        if entry.len() < 4 {
-            continue;
-        }
-        let index = entry[0] as char;
-        let work = entry[1] as char;
-        let rel = String::from_utf8_lossy(&entry[3..]).into_owned();
-        if index == 'R' || index == 'C' || work == 'R' || work == 'C' {
-            parts.next();
-        }
-        out.push((rel, FileStatus { index, work }));
-    }
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    out
-}
-
-fn status_reply(root: &Path) -> Reply {
-    let branch = match git(root, &["symbolic-ref", "--short", "-q", "HEAD"]) {
-        Ok(b) if !b.trim().is_empty() => b.trim().to_owned(),
-        _ => git(root, &["rev-parse", "--short", "HEAD"]).map(|h| format!("detached {}", h.trim())).unwrap_or_else(|_| "no commits".to_owned()),
-    };
-    let head = git(root, &["rev-parse", "HEAD"]).map(|h| h.trim().to_owned()).unwrap_or_default();
-    let out = command(root).args(["status", "--porcelain=v1", "-z", "--untracked-files=all"]).output();
-    let (changes, error) = match out {
-        Ok(o) if o.status.success() => (parse_status(&o.stdout), None),
-        Ok(o) => (Vec::new(), Some(String::from_utf8_lossy(&o.stderr).trim().to_owned())),
-        Err(e) => (Vec::new(), Some(format!("git: {e}"))),
-    };
-    Reply::Status { branch, head, changes, error }
-}
-
-fn worker(root: &Path, rx: &Receiver<Req>, tx: &Sender<Reply>, waker: Option<&Waker>) {
-    while let Ok(req) = rx.recv() {
-        let replies = match req {
-            Req::Status => vec![status_reply(root)],
-            Req::Blob(path, rel) => {
-                let head = git(root, &["rev-parse", "HEAD"]).map(|h| h.trim().to_owned()).unwrap_or_default();
-                let blob = match git(root, &["show", &format!("HEAD:{rel}")]) {
-                    Ok(t) => Blob::Text(t),
-                    Err(_) => Blob::Missing,
-                };
-                vec![Reply::Blob { path, head, blob }]
-            }
-            Req::Run(args) => {
-                let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-                let ran = match git(root, &refs) {
-                    Ok(o) => Reply::Ran { ok: true, output: o.trim().to_owned() },
-                    Err(e) => Reply::Ran { ok: false, output: e },
-                };
-                vec![ran, status_reply(root)]
-            }
-        };
-        for r in replies {
-            if tx.send(r).is_err() {
-                return;
-            }
-        }
-        if let Some(w) = waker {
-            w.wake();
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use super::worker::parse_status;
     use super::*;
+    use std::process::Command;
 
     #[test]
     fn parses_porcelain() {
@@ -371,6 +454,17 @@ mod tests {
         wait(&mut g, &|g| !g.status_pending);
         assert_eq!(g.branch, "main");
         assert_eq!(g.head.len(), 40);
+        assert_eq!(g.branches, vec!["main"]);
+        assert!(g.upstream.is_none() && g.ahead == 0);
+        assert_eq!(g.log.len(), 1);
+        assert_eq!((g.log[0].subject.as_str(), g.log[0].author.as_str(), g.log[0].hash.len()), ("first", "t", 40));
+        let first = g.log[0].hash.clone();
+        assert!(g.files_of(&first).is_none(), "asked for");
+        wait(&mut g, &|g| g.commit_files.get(&first).is_some_and(|f| !f.is_empty()));
+        assert_eq!(g.commit_files[&first], vec![CommitFile { letter: 'A', rel: "src/a.rs".into() }]);
+        g.request_commit_diff(&first, &g.log[0].short.clone(), "src/a.rs");
+        wait(&mut g, &|g| !g.commit_diffs.is_empty());
+        assert_eq!((g.commit_diffs[0].old.as_str(), g.commit_diffs[0].new.as_str()), ("", "one\ntwo\n"));
         let rels: Vec<&str> = g.changes.iter().map(|c| c.rel.as_str()).collect();
         assert_eq!(rels, vec!["new.txt", "src/a.rs"]);
         assert!(g.dirty_dirs.contains(&dir.join("src")));

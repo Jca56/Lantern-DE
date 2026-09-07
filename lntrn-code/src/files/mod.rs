@@ -1,5 +1,6 @@
 //! The Files editor: a folder as a tree — folders read when first
-//! opened, a click to open a file, a double click to go into a folder,
+//! opened, a click to pick a file and a double click to open it, a
+//! double click to go into a folder,
 //! a right click for file operations, a drag to move a file into a
 //! folder, a name typed in the row itself to rename or create. The tree
 //! goes anywhere: a path bar of crumbs climbs, its end takes a typed
@@ -21,7 +22,8 @@ use crate::git::view::letter_color;
 use crate::settings::{GitColors, SyntaxColors};
 use crate::syntax::Language;
 pub use project::Project;
-use row::{RowSpec, Slot, ext_of, house, tree_row};
+use row::{RowSpec, Slot, ext_of, house, icon_px, tree_row};
+use crate::icons::IconTheme;
 
 /// Line counts under this are green, under [`LINES_RED`] orange, then red.
 pub const LINES_ORANGE: usize = 500;
@@ -39,9 +41,6 @@ pub struct Entry {
     pub is_dir: bool,
 }
 
-/// A second click on the selected file this long after the first (but
-/// not a double click) starts a rename.
-const SLOW_CLICK: (f64, f64) = (0.35, 1.5);
 /// The pointer has to move this far from the press before a drag begins.
 const DRAG_START: f64 = 8.0;
 
@@ -96,16 +95,15 @@ pub struct Tree {
     /// A path to show on the next draw: the folders above it open, and
     /// the tree scrolls to its row.
     pub reveal: Option<PathBuf>,
-    last_click: Option<(PathBuf, f64)>,
     /// The typed path while the path bar is a field.
     path_text: String,
     /// Put the path bar into typing mode on the next draw; `true` when a
     /// folder typed becomes the project (Open Folder…).
     pub edit_path: Option<bool>,
     typing_for_project: bool,
-    /// A click on empty space: the open file's row loses its highlight
-    /// until a row is clicked or another file takes focus.
-    pub deselected: bool,
+    /// The file whose row is lit: the one clicked last, or the one the
+    /// editor focused last. A click on empty space clears it.
+    pub selected: Option<PathBuf>,
     /// What was right-clicked last: an entry and whether it is a folder,
     /// or `None` for empty space. The panel's menu reads it.
     pub context: Option<(PathBuf, bool)>,
@@ -117,7 +115,7 @@ pub struct Tree {
 impl Tree {
     pub fn new(root: PathBuf) -> Self {
         let root = if root.is_dir() { root } else { home() };
-        Self { root, listings: HashMap::new(), show_hidden: false, editing: None, edit_focus: false, drag: None, selected_dir: None, reveal: None, last_click: None, path_text: String::new(), edit_path: None, typing_for_project: false, deselected: false, context: None, line_counts: HashMap::new() }
+        Self { root, listings: HashMap::new(), show_hidden: false, editing: None, edit_focus: false, drag: None, selected_dir: None, reveal: None, path_text: String::new(), edit_path: None, typing_for_project: false, selected: None, context: None, line_counts: HashMap::new() }
     }
 
     /// Show `dir` as the root.
@@ -229,7 +227,8 @@ pub type ProblemCounts = HashMap<PathBuf, (usize, usize)>;
 
 /// What the tree draws with besides itself.
 pub struct FilesCx<'a> {
-    pub selected: Option<&'a Path>,
+    /// The icon theme, asked for a file's or folder's picture.
+    pub icons: &'a mut IconTheme,
     pub git: Option<(&'a Git, &'a GitColors)>,
     pub colors: &'a SyntaxColors,
     pub problems: &'a ProblemCounts,
@@ -237,7 +236,7 @@ pub struct FilesCx<'a> {
     pub project: Option<&'a Path>,
 }
 
-pub fn draw_files(ui: &mut Ui, t: &mut Tree, cx: FilesCx) -> FilesOut {
+pub fn draw_files(ui: &mut Ui, t: &mut Tree, mut cx: FilesCx) -> FilesOut {
     let mut out = FilesOut::default();
     let m = ui.m;
     let mut go: Option<PathBuf> = None;
@@ -296,7 +295,7 @@ pub fn draw_files(ui: &mut Ui, t: &mut Tree, cx: FilesCx) -> FilesOut {
     let mut targets: Vec<(Rect, PathBuf)> = Vec::new();
     let mut shown: Option<Rect> = None;
     ui.scroll_area("tree", None, |ui| {
-        draw_dir(ui, t, &root, &cx, &mut out, &mut targets, &mut go, &mut shown);
+        draw_dir(ui, t, &root, &mut cx, &mut out, &mut targets, &mut go, &mut shown);
     });
     // The revealed row comes into view.
     if let Some(r) = shown {
@@ -311,7 +310,7 @@ pub fn draw_files(ui: &mut Ui, t: &mut Tree, cx: FilesCx) -> FilesOut {
     // opens the panel's menu with no entry picked.
     let on_row = |p: Vec2| targets.iter().any(|(r, _)| r.contains(p));
     if ui.state.pressed && panel.contains(ui.state.press_pos) && !on_row(ui.state.press_pos) {
-        t.deselected = true;
+        t.selected = None;
         t.selected_dir = None;
         ui.state.request_rebuild = true;
     }
@@ -358,7 +357,7 @@ pub fn draw_files(ui: &mut Ui, t: &mut Tree, cx: FilesCx) -> FilesOut {
 /// The rows of one folder. `targets` collects where a drag can land,
 /// `go` a folder to make the root, `shown` the revealed file's row.
 #[allow(clippy::too_many_arguments)]
-fn draw_dir(ui: &mut Ui, t: &mut Tree, dir: &Path, cx: &FilesCx, out: &mut FilesOut, targets: &mut Vec<(Rect, PathBuf)>, go: &mut Option<PathBuf>, shown: &mut Option<Rect>) {
+fn draw_dir(ui: &mut Ui, t: &mut Tree, dir: &Path, cx: &mut FilesCx, out: &mut FilesOut, targets: &mut Vec<(Rect, PathBuf)>, go: &mut Option<PathBuf>, shown: &mut Option<Rect>) {
     // A new entry being named goes first.
     if let Some(Editing::Create { dir: d, is_dir, .. }) = &t.editing
         && d == dir
@@ -378,7 +377,7 @@ fn draw_dir(ui: &mut Ui, t: &mut Tree, dir: &Path, cx: &FilesCx, out: &mut Files
     }
     let pointer = ui.state.pointer;
     let right = ui.state.right_pressed;
-    let now = ui.state.now;
+
     let dim = ui.theme.text_dim;
     let dragging = t.drag.as_ref().is_some_and(|d| d.started);
     let up = t.root.parent().map(Path::to_path_buf);
@@ -405,11 +404,11 @@ fn draw_dir(ui: &mut Ui, t: &mut Tree, dir: &Path, cx: &FilesCx, out: &mut Files
             // Marks show on a closed folder for what is inside it.
             let git = cx.git.filter(|(g, _)| !open_now && g.dirty_dirs.contains(&e.path)).map(|_| dim);
             let (errors, warnings) = if open_now { (0, 0) } else { (errors, warnings) };
-            let spec = RowSpec { label: &e.name, selected: false, branch: Some(false), flat: false, slot: Slot::Folder, git, errors, warnings, dim: false, lines: None };
+            let slot = cx.icons.icon(&e.path, true, &t.root, icon_px(ui.m.widget_h)).map_or(Slot::Folder, Slot::Icon);
+            let spec = RowSpec { label: &e.name, selected: false, branch: Some(false), flat: false, slot, git, errors, warnings, dim: false, lines: None };
             let r = tree_row(ui, &spec);
             if r.clicked {
                 t.selected_dir = Some(e.path.clone());
-                t.deselected = false;
             }
             if r.double_clicked {
                 *go = Some(e.path.clone());
@@ -434,8 +433,12 @@ fn draw_dir(ui: &mut Ui, t: &mut Tree, dir: &Path, cx: &FilesCx, out: &mut Files
         } else {
             let git = cx.git.and_then(|(g, colors)| g.status_of(&e.path).map(|st| letter_color(st.letter(), colors)));
             let lines = if counts_lines(&e.path) { t.line_count(&e.path).map(|n| (n, lines_color(n, ui, cx))) } else { None };
-            let selected = !t.deselected && cx.selected == Some(e.path.as_path());
-            let spec = RowSpec { label: &e.name, selected, branch: None, flat: false, slot: Slot::File(ext_of(&e.path, cx.colors, dim)), git, errors, warnings, dim: false, lines };
+            let selected = t.selected.as_deref() == Some(e.path.as_path());
+            let slot = match cx.icons.icon(&e.path, false, &t.root, icon_px(ui.m.widget_h)) {
+                Some(h) => Slot::Icon(h),
+                None => Slot::File(ext_of(&e.path, cx.colors, dim)),
+            };
+            let spec = RowSpec { label: &e.name, selected, branch: None, flat: false, slot, git, errors, warnings, dim: false, lines };
             let r = tree_row(ui, &spec);
             if t.reveal.as_deref() == Some(e.path.as_path()) {
                 *shown = Some(r.rect);
@@ -444,17 +447,16 @@ fn draw_dir(ui: &mut Ui, t: &mut Tree, dir: &Path, cx: &FilesCx, out: &mut Files
             if ui.state.pressed && r.rect.contains(ui.state.press_pos) && t.drag.is_none() {
                 t.drag = Some(Drag { path: e.path.clone(), name: e.name.clone(), started: false });
             }
-            if r.clicked && !dragging {
+            // One click picks the file; a double click renames it (the
+            // double click comes with the press, the click with the release).
+            if r.double_clicked && !dragging {
+                t.selected = Some(e.path.clone());
+                t.start_rename(&e.path);
+                ui.state.request_rebuild = true;
+            } else if r.clicked && !dragging {
                 t.selected_dir = Some(dir.to_path_buf());
-                t.deselected = false;
-                let slow_again = cx.selected == Some(e.path.as_path()) && t.last_click.as_ref().is_some_and(|(q, at)| *q == e.path && (SLOW_CLICK.0..SLOW_CLICK.1).contains(&(now - at)));
-                if slow_again && !r.double_clicked {
-                    t.start_rename(&e.path);
-                    t.last_click = None;
-                } else {
-                    out.open = Some(e.path.clone());
-                    t.last_click = Some((e.path.clone(), now));
-                }
+                t.selected = Some(e.path.clone());
+                ui.state.request_rebuild = true;
             }
             if r.back {
                 *go = up.clone();

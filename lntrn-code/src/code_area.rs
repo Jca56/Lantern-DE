@@ -23,7 +23,14 @@ impl App {
             return false;
         }
         st.current = st.current.min(st.docs.len() - 1);
-        let items: Vec<TabItem> = st.docs.iter().filter_map(|id| self.docs.iter().find(|d| d.id == *id)).map(|d| TabItem { label: &d.title, dirty: d.is_dirty() }).collect();
+        let icon_px = (ui.m.widget_h * 0.7).round().max(8.0) as u32;
+        let root = self.tree.root.clone();
+        let mut icons_of: Vec<Option<_>> = Vec::new();
+        for id in st.docs.iter() {
+            let path = self.docs.iter().find(|d| d.id == *id).and_then(|d| d.path.clone());
+            icons_of.push(path.and_then(|p| self.icons.icon(&p, false, &root, icon_px)));
+        }
+        let items: Vec<TabItem> = st.docs.iter().zip(icons_of).filter_map(|(id, icon)| self.docs.iter().find(|d| d.id == *id).map(|d| TabItem { label: &d.title, dirty: d.is_dirty(), icon })).collect();
         let tabs = draw_tabs(ui, &items, st.current);
         let editor_focus = ui.id("code");
         if let Some(i) = tabs.select {

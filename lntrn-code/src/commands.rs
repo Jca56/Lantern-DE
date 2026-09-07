@@ -94,6 +94,23 @@ pub const TAB_CLOSE_ALL: &str = "tab.close_all";
 pub const TAB_CLOSE_SAVED: &str = "tab.close_saved";
 /// Show the right-clicked tab's file in the tree.
 pub const TAB_REVEAL: &str = "tab.reveal";
+/// Show the file in the `path` arg in the tree.
+pub const REVEAL_PATH: &str = "files.reveal";
+/// Move the `from` arg into the folder in the `to` arg (after a confirm).
+pub const MOVE_PATH: &str = "files.move";
+/// Ask for a name, then make and switch to the branch.
+pub const GIT_BRANCH_NEW: &str = "git.branch_new";
+pub const GIT_BRANCH_NEW_GO: &str = "git.branch_new_go";
+/// Ask, then throw away the right-clicked file's changes.
+pub const GIT_DISCARD_ASK: &str = "git.discard_ask";
+pub const GIT_DISCARD: &str = "git.discard";
+/// Stage or unstage the right-clicked file; diff it against HEAD.
+pub const GIT_STAGE: &str = "git.stage";
+pub const GIT_UNSTAGE: &str = "git.unstage";
+pub const GIT_DIFF: &str = "git.diff";
+pub const GIT_PUSH: &str = "git.push";
+pub const GIT_PULL: &str = "git.pull";
+pub const GIT_FETCH: &str = "git.fetch";
 /// Show the folder in the `path` arg as the tree's root.
 pub const GO: &str = "files.go";
 /// Make the folder in the `path` arg the project.
@@ -107,7 +124,7 @@ pub const IDE_SEND: &str = "ide.send_selection";
 pub const OPEN_PREFIX: &str = "open:";
 
 /// The palette's commands: (action id, label).
-pub const PALETTE: [(&str, &str); 52] = [
+pub const PALETTE: [(&str, &str); 56] = [
     (GOTO_DEF, "Go to Definition"),
     (MOVE_LINE_UP, "Move Line Up"),
     (MOVE_LINE_DOWN, "Move Line Down"),
@@ -119,6 +136,10 @@ pub const PALETTE: [(&str, &str); 52] = [
     (ZOOM_OUT, "Zoom Out"),
     (ZOOM_RESET, "Reset Zoom"),
     (TOGGLE_WRAP, "Toggle Wrap Prose"),
+    (GIT_PUSH, "Git: Push"),
+    (GIT_PULL, "Git: Pull"),
+    (GIT_FETCH, "Git: Fetch"),
+    (GIT_BRANCH_NEW, "Git: New Branch…"),
     (RENAME_SYMBOL, "Rename Symbol…"),
     (REFERENCES, "Find References"),
     (CODE_ACTIONS, "Code Actions…"),
@@ -383,12 +404,29 @@ fn tab_menu(app: &App) -> Menu {
     Menu::new(doc.map_or("Tab", |d| d.title.as_str()), items)
 }
 
+/// The right-click menu of a changed file in the Git editor.
+fn git_file_menu(app: &App) -> Menu {
+    let item = |label: &str, id: &str| MenuItem::new(label, Action::new(id));
+    let Some((path, rel, staged, untracked)) = app.context_change.clone() else {
+        return Menu::new("File", Vec::new());
+    };
+    let with_path = |id: &str, p: &Path| Action::new(id).with("path", Value::Str(p.display().to_string()));
+    let mut items = vec![MenuItem::new("Open", with_path(OPENED, &path)), item("Diff Against HEAD", GIT_DIFF).enabled(!untracked), MenuItem::separator()];
+    items.push(if staged { item("Unstage", GIT_UNSTAGE) } else { item("Stage", GIT_STAGE) });
+    items.push(item(if untracked { "Delete Untracked File…" } else { "Discard Changes…" }, GIT_DISCARD_ASK));
+    items.push(MenuItem::separator());
+    items.push(MenuItem::new("Copy Path", with_path(COPY_PATH, &path)));
+    items.push(MenuItem::new("Reveal in Files", with_path(REVEAL_PATH, &path)));
+    Menu::new(&rel, items)
+}
+
 pub fn menu(app: &App, name: &str) -> Option<Menu> {
     let doc = app.focus_doc();
     let has_doc = doc.is_some();
     let item = |label: &str, id: &str| MenuItem::new(label, Action::new(id));
     Some(match name {
         "tab" => tab_menu(app),
+        "git-file" => git_file_menu(app),
         "files" => files_menu(app, false),
         "files-context" => files_menu(app, true),
         "editor-context" => editor_context_menu(app),

@@ -28,6 +28,26 @@ fn arg_i64(action: &Action, name: &str) -> Option<i64> {
     }
 }
 
+impl App {
+    /// Show `p` in the tree: the tree goes to its folder when it is not
+    /// under the root, the folders above it open, its row scrolls into view.
+    fn reveal_path(&mut self, p: PathBuf) {
+        if !p.starts_with(&self.tree.root)
+            && let Some(dir) = p.parent()
+        {
+            self.tree.go(dir.to_path_buf());
+        }
+        self.tree.reveal = Some(p);
+        self.pending_show.push(Editor::Files);
+    }
+
+    fn git_run(&mut self, args: Vec<String>) {
+        if let Some(g) = self.git.as_mut() {
+            g.run(args);
+        }
+    }
+}
+
 /// `name copy.ext`, then `name copy 2.ext` and on: the first that is free.
 fn duplicate_name(p: &Path) -> Option<PathBuf> {
     let dir = p.parent()?;
@@ -407,13 +427,63 @@ impl App {
             }
             TAB_REVEAL => {
                 if let Some(p) = self.context_tab.as_ref().and_then(|(id, _)| self.doc(*id)).and_then(|d| d.path.clone()) {
-                    if !p.starts_with(&self.tree.root)
-                        && let Some(dir) = p.parent()
-                    {
-                        self.tree.go(dir.to_path_buf());
+                    self.reveal_path(p);
+                }
+            }
+            REVEAL_PATH => self.reveal_path(path()),
+            MOVE_PATH => {
+                if let (Some(from), Some(to)) = (arg_str(action, "from"), arg_str(action, "to")) {
+                    let msg = self.move_path(Path::new(&from), Path::new(&to));
+                    cx.toast(&msg);
+                }
+            }
+            GIT_PUSH | GIT_PULL | GIT_FETCH => {
+                if let Some(g) = self.git.as_mut() {
+                    match action.id.as_str() {
+                        GIT_PUSH => g.push(),
+                        GIT_PULL => g.pull(),
+                        _ => g.fetch(),
                     }
-                    self.tree.reveal = Some(p);
-                    self.pending_show.push(Editor::Files);
+                    self.pending_show.push(Editor::Git);
+                }
+            }
+            GIT_BRANCH_NEW => {
+                if self.git.is_some() {
+                    self.dialog_text.clear();
+                    self.dialog_with_field("New Branch", "Made from the current commit and switched to.", "Create", GIT_BRANCH_NEW_GO, "text", cx);
+                }
+            }
+            GIT_BRANCH_NEW_GO => {
+                let name = self.dialog_text.trim().replace(' ', "-");
+                if !name.is_empty()
+                    && let Some(g) = self.git.as_mut()
+                {
+                    g.run(vec!["checkout".into(), "-q".into(), "-b".into(), name]);
+                }
+            }
+            GIT_STAGE | GIT_UNSTAGE | GIT_DIFF => {
+                let Some((path, rel, _, _)) = self.context_change.clone() else {
+                    return;
+                };
+                match action.id.as_str() {
+                    GIT_STAGE => self.git_run(vec!["add".into(), "--".into(), rel]),
+                    GIT_UNSTAGE => self.git_run(vec!["reset".into(), "-q".into(), "--".into(), rel]),
+                    _ => self.pending_git_diff = Some(path),
+                }
+            }
+            GIT_DISCARD_ASK => {
+                if let Some((_, rel, _, untracked)) = self.context_change.clone() {
+                    let body = if untracked { format!("Delete the untracked file **{rel}**? This cannot be undone.") } else { format!("Throw away every change to **{rel}** since the last commit? This cannot be undone.") };
+                    cx.request(ShellRequest::Dialog(Dialog::confirm("Discard", &body, "Discard", Action::new(GIT_DISCARD))));
+                }
+            }
+            GIT_DISCARD => {
+                if let Some((_, rel, _, untracked)) = self.context_change.clone() {
+                    if untracked {
+                        self.git_run(vec!["clean".into(), "-f".into(), "-q".into(), "--".into(), rel]);
+                    } else {
+                        self.git_run(vec!["checkout".into(), "-q".into(), "HEAD".into(), "--".into(), rel]);
+                    }
                 }
             }
             TERM_COPY | TERM_PASTE | TERM_CLEAR | TERM_RESTART => {
