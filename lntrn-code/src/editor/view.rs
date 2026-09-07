@@ -181,9 +181,34 @@ pub fn draw_doc(ui: &mut Ui, doc: &mut Doc, settings: &Settings, opts: ViewOpts)
             let line = layout.line_at(row);
             doc.region_at(line).map(|_| line)
         };
+        // The chips after folded headers, where a press toggles the fold
+        // (and moves no caret, starts no selection).
+        let ts = ui.text_style();
+        let chip_of = |ui: &mut Ui, row: usize, line: usize, cells: usize, end: usize| -> Rect {
+            let label = format!("⋯ {} lines", end - line);
+            let x = text_x0 + (cells as f64 + 1.0) * cell_w;
+            let w = ui.measure(&label, &ts) + m.pad * 2.0;
+            let y = g.row_top(row);
+            Rect::new(Vec2::new(x, y + m.px(2.0)), Vec2::new(x + w, y + lh - m.px(2.0)))
+        };
+        let chip_press: Option<usize> = if r.pressed {
+            (first_row..last_row).find_map(|row| {
+                let line = layout.line_at(row);
+                let end = layout.folded_end(line)?;
+                chip_of(ui, row, line, doc.line_cells(line), end).contains(ui.state.press_pos).then_some(line)
+            })
+        } else {
+            None
+        };
+        // A press that toggled a fold is not the start of a selection.
+        let fold_press = ui.state.floats(clicks, [-10.0; 4])[1] > 0.0;
+        if ui.state.released {
+            ui.state.floats(clicks, [-10.0; 4])[1] = 0.0;
+        }
         if r.pressed {
-            if let Some(line) = fold_hit(ui.state.press_pos) {
+            if let Some(line) = fold_hit(ui.state.press_pos).or(chip_press) {
                 doc.toggle_fold(line);
+                ui.state.floats(clicks, [-10.0; 4])[1] = 1.0;
                 ui.state.request_rebuild = true;
             } else {
                 let p = hit(doc, &layout, &wrap, ui.state.pointer, origin, gutter_w, cell_w, lh);
@@ -199,7 +224,7 @@ pub fn draw_doc(ui: &mut Ui, doc: &mut Doc, settings: &Settings, opts: ViewOpts)
                 out.clicked = true;
             }
             ui.state.request_rebuild = true;
-        } else if r.dragging && now - last_double >= TRIPLE_CLICK {
+        } else if r.dragging && !fold_press && now - last_double >= TRIPLE_CLICK {
             let p = hit(doc, &layout, &wrap, vp.clamp_point(ui.state.pointer), origin, gutter_w, cell_w, lh);
             if p != doc.cursor {
                 doc.set_cursor(p, true);
@@ -264,15 +289,9 @@ pub fn draw_doc(ui: &mut Ui, doc: &mut Doc, settings: &Settings, opts: ViewOpts)
             if let Some(end) = layout.folded_end(line) {
                 // A folded header: a chip after its text says how much is hidden.
                 let label = format!("⋯ {} lines", end - line);
-                let x = text_x0 + (doc.line_cells(line) as f64 + 1.0) * cell_w;
-                let w = ui.measure(&label, &ts) + m.pad * 2.0;
-                let chip = Rect::new(Vec2::new(x, y + m.px(2.0)), Vec2::new(x + w, y + lh - m.px(2.0)));
+                let chip = chip_of(ui, row, line, doc.line_cells(line), end);
                 ui.raised(chip, theme.widget, false);
                 ui.text_centered(&label, &ts, chip, theme.text_dim);
-                if ui.state.pressed && chip.contains(ui.state.press_pos) {
-                    doc.toggle_fold(line);
-                    ui.state.request_rebuild = true;
-                }
             }
             let whole = doc.line(line);
             // A wrapped row shows a slice of its line, hanging in under the indent.

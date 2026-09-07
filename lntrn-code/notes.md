@@ -29,4 +29,4 @@
 
 # 
 
-When I unfold a heading in a .md file it automatically highlights everything below but only sometimes. Most of the time but not every single time. I would like it to not highlight anything, just open/close. And I can't write anything outside the last heading, without First making another heading. What if it stopped at `---` as well to mark the end of that section? 
+When I unfold a heading in a .md file it automatically highlights everything below but only sometimes. Most of the time but not every single time. I would like it to not highlight anything, just open/close. And I can't type anything outside the last heading, without First making another heading. The last heading essentially owns everything below it. How would you fix that so it knows where to stop?
