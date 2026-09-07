@@ -13,6 +13,7 @@ use crate::doc::Doc;
 use crate::editor::decor::{self, DiagMark, Grid};
 use crate::editor::fold::{self, Layout};
 use crate::editor::lsp_ui::{self, Geom, LspOut, LspUi};
+use crate::editor::minimap::{self, MapIn};
 use crate::editor::wrap::Wrap;
 use crate::editor::{cell_metrics, code_style, input, ops};
 use crate::git::gutter::LineMark;
@@ -112,7 +113,8 @@ pub fn draw_doc(ui: &mut Ui, doc: &mut Doc, settings: &Settings, opts: ViewOpts)
     let foldable = !scan.regions.is_empty();
     let digits = n.to_string().len().max(2);
     let gutter_w = ((digits + if foldable { 3 } else { 2 }) as f64 * cell_w).round();
-    let text_w = (inner_w - gutter_w).max(cell_w);
+    let map_w = if settings.minimap { m.px(minimap::WIDTH).round() } else { 0.0 };
+    let text_w = (inner_w - gutter_w - map_w).max(cell_w);
     // ---- soft wrap: prose breaks at the view's width ----
     let lang = doc.lang();
     let wrapping = settings.wrap_prose && matches!(lang, Language::Markdown | Language::Plain);
@@ -156,7 +158,6 @@ pub fn draw_doc(ui: &mut Ui, doc: &mut Doc, settings: &Settings, opts: ViewOpts)
     ui.scroll_area_2d("code", None, content_w, |ui, view| {
         let vp = view.viewport;
         let theme = ui.theme;
-        ui.draw.rect(vp, theme.field);
         let r = ui.interact(id, vp, Sense::FOCUS);
         let focused = ui.focusable(id, vp);
         out.focused = focused;
@@ -230,7 +231,7 @@ pub fn draw_doc(ui: &mut Ui, doc: &mut Doc, settings: &Settings, opts: ViewOpts)
         // ---- what shows ----
         let sel = doc.selection();
         let cur = doc.cursor;
-        let text_clip = Rect::new(Vec2::new(vp.min.x + gutter_w, vp.min.y), vp.max);
+        let text_clip = Rect::new(Vec2::new(vp.min.x + gutter_w, vp.min.y), Vec2::new(vp.max.x - map_w, vp.max.y));
         ui.draw.push_clip(text_clip);
         if highlight_line && sel.is_empty() && g.shown(cur.line) {
             let y = g.pos_y(cur.line, cur.col);
@@ -353,7 +354,6 @@ pub fn draw_doc(ui: &mut Ui, doc: &mut Doc, settings: &Settings, opts: ViewOpts)
         }
         ui.draw.pop_clip();
         // ---- the gutter, fixed while the text scrolls sideways ----
-        ui.draw.rect(gutter, theme.field);
         ui.draw.vline(gutter.max.x - m.border, vp.min.y, vp.max.y, m.border, theme.border_light.fade(0.35));
         let right = gutter.max.x - cell_w * if foldable { 2.2 } else { 1.0 };
         for row in first_row..last_row {
@@ -390,6 +390,15 @@ pub fn draw_doc(ui: &mut Ui, doc: &mut Doc, settings: &Settings, opts: ViewOpts)
         }
         decor::git_marks(ui, &g, gutter, opts.git, &settings.git);
         decor::diag_dots(ui, &g, gutter, opts.diags);
+        // ---- the minimap, fixed at the right ----
+        if map_w > 0.0 {
+            let strip = Rect::new(Vec2::new(vp.max.x - map_w, vp.min.y), vp.max);
+            let mi = MapIn { strip, layout: &layout, first_row, last_row, lh, scroll_y: view.offset.y, content_h: rows as f64 * lh + lh + m.gap, view_h: vp.height() };
+            if let Some(y) = minimap::draw_minimap(ui, doc, colors, mi) {
+                ui.state.scroll(id).offset.y = y;
+                ui.state.request_rebuild = true;
+            }
+        }
         if let Some(i) = hover_mark {
             decor::diag_panel(ui, &g, opts.diags, i);
         }

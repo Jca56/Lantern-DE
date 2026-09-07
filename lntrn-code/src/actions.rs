@@ -280,6 +280,10 @@ impl App {
                 self.settings.wrap_prose = !self.settings.wrap_prose;
                 self.settings.save(crate::app::APP_ID);
             }
+            TOGGLE_MINIMAP => {
+                self.settings.minimap = !self.settings.minimap;
+                self.settings.save(crate::app::APP_ID);
+            }
             NEXT_FILE => self.pending_cycle = Some(1),
             PREV_FILE => self.pending_cycle = Some(-1),
             RENAME_SYMBOL => {

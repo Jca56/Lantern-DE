@@ -326,6 +326,11 @@ impl App {
         if let Some(d) = &git_dir {
             wanted.insert(d.clone());
         }
+        // The desktop's settings: the window follows its opacity live (U037).
+        let config_dir = lantern_config_dir().filter(|d| d.is_dir());
+        if let Some(d) = &config_dir {
+            wanted.insert(d.clone());
+        }
         watcher.retain(|p| wanted.contains(p));
         for dir in &wanted {
             watcher.watch(dir);
@@ -334,6 +339,12 @@ impl App {
         let now = shell.state.now;
         for c in watcher.poll() {
             again = true;
+            if config_dir.as_deref() == Some(c.dir.as_path()) {
+                if c.name.as_deref() == Some("lantern.toml") {
+                    shell.opacity = window_opacity();
+                }
+                continue;
+            }
             let in_git = git_dir.as_deref() == Some(c.dir.as_path());
             // Lock files come and go with every git command; they say nothing.
             if in_git && c.name.as_deref().is_some_and(|n| n.ends_with(".lock")) {
@@ -483,6 +494,12 @@ impl Host for App {
 
     /// The side panels draw at the Panel Scale setting, so a thin tree
     /// fits beside big code.
+    /// The code view and the terminal paint their bodies edge to edge
+    /// themselves, one layer, so translucency does not stack (U037).
+    fn paints_body(&self, editor: Editor) -> bool {
+        matches!(editor, Editor::Code | Editor::Terminal)
+    }
+
     fn editor_scale(&self, editor: Editor) -> f64 {
         match editor {
             Editor::Files | Editor::Git | Editor::Search | Editor::Problems => self.settings.panel_scale,
@@ -593,3 +610,28 @@ impl AppHost for App {
     }
 }
 
+/// Where the desktop keeps its settings.
+pub(crate) fn lantern_config_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".lantern/config"))
+}
+
+/// The desktop's `[windows].background_opacity` from
+/// `~/.lantern/config/lantern.toml`, or 1.0: the one setting every
+/// Lantern window follows.
+pub(crate) fn window_opacity() -> f64 {
+    let Some(dir) = lantern_config_dir() else { return 1.0 };
+    let Ok(text) = std::fs::read_to_string(dir.join("lantern.toml")) else { return 1.0 };
+    let mut in_windows = false;
+    for line in text.lines() {
+        let l = line.trim();
+        if l.starts_with('[') {
+            in_windows = l == "[windows]";
+        } else if in_windows
+            && let Some((k, v)) = l.split_once('=')
+            && k.trim() == "background_opacity"
+        {
+            return v.trim().parse::<f64>().map_or(1.0, |o| o.clamp(0.05, 1.0));
+        }
+    }
+    1.0
+}

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use lntrn_math::{Color, Rect, Vec2};
 use lntrn_text::GlyphQuad;
-use lntrn_ui::{CursorIcon, FILL, Sense, Ui};
+use lntrn_ui::{CursorIcon, FILL, Icon, Sense, Ui};
 
 use super::grid::{BOLD, DIM, HIDDEN, INVERSE, ITALIC, STRIKE, Style, TermColor, UNDERLINE};
 use super::{Terminal, input, links};
@@ -84,6 +84,9 @@ pub fn draw_terminal(ui: &mut Ui, term: &mut Terminal, settings: &Settings, area
     let theme = ui.theme;
     let style = code_style(ui, settings);
     let (cell_w, lh) = cell_metrics(ui, &style);
+    // The body edge to edge, once, under the find bar and the screen (U037).
+    ui.draw.rect(ui.clip(), settings.terminal.background.fade(ui.state.opacity));
+    search_bar(ui, term);
     let rect = ui.alloc(Vec2::new(FILL, ui.remaining_height().max(lh * 2.0)));
     let inner = rect.shrink(m.pad);
     let cols = ((inner.width() / cell_w).floor() as usize).max(2);
@@ -91,6 +94,11 @@ pub fn draw_terminal(ui: &mut Ui, term: &mut Terminal, settings: &Settings, area
     term.resize(cols, rows);
     let now = ui.state.now;
     term.pump(now);
+    if let Some(mut s) = term.search.take() {
+        s.refresh(term);
+        s.scroll_to_current(&mut term.grid);
+        term.search = Some(s);
+    }
 
     let r = ui.interact(id, rect, Sense::FOCUS);
     let focused = ui.focusable(id, rect);
@@ -194,7 +202,6 @@ pub fn draw_terminal(ui: &mut Ui, term: &mut Terminal, settings: &Settings, area
     // ---- draw ----
     let fg_default = settings.terminal.text;
     let bg_default = settings.terminal.background;
-    ui.draw.rect(rect, bg_default);
     ui.draw.push_clip(rect);
     let g = &term.grid;
     let mut quads: Vec<GlyphQuad> = Vec::new();
@@ -300,6 +307,21 @@ pub fn draw_terminal(ui: &mut Ui, term: &mut Terminal, settings: &Settings, area
             ui.draw.stroke_rect(crect, m.border, 0.0, theme.accent);
         }
     }
+    // Find hits: every one on screen marked, the current one boxed.
+    if let Some(s) = &term.search {
+        let current = s.current();
+        for y in 0..rows {
+            let abs = g.abs_row(y);
+            for hit in s.matches.iter().filter(|h| h.0 == abs) {
+                let hr = Rect::from_min_size(Vec2::new(inner.min.x + hit.1 as f64 * cell_w, inner.min.y + y as f64 * lh), Vec2::new(hit.2 as f64 * cell_w, lh));
+                let is_current = current == Some(*hit);
+                ui.draw.rounded_rect(hr, m.radius * 0.4, theme.accent.fade(if is_current { 0.45 } else { 0.22 }));
+                if is_current {
+                    ui.draw.stroke_rect(hr, m.border, m.radius * 0.4, theme.accent);
+                }
+            }
+        }
+    }
     if g.view_offset > 0 {
         let label = format!("↑ {}", g.view_offset);
         let ts = ui.text_style();
@@ -326,4 +348,52 @@ pub fn draw_terminal(ui: &mut Ui, term: &mut Terminal, settings: &Settings, area
     }
     term.grid.bell = false;
     out
+}
+
+/// The find bar above the screen while a search is open: the query,
+/// how many hits and which, previous / next, close. Enter steps forward,
+/// Shift+Enter back, Escape closes and hands focus back to the terminal.
+fn search_bar(ui: &mut Ui, term: &mut Terminal) {
+    let Some(mut s) = term.search.take() else {
+        return;
+    };
+    let field_id = ui.id("find");
+    if std::mem::take(&mut s.focus) {
+        ui.state.focus = Some(field_id);
+        ui.state.focus_visible = false;
+    }
+    let mut close = false;
+    let mut step = 0isize;
+    ui.row(|ui| {
+        let r = ui.text_field_hint("find", &mut s.query, "Find in terminal");
+        if r.committed {
+            step = if ui.state.mods.shift() { -1 } else { 1 };
+            ui.state.focus = Some(field_id);
+        }
+        if r.cancelled {
+            close = true;
+        }
+        let count = if s.matches.is_empty() { if s.query.is_empty() { String::new() } else { "no matches".to_owned() } } else { format!("{} / {}", s.current + 1, s.matches.len()) };
+        ui.label_dim(&count);
+        if ui.icon_button("prev", Icon::Up, false, "Previous (Shift+Enter)").clicked {
+            step = -1;
+        }
+        if ui.icon_button("next", Icon::Down, false, "Next (Enter)").clicked {
+            step = 1;
+        }
+        if ui.button("×").clicked {
+            close = true;
+        }
+    });
+    if step != 0 {
+        s.refresh(&*term);
+        s.step(step);
+        ui.state.request_rebuild = true;
+    }
+    if close {
+        ui.state.focus = Some(ui.id("term"));
+        ui.state.request_rebuild = true;
+    } else {
+        term.search = Some(s);
+    }
 }

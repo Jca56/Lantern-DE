@@ -21,7 +21,7 @@ pub fn handles(k: &KeyPress) -> bool {
         Key::Char(c) => {
             let l = c.to_ascii_lowercase();
             if ctrl && shift {
-                matches!(l, 'v' | 'c')
+                matches!(l, 'v' | 'c' | 'f')
             } else if ctrl {
                 !matches!(l, 'q' | '`')
             } else {
@@ -189,6 +189,12 @@ pub fn handle(ui: &mut Ui, term: &mut Terminal) {
                 let paste_key = (k.mods.ctrl() && k.mods.shift() && matches!(k.key, Key::Char('v' | 'V'))) || (k.mods.shift() && k.key == Key::Insert);
                 if paste_key {
                     want_paste = true;
+                    continue;
+                }
+                if k.mods.ctrl() && k.mods.shift() && matches!(k.key, Key::Char('f' | 'F')) {
+                    let s = term.search.get_or_insert_with(super::search::TermSearch::new);
+                    s.focus = true;
+                    ui.state.request_rebuild = true;
                     continue;
                 }
                 if k.mods.ctrl() && k.mods.shift() && matches!(k.key, Key::Char('c' | 'C')) {

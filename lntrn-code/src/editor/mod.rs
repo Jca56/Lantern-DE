@@ -9,6 +9,7 @@ pub mod find;
 pub mod fold;
 pub mod input;
 pub mod lsp_ui;
+pub mod minimap;
 pub mod ops;
 pub mod prose;
 pub mod tabs;

@@ -85,6 +85,8 @@ props! {
         pub panel_scale: f64 = 0.8 => { id: 15, hard: 0.5..=1.5, step: 0.05, subtype: Factor },
         /// Soft-wrap Markdown and plain text at the view's width.
         pub wrap_prose: bool = true => { id: 16, label: "Wrap Prose" },
+        /// The whole file as a strip of colored dashes at the editor's right.
+        pub minimap: bool = true => { id: 17 },
     }
 }
 

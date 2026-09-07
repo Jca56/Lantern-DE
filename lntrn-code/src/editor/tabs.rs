@@ -22,6 +22,8 @@ pub struct TabsOut {
     pub context: Option<(usize, Vec2)>,
     /// A tab dropped elsewhere in the row: `(from, to)` as indices.
     pub reorder: Option<(usize, usize)>,
+    /// The strip the tabs were drawn in.
+    pub strip: Rect,
 }
 
 /// The pointer has to move this far from the press before a tab drags.
@@ -42,7 +44,8 @@ pub fn draw_tabs(ui: &mut Ui, items: &[TabItem], current: usize) -> TabsOut {
     let row = ui.alloc(Vec2::new(FILL, m.widget_h));
     let strip = Rect::new(Vec2::new(clip.min.x, clip.min.y), Vec2::new(clip.max.x, row.max.y + m.gap));
     let h = strip.height();
-    ui.fill(strip, theme.panel.bottom);
+    out.strip = strip;
+    ui.fill(strip, theme.panel.bottom.fade(ui.state.opacity));
     ui.draw.hline(strip.min.x, strip.max.x, strip.max.y - m.border, m.border, theme.border_dark);
     let icon_side = (m.widget_h * 0.7).round();
     let widths: Vec<f64> = items.iter().map(|t| ui.measure(t.label, &style) + m.pad * 2.0 + close_w + m.gap + if t.icon.is_some() { icon_side + m.gap } else { 0.0 }).collect();

@@ -147,6 +147,6 @@ fn main() {
         shell.screen.swap(0, right);
         shell.screen.active = Some(right);
     }
-    let config = AppConfig { title: "lntrn-code".into(), app_id: APP_ID.into(), mono, ..AppConfig::default() };
+    let config = AppConfig { title: "lntrn-code".into(), app_id: APP_ID.into(), mono, opacity: crate::app::window_opacity(), transparent: true, ..AppConfig::default() };
     run(config, app, shell);
 }

@@ -1,6 +1,7 @@
 //! The Code editor of one area: its file tabs, the find bar when it is
 //! open here, and the document view.
 
+use lntrn_math::{Rect, Vec2};
 use lntrn_ui::{AreaCx, Key, ShellRequest, Ui};
 
 use crate::app::{App, TabState};
@@ -32,6 +33,11 @@ impl App {
         }
         let items: Vec<TabItem> = st.docs.iter().zip(icons_of).filter_map(|(id, icon)| self.docs.iter().find(|d| d.id == *id).map(|d| TabItem { label: &d.title, dirty: d.is_dirty(), icon })).collect();
         let tabs = draw_tabs(ui, &items, st.current);
+        // The body under the tab strip, painted once: the view, gutter and
+        // minimap draw no backgrounds of their own (U037).
+        let body = ui.clip();
+        let under = Rect::new(Vec2::new(body.min.x, tabs.strip.max.y.max(body.min.y)), body.max);
+        ui.draw.rect(under, ui.theme.field.fade(ui.state.opacity));
         let editor_focus = ui.id("code");
         if let Some(i) = tabs.select {
             st.current = i;

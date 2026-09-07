@@ -13,6 +13,7 @@ pub mod links;
 pub mod parser;
 pub mod pty;
 pub mod render;
+pub mod search;
 
 use std::path::PathBuf;
 
@@ -51,11 +52,13 @@ pub struct Terminal {
     pub diags: Diagnostics,
     /// The last path looked up under the pointer and what it meant.
     link_cache: Option<(String, Option<PathBuf>)>,
+    /// Find in this terminal, while its bar is open.
+    pub search: Option<search::TermSearch>,
 }
 
 impl Terminal {
     pub fn new(id: TermId, cwd: Option<PathBuf>, cols: usize, rows: usize, scrollback: usize, waker: Option<Waker>, env: Vec<(String, String)>) -> Self {
-        let mut t = Self { id, pty: None, parser: Parser::new(), grid: Grid::new(cols, rows, scrollback), last_output: 0.0, exited: None, cwd, paste_pending: false, buf: Vec::new(), waker, env, sel_anchor: None, selection: None, diags: Diagnostics::default(), link_cache: None };
+        let mut t = Self { id, pty: None, parser: Parser::new(), grid: Grid::new(cols, rows, scrollback), last_output: 0.0, exited: None, cwd, paste_pending: false, buf: Vec::new(), waker, env, sel_anchor: None, selection: None, diags: Diagnostics::default(), link_cache: None, search: None };
         t.spawn();
         t
     }
