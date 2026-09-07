@@ -59,8 +59,8 @@ pub fn scan(doc: &Doc) -> Scan {
             *end = last;
         }
         // Markdown: a heading folds everything down to the next heading
-        // of its level or above, or to a horizontal rule (`---`), which
-        // ends a section without starting one.
+        // of its level or above, or through a horizontal rule (`---`),
+        // which ends a section without starting one.
         if doc.lang() == Language::Markdown {
             let level = |l: usize| -> Option<usize> {
                 let t = doc.line(l).trim_start();
@@ -76,7 +76,8 @@ pub fn scan(doc: &Doc) -> Scan {
                     continue;
                 };
                 let next = (l + 1..n).find(|&m| is_rule(m) || level(m).is_some_and(|k| k <= lv)).unwrap_or(n);
-                let mut end = next - 1;
+                // The rule that ends a section folds away with it.
+                let mut end = if next < n && is_rule(next) { next } else { next - 1 };
                 while end > l && doc.line(end).trim().is_empty() {
                     end -= 1;
                 }
