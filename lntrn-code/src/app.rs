@@ -72,6 +72,10 @@ pub struct App {
     pub last_editor_focus: Option<WidgetId>,
     /// The terminal last right-clicked: what its menu acts on.
     pub context_term: Option<crate::term::TermId>,
+    /// The tab last right-clicked and the tabs beside it in its area.
+    pub context_tab: Option<(DocId, Vec<DocId>)>,
+    /// The document and caret line the Preview last scrolled to.
+    pub preview_follow: Option<(DocId, usize)>,
     /// A terminal paste asked for: the shell reads the clipboard next frame.
     pub pending_clipboard_wanted: bool,
     pub prefs_tab: usize,
@@ -140,6 +144,8 @@ impl App {
             focus_area: None,
             last_editor_focus: None,
             context_term: None,
+            context_tab: None,
+            preview_follow: None,
             pending_clipboard_wanted: false,
             prefs_tab: 0,
             dialog_text: String::new(),
@@ -429,9 +435,11 @@ impl Host for App {
             (e, w) => format!(" · {e} error{}, {w} warning{}", if e == 1 { "" } else { "s" }, if w == 1 { "" } else { "s" }),
         };
         let server = self.lsp.status().map(|s| format!(" · {s}")).unwrap_or_default();
+        // Prose is measured in words.
+        let words = if d.lang() == crate::syntax::Language::Markdown { format!(" · {} words", d.buffer.lines().iter().map(|l| l.split_whitespace().count()).sum::<usize>()) } else { String::new() };
         // Unix line endings are the norm; only the other kind is worth a word.
         let ending = if d.buffer.ending.label() == "LF" { String::new() } else { format!(" · {}", d.buffer.ending.label()) };
-        format!("{branch}Ln {}, Col {col}{sel} · {}{ending}{claude}{problems}{server}", d.cursor.line + 1, d.lang().name())
+        format!("{branch}Ln {}, Col {col}{sel} · {}{words}{ending}{claude}{problems}{server}", d.cursor.line + 1, d.lang().name())
     }
 
     /// The status goes along the bottom, not beside the title (U036).

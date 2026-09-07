@@ -65,6 +65,8 @@ pub struct TermOut {
     pub open: Option<(PathBuf, Option<usize>, Option<usize>)>,
     /// A right click: where the terminal's menu goes.
     pub context: Option<Vec2>,
+    /// A web address was clicked.
+    pub open_url: Option<String>,
 }
 
 /// The file path under a point of the terminal, if it names a file
@@ -72,7 +74,7 @@ pub struct TermOut {
 fn link_under(term: &mut Terminal, row: usize, col: usize) -> Option<(usize, links::Link, PathBuf)> {
     let cells = Terminal::row_chars(term.grid.viewed_row(row));
     let link = links::link_at(&cells, col)?;
-    let target = term.resolve_link(&link.path)?;
+    let target = if link.is_url() { PathBuf::from(&link.path) } else { term.resolve_link(&link.path)? };
     Some((row, link, target))
 }
 
@@ -93,7 +95,7 @@ pub fn draw_terminal(ui: &mut Ui, term: &mut Terminal, settings: &Settings, area
     let r = ui.interact(id, rect, Sense::FOCUS);
     let focused = ui.focusable(id, rect);
     let popup_blocks = ui.state.popup.is_some_and(|(p, layer)| layer > ui.layer() && p.contains(ui.state.pointer));
-    let mut out = TermOut { focused, open: None, context: None };
+    let mut out = TermOut { focused, open: None, context: None, open_url: None };
     // The pointer as a cell (row, column) and as a boundary between cells.
     let cell_at = |p: Vec2| -> (usize, usize) {
         let y = (((p.y - inner.min.y) / lh).floor().max(0.0) as usize).min(rows - 1);
@@ -115,7 +117,11 @@ pub fn draw_terminal(ui: &mut Ui, term: &mut Terminal, settings: &Settings, area
             if r.clicked && term.selection.is_none() {
                 let (py_, px_) = cell_at(ui.state.press_pos);
                 if link_under(term, py_, px_).is_some_and(|(r2, l2, _)| r2 == row && l2.start == link.start) {
-                    out.open = Some((target, link.line, link.col));
+                    if link.is_url() {
+                        out.open_url = Some(link.path.clone());
+                    } else {
+                        out.open = Some((target, link.line, link.col));
+                    }
                 }
             }
         }

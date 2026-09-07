@@ -34,7 +34,22 @@ impl App {
         if let Some(i) = tabs.close {
             close_id = Some(st.docs[i]);
         }
+        if let Some((from, to)) = tabs.reorder {
+            let current_id = st.docs[st.current];
+            let moved = st.docs.remove(from);
+            st.docs.insert(to.min(st.docs.len()), moved);
+            st.current = st.docs.iter().position(|d| *d == current_id).unwrap_or(0);
+            ui.state.request_rebuild = true;
+        }
+        let mut tab_menu_at = None;
+        if let Some((i, at)) = tabs.context {
+            self.context_tab = Some((st.docs[i], st.docs.clone()));
+            tab_menu_at = Some(at);
+        }
         let doc_id = st.docs[st.current];
+        if let Some(at) = tab_menu_at {
+            cx.request(ShellRequest::MenuAt("tab".to_owned(), at));
+        }
         if active || self.focus_doc.is_none() {
             self.focus_doc = Some(doc_id);
             self.focus_area = Some(area);

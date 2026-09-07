@@ -380,6 +380,42 @@ impl App {
                 }
             }
             TERMINAL_HERE => self.pending_new_terminal = Some(Some(path())),
+            TAB_CLOSE => {
+                if let Some((id, _)) = &self.context_tab {
+                    self.focus_doc = Some(*id);
+                    self.run_action(&Action::new(CLOSE_TAB), cx);
+                }
+            }
+            TAB_CLOSE_OTHERS | TAB_CLOSE_ALL | TAB_CLOSE_SAVED => {
+                let Some((keep, all)) = self.context_tab.clone() else {
+                    return;
+                };
+                let mut kept_dirty = 0;
+                for id in all {
+                    if action.id == TAB_CLOSE_OTHERS && id == keep {
+                        continue;
+                    }
+                    if self.doc(id).is_some_and(|d| d.is_dirty()) {
+                        kept_dirty += 1;
+                        continue;
+                    }
+                    self.pending_close.push(id);
+                }
+                if kept_dirty > 0 {
+                    cx.toast(&format!("{kept_dirty} unsaved file{} left open", if kept_dirty == 1 { "" } else { "s" }));
+                }
+            }
+            TAB_REVEAL => {
+                if let Some(p) = self.context_tab.as_ref().and_then(|(id, _)| self.doc(*id)).and_then(|d| d.path.clone()) {
+                    if !p.starts_with(&self.tree.root)
+                        && let Some(dir) = p.parent()
+                    {
+                        self.tree.go(dir.to_path_buf());
+                    }
+                    self.tree.reveal = Some(p);
+                    self.pending_show.push(Editor::Files);
+                }
+            }
             TERM_COPY | TERM_PASTE | TERM_CLEAR | TERM_RESTART => {
                 let Some(t) = self.context_term.and_then(|id| self.terminals.iter_mut().find(|t| t.id == id)) else {
                     return;

@@ -2,6 +2,7 @@
 //! on a row (`src/app.rs:12:5`, `~/notes.md`, `lib/x.ts(3,4)`), and the
 //! real file it means, looked for from where the shell is and up through
 //! its parents (cargo prints paths from the workspace root, not the cwd).
+//! A web address under the pointer is a link too, for the browser.
 
 use std::path::{Path, PathBuf};
 
@@ -14,6 +15,42 @@ pub struct Link {
     /// 1-based, when the path had `:line` (or `(line,col)`) after it.
     pub line: Option<usize>,
     pub col: Option<usize>,
+}
+
+impl Link {
+    /// A web address rather than a file.
+    pub fn is_url(&self) -> bool {
+        self.path.starts_with("http://") || self.path.starts_with("https://")
+    }
+}
+
+/// A `http(s)://` address spanning cell `col`: up to the next space or
+/// quote, sentence punctuation after it left off.
+fn url_at(cells: &[char], col: usize) -> Option<Link> {
+    if col >= cells.len() {
+        return None;
+    }
+    let stops = |c: char| c.is_whitespace() || "\"'<>`".contains(c);
+    let mut a = col;
+    while a > 0 && !stops(cells[a - 1]) {
+        a -= 1;
+    }
+    let mut b = col;
+    while b < cells.len() && !stops(cells[b]) {
+        b += 1;
+    }
+    let token: String = cells[a..b].iter().collect();
+    let at = token.find("http://").or_else(|| token.find("https://"))?;
+    let start = a + token[..at].chars().count();
+    let mut url = &token[at..];
+    while let Some(t) = url.strip_suffix(['.', ',', ';', ':', ')', ']', '!', '?']) {
+        url = t;
+    }
+    let end = start + url.chars().count();
+    if col < start || col >= end || url.len() < 10 {
+        return None;
+    }
+    Some(Link { start, end, path: url.to_owned(), line: None, col: None })
 }
 
 fn is_path_char(c: char) -> bool {
@@ -98,6 +135,9 @@ fn parse(t: &[char]) -> Option<(String, Option<usize>, Option<usize>, usize)> {
 /// The path-like token spanning cell `col` of a row given one char per
 /// cell.
 pub fn link_at(cells: &[char], col: usize) -> Option<Link> {
+    if let Some(url) = url_at(cells, col) {
+        return Some(url);
+    }
     if col >= cells.len() || !is_token_char(cells[col]) {
         return None;
     }
@@ -194,10 +234,20 @@ mod tests {
     }
 
     #[test]
+    fn web_addresses() {
+        let l = link_at(&chars("see https://x.org/a?b=1&c=2, ok"), 10).unwrap();
+        assert!(l.is_url());
+        assert_eq!(l.path, "https://x.org/a?b=1&c=2", "query kept, comma dropped");
+        assert_eq!((l.start, l.end), (4, 27));
+        assert_eq!(link_at(&chars("(http://a.b/c)"), 3).unwrap().path, "http://a.b/c");
+        assert_eq!(link_at(&chars("see https://x.org/a"), 1), None, "the word before is not the link");
+    }
+
+    #[test]
     fn rejects_non_paths() {
         assert_eq!(link_at(&chars("x = 1.5"), 5), None, "a number");
         assert_eq!(link_at(&chars("hello world"), 2), None, "a word");
-        assert_eq!(link_at(&chars("https://x.org/a"), 2), None, "a scheme");
+        assert_eq!(link_at(&chars("ftp://x.org/a"), 2), None, "not a web scheme");
         assert_eq!(link_at(&chars("  --> src/app.rs"), 30), None, "past the end");
         assert_eq!(link_at(&chars("done."), 4), None);
     }

@@ -87,6 +87,13 @@ pub const TERM_PASTE: &str = "term.paste";
 pub const TERM_CLEAR: &str = "term.clear";
 /// Start the right-clicked terminal's shell again.
 pub const TERM_RESTART: &str = "term.restart";
+/// The right-clicked tab, the others beside it, all of them, the saved ones.
+pub const TAB_CLOSE: &str = "tab.close";
+pub const TAB_CLOSE_OTHERS: &str = "tab.close_others";
+pub const TAB_CLOSE_ALL: &str = "tab.close_all";
+pub const TAB_CLOSE_SAVED: &str = "tab.close_saved";
+/// Show the right-clicked tab's file in the tree.
+pub const TAB_REVEAL: &str = "tab.reveal";
 /// Show the folder in the `path` arg as the tree's root.
 pub const GO: &str = "files.go";
 /// Make the folder in the `path` arg the project.
@@ -354,11 +361,34 @@ fn terminal_menu(app: &App) -> Menu {
     Menu::new(&term.map(|t| t.title()).unwrap_or_else(|| "Terminal".to_owned()), items)
 }
 
+/// The right-click menu of a file tab: closing this one and the others,
+/// and finding the file.
+fn tab_menu(app: &App) -> Menu {
+    let item = |label: &str, id: &str| MenuItem::new(label, Action::new(id));
+    let (doc, others) = match &app.context_tab {
+        Some((id, all)) => (app.doc(*id), all.len() > 1),
+        None => (None, false),
+    };
+    let path = doc.and_then(|d| d.path.clone());
+    let with_path = |id: &str, p: &Path| Action::new(id).with("path", Value::Str(p.display().to_string()));
+    let mut items = vec![item("Close", TAB_CLOSE).hint("Ctrl+W"), item("Close Others", TAB_CLOSE_OTHERS).enabled(others), item("Close Saved", TAB_CLOSE_SAVED), item("Close All", TAB_CLOSE_ALL), MenuItem::separator()];
+    match &path {
+        Some(p) => {
+            items.push(MenuItem::new("Copy Path", with_path(COPY_PATH, p)));
+            items.push(MenuItem::new("Copy Relative Path", with_path(COPY_REL_PATH, p)));
+            items.push(item("Reveal in Files", TAB_REVEAL));
+        }
+        None => items.push(item("Reveal in Files", TAB_REVEAL).disabled()),
+    }
+    Menu::new(doc.map_or("Tab", |d| d.title.as_str()), items)
+}
+
 pub fn menu(app: &App, name: &str) -> Option<Menu> {
     let doc = app.focus_doc();
     let has_doc = doc.is_some();
     let item = |label: &str, id: &str| MenuItem::new(label, Action::new(id));
     Some(match name {
+        "tab" => tab_menu(app),
         "files" => files_menu(app, false),
         "files-context" => files_menu(app, true),
         "editor-context" => editor_context_menu(app),

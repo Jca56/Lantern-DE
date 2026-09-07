@@ -107,6 +107,10 @@ impl App {
                         self.pending_goto = Some((path, Goto::Printed { line, col }));
                         cx.rebuild();
                     }
+                    if let Some(url) = out.open_url {
+                        open_url(&url);
+                        cx.host().toast(&format!("Opening {url}"));
+                    }
                     if let Some(at) = out.context {
                         self.context_term = Some(id);
                         cx.request(ShellRequest::MenuAt("terminal".to_owned(), at));
@@ -169,8 +173,9 @@ impl App {
                 false
             }
             Editor::Preview => {
-                let doc = self.focus_doc();
-                draw_preview(ui, doc);
+                let App { docs, focus_doc, preview_follow, .. } = self;
+                let doc = focus_doc.and_then(|id| docs.iter().find(|d| d.id == id));
+                draw_preview(ui, doc, preview_follow);
                 false
             }
             Editor::Diff => {
@@ -216,5 +221,18 @@ impl App {
                 false
             }
         }
+    }
+}
+
+/// Hand a web address to the desktop's browser, without waiting on it.
+fn open_url(url: &str) {
+    use std::process::{Command, Stdio};
+    match Command::new("xdg-open").arg(url).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+        Err(e) => lntrn_core::log_warn!("open url: {e}"),
     }
 }
