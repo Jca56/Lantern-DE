@@ -125,7 +125,8 @@ pub fn selection(ui: &mut Ui, doc: &Doc, g: &Grid) {
         }
         let last_seg = g.wrap.seg_end(line, seg).is_none();
         let x0 = g.cell_x(doc, line, a);
-        let mut x1 = g.cell_x(doc, line, b).max(x0);
+        // The row's end byte is the next row's first: measure that edge on this row.
+        let mut x1 = if b >= e && !last_seg { g.row_end_x(doc, line, seg) } else { g.cell_x(doc, line, b) }.max(x0);
         if line < sel.end.line && last_seg {
             x1 += g.cell_w * 0.5;
         }
