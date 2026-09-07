@@ -349,7 +349,6 @@ fn draw_content_body(
             || state.emojis.open
             || state.clipboard.open
             || state.notes.open
-            || state.usage.open
             || state.desktop_settings_open;
         // Shown-ness of the dock comes from two animations: open/close
         // (anim_factor) and expand/collapse (collapse_p). Fade mode
@@ -386,7 +385,7 @@ fn draw_content_body(
             if let Some(mut layout) = layout {
                 // Slide mode: the dock mirrors the panel by sliding out
                 // through the *bottom* screen edge. Shift the whole
-                // computed layout — draw + mascot read these rects, so
+                // computed layout — draw reads these rects, so
                 // everything moves together. Margin covers magnified
                 // icons poking above the plate plus its shadow.
                 if slide && slide_vis < 1.0 {
@@ -402,15 +401,6 @@ fn draw_content_body(
                     &mut icons,
                     &layout,
                     &state.toplevels,
-                    panel.alpha * dock_alpha_mult,
-                );
-
-                // Decorative lantern mascot — pinned to the left side of
-                // the dock plate, so it's visible whenever the dock is.
-                crate::mascot::draw_beside_dock(
-                    &mut icons,
-                    layout.plate,
-                    panel.scale_factor,
                     panel.alpha * dock_alpha_mult,
                 );
 
@@ -522,16 +512,6 @@ fn draw_content_body(
                 state.desktop_button_hover,
                 state.desktop_settings_open,
             ),
-            OuterId::Usage => crate::usage_button::draw(
-                painter,
-                *r,
-                panel.scale_factor,
-                panel.alpha,
-                state.usage_hover,
-                state.usage.open,
-                state.usage.model_status.health,
-                &mut icons,
-            ),
             OuterId::Emojis => crate::view_indicator::draw_emoji(
                 painter,
                 *r,
@@ -588,17 +568,6 @@ fn draw_content_body(
             surface_h,
         );
     }
-
-    // 1d3. Decorative lantern mascot — anchored to the bar's left
-    //      edge. Slides between the slider area (collapsed) and the
-    //      bottom-left of the expanded panel (expanded). No hit-test.
-    crate::mascot::draw(
-        &mut icons,
-        panel.rect,
-        panel.scale_factor,
-        collapse_p,
-        panel.alpha,
-    );
 
     // 1e. View-switcher arrows next to the controls row. Anchored at
     //     the top so they remain reachable while the panel is
@@ -793,25 +762,6 @@ fn draw_content_body(
             painter,
             text,
             &state.notes,
-            panel.rect,
-            top_y,
-            panel.scale_factor,
-            state.config.text_size,
-            body_alpha_base,
-            surface_w,
-            surface_h,
-        );
-        return icons;
-    }
-    // Claude-usage overlay.
-    if state.usage.open {
-        let top_y = crate::controls::content_top_y(panel.rect, panel.scale_factor);
-        crate::usage::view::draw(
-            painter,
-            text,
-            &state.usage.stats,
-            &state.usage.limits,
-            &state.usage.model_status,
             panel.rect,
             top_y,
             panel.scale_factor,

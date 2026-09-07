@@ -107,7 +107,6 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
         app.emoji_hover = hit_id(&outer_pos, OuterId::Emojis, phys_cx, phys_cy);
         app.clipboard_hover = hit_id(&outer_pos, OuterId::Clipboard, phys_cx, phys_cy);
         app.notes_hover = hit_id(&outer_pos, OuterId::Notes, phys_cx, phys_cy);
-        app.usage_hover = hit_id(&outer_pos, OuterId::Usage, phys_cx, phys_cy);
         // Bar-mode sliders only hover-react while CC is collapsed.
         app.bar_sliders.hover = if app.collapse_progress() > 0.5 {
             rect_in(&outer_pos, OuterId::Sliders)

@@ -755,11 +755,6 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
             wl.input_dirty = true;
         }
 
-        // Drain any new snapshot the usage worker has produced.
-        if app.usage.pump() {
-            wl.input_dirty = true;
-        }
-
         // Flush any queued PTY input (e.g. from Files "Open in Terminal
         // tab"). Only meaningful once the PTY has been spawned.
         if app.terminal.is_spawned() {

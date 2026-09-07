@@ -132,7 +132,6 @@ pub(super) fn render_frame(
             && !app.emojis.open
             && !app.clipboard.open
             && !app.notes.open
-            && !app.usage.open
             && !app.desktop_settings_open
         {
             // Dock hover preview: one thumbnail slot per window of

@@ -56,7 +56,7 @@ impl AppState {
     }
 
     /// Dismiss every full-page overlay (settings, notes, clipboard,
-    /// emojis, usage, desktop widgets) in one shot. Navigation actions
+    /// emojis, desktop widgets) in one shot. Navigation actions
     /// (Home, Grow, view dots, view arrows, tile clicks) call this so
     /// they actually override an open overlay instead of mutating the
     /// panel underneath while the overlay keeps drawing on top.
@@ -69,7 +69,6 @@ impl AppState {
         self.emojis.open = false;
         self.clipboard.open = false;
         self.notes.open = false;
-        self.usage.open = false;
     }
 
     /// Switch the panel into a control's full-content view. If we're
@@ -181,10 +180,6 @@ impl AppState {
                 self.notes.flush_edits_to_selected();
                 self.notes.open = false;
             }
-            return;
-        }
-        if self.usage.open {
-            self.usage.open = false;
             return;
         }
         if self.power_confirm.is_some() {
@@ -414,8 +409,6 @@ impl AppState {
         self.notes.confirm_delete = false;
         self.notes.flash_text = None;
         self.notes.drag_field = None;
-        self.usage.open = false;
-        self.usage.scroll = 0.0;
         // Cancel any in-flight view-switch animation, but preserve which
         // tab the user is on — reopening should land on the same view.
         self.view_anim_start = None;

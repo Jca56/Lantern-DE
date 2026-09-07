@@ -286,7 +286,6 @@ pub(super) fn handle_clicks(
         let emoji_btn_hit = hit_id(&outer_pos, OuterId::Emojis, phys_cx, phys_cy);
         let clipboard_btn_hit = hit_id(&outer_pos, OuterId::Clipboard, phys_cx, phys_cy);
         let notes_btn_hit = hit_id(&outer_pos, OuterId::Notes, phys_cx, phys_cy);
-        let usage_btn_hit = hit_id(&outer_pos, OuterId::Usage, phys_cx, phys_cy);
         let dot_hit = rect_in(&outer_pos, OuterId::Dots)
             .and_then(|r| crate::view_indicator::dot_at(r, scale_f, phys_cx, phys_cy));
         // Mini-dock hit-tests — try preview-tile first (when hover
@@ -432,11 +431,6 @@ pub(super) fn handle_clicks(
                 app.toggle_collapsed();
             }
             app.toggle_notes();
-        } else if usage_btn_hit {
-            if app.collapsed && !app.usage.open {
-                app.toggle_collapsed();
-            }
-            app.toggle_usage();
         } else if app.notes.open && {
             let top_y = crate::controls::content_top_y(panel_rect, scale_f);
             let panel_bottom = panel_rect.y + panel_rect.h;

@@ -204,8 +204,6 @@ pub struct AppState {
     pub emoji_hover: bool,
     pub clipboard_hover: bool,
     pub notes_hover: bool,
-    /// Hover state for the Claude-usage button (left strip, after gear).
-    pub usage_hover: bool,
     /// When true the body is replaced by the Command Center settings
     /// page (overrides whichever view is selected).
     pub settings_open: bool,
@@ -259,9 +257,6 @@ pub struct AppState {
     pub clipboard: crate::clipboard::ClipboardState,
     /// Quick Notes overlay state (notes, filter, editor focus, selection).
     pub notes: crate::notes::NotesState,
-    /// Claude-usage overlay state. Background scanner walks
-    /// ~/.claude/projects/**/*.jsonl and aggregates token totals.
-    pub usage: crate::usage::UsageState,
     /// Bytes queued to be written to the terminal PTY on the next loop
     /// iteration. Used by Files "Open in Terminal tab" to defer the
     /// `cd` until the PTY has been spawned.
@@ -354,7 +349,6 @@ impl AppState {
             emoji_hover: false,
             clipboard_hover: false,
             notes_hover: false,
-            usage_hover: false,
             settings_open: false,
             config: crate::settings::Config::load(),
             settings_drag: None,
@@ -374,11 +368,6 @@ impl AppState {
             notes: {
                 let mut s = crate::notes::NotesState::default();
                 s.load_from_disk();
-                s
-            },
-            usage: {
-                let mut s = crate::usage::UsageState::default();
-                s.start_worker();
                 s
             },
             pending_terminal_input: None,
@@ -477,7 +466,6 @@ impl AppState {
             self.clipboard.open = false;
             self.notes.flush_edits_to_selected();
             self.notes.open = false;
-            self.usage.open = false;
             self.desktop_settings_open = false;
         }
         tracing::info!(open = self.settings_open, "settings toggled");
@@ -496,7 +484,6 @@ impl AppState {
             self.clipboard.open = false;
             self.notes.flush_edits_to_selected();
             self.notes.open = false;
-            self.usage.open = false;
         }
         tracing::info!(
             open = self.desktop_settings_open,
@@ -512,7 +499,6 @@ impl AppState {
             self.clipboard.open = false;
             self.notes.flush_edits_to_selected();
             self.notes.open = false;
-            self.usage.open = false;
             self.desktop_settings_open = false;
             self.emojis.filter.clear();
             self.emojis.reset_scroll();
@@ -527,7 +513,6 @@ impl AppState {
             self.settings_open = false;
             self.emojis.open = false;
             self.notes.open = false;
-            self.usage.open = false;
             self.desktop_settings_open = false;
             self.clipboard.filter.clear();
             self.clipboard.reset_scroll();
@@ -537,23 +522,6 @@ impl AppState {
         tracing::info!(open = self.clipboard.open, "clipboard toggled");
     }
 
-    /// Toggle the Claude-usage overlay page.
-    pub fn toggle_usage(&mut self) {
-        self.usage.open = !self.usage.open;
-        if self.usage.open {
-            self.settings_open = false;
-            self.emojis.open = false;
-            self.clipboard.open = false;
-            self.notes.flush_edits_to_selected();
-            self.notes.open = false;
-            self.desktop_settings_open = false;
-            self.usage.scroll = 0.0;
-            // Ensure background scanner is alive (no-op if already spawned).
-            self.usage.start_worker();
-        }
-        tracing::info!(open = self.usage.open, "usage toggled");
-    }
-
     /// Toggle the Quick Notes overlay page.
     pub fn toggle_notes(&mut self) {
         self.notes.open = !self.notes.open;
@@ -561,7 +529,6 @@ impl AppState {
             self.settings_open = false;
             self.emojis.open = false;
             self.clipboard.open = false;
-            self.usage.open = false;
             self.desktop_settings_open = false;
             self.notes.filter.clear();
             self.notes.list_scroll = 0.0;

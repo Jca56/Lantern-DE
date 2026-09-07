@@ -41,8 +41,6 @@ pub enum OuterId {
     Settings,
     /// Desktop-widgets popover button.
     Desktop,
-    /// Claude usage button.
-    Usage,
     Emojis,
     Clipboard,
     Notes,
@@ -54,11 +52,10 @@ pub enum OuterId {
     Media,
 }
 
-pub const ALL_WIDGETS: [OuterId; 10] = [
+pub const ALL_WIDGETS: [OuterId; 9] = [
     OuterId::Close,
     OuterId::Settings,
     OuterId::Desktop,
-    OuterId::Usage,
     OuterId::Emojis,
     OuterId::Clipboard,
     OuterId::Notes,
@@ -121,7 +118,6 @@ impl OuterId {
             OuterId::Close => "close",
             OuterId::Settings => "settings",
             OuterId::Desktop => "desktop",
-            OuterId::Usage => "usage",
             OuterId::Emojis => "emojis",
             OuterId::Clipboard => "clipboard",
             OuterId::Notes => "notes",
@@ -143,7 +139,6 @@ impl OuterId {
             OuterId::Close => "Close ✕",
             OuterId::Settings => "Settings",
             OuterId::Desktop => "Desktop",
-            OuterId::Usage => "Claude Usage",
             OuterId::Emojis => "Emojis",
             OuterId::Clipboard => "Clipboard",
             OuterId::Notes => "Notes",
@@ -172,7 +167,6 @@ impl OuterId {
             OuterId::Close => (RESTART_SIZE, RESTART_SIZE),
             OuterId::Settings => (GEAR_SIZE, GEAR_SIZE),
             OuterId::Desktop
-            | OuterId::Usage
             | OuterId::Emojis
             | OuterId::Clipboard
             | OuterId::Notes => (BTN_SIZE, BTN_SIZE),
@@ -229,8 +223,7 @@ impl Default for OuterLayout {
             top_left: vec![OuterId::Close, OuterId::Settings, OuterId::Desktop],
             top_middle: vec![OuterId::Dots],
             top_right: vec![
-                OuterId::Usage,
-                OuterId::Emojis,
+                            OuterId::Emojis,
                 OuterId::Clipboard,
                 OuterId::Notes,
             ],
