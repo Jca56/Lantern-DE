@@ -17,6 +17,7 @@ BINARIES := \
 	lntrn-file-manager \
 	lntrn-menu \
 	lntrn-notepad \
+	lntrn-code \
 	lntrn-notifyd \
 	lntrn-osd \
 	lntrn-system-settings \
