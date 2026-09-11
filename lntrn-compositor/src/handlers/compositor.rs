@@ -137,6 +137,11 @@ impl CompositorHandler for Lantern {
                 mapped_window = root_window;
             }
         };
+        if surface_is_root && mapped_window.is_none() {
+            // Unmapped with a close on the way: drawing again means the
+            // client is keeping its window (a prompt).
+            self.note_close_pending_commit(&root);
+        }
 
         if let Some(window) = mapped_window.clone() {
             self.apply_initial_window_size(&window, surface);

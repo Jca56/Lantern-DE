@@ -425,6 +425,7 @@ impl Lantern {
         self.window_mru.retain(|entry| entry != surface);
         self.minimized_windows
             .retain(|entry| entry.surface != *surface);
+        self.close_pending.retain(|p| p.surface != *surface);
         self.solo_tiled_windows
             .retain(|entry| entry.surface != *surface);
         self.maximized_windows
@@ -539,16 +540,14 @@ impl Lantern {
     /// cleans up compositor state so the bar receives the toplevel Closed event.
     pub fn finish_close_animation(&mut self, surface: &WlSurface) {
         if let Some(window) = self.find_mapped_window(surface) {
-            tracing::info!("Close animation finished, unmapping and sending close");
-            self.unmap_window_everywhere(&window);
-            window.request_close();
+            tracing::info!("Close animation finished, hiding and sending close");
+            // Hidden, not forgotten: the client still has to answer, and
+            // may want a word first (see `close_pending`). It is forgotten
+            // when it exits, or brought back when it keeps its window.
+            self.send_close_pending(&window);
+        } else {
+            self.forget_window(surface);
         }
-        // Clean up all state and notify the bar — the window is gone from the
-        // user's perspective once it's unmapped.  Previously we only set a
-        // close_done flag, but the dead-window detector never ran because the
-        // window was already removed from the space, so forget_window (and the
-        // foreign-toplevel Closed event) never fired.
-        self.forget_window(surface);
     }
 
     /// Called when a close animation finishes for a zombie window (client-initiated close).

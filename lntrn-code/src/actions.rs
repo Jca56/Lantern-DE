@@ -182,8 +182,12 @@ impl App {
                     }
                 }
             }
-            // Closing the main window asks about unsaved work on the way.
-            QUIT => cx.request(ShellRequest::CloseWindow),
+            // Closing the main window asks about unsaved work on the way;
+            // the dialog's own Quit carries `force` so it is not asked twice.
+            QUIT => {
+                self.quit_confirmed = matches!(action.arg("force"), Some(Value::Bool(true)));
+                cx.request(ShellRequest::CloseWindow);
+            }
             UNDO => {
                 if let Some(d) = self.focus_doc_mut() {
                     d.undo(now);

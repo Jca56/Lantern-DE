@@ -149,4 +149,8 @@ fn main() {
     }
     let config = AppConfig { title: "lntrn-code".into(), app_id: APP_ID.into(), mono, opacity: crate::app::window_opacity(), transparent: true, ..AppConfig::default() };
     run(config, app, shell);
+    // The host (and with it every terminal's shell) is dropped inside
+    // `run`; anything a helper thread still holds must not keep the
+    // process alive after the last window is gone.
+    std::process::exit(0);
 }

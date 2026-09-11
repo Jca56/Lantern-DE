@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use lntrn_app::lntrn_render::{Gpu, Images};
 use lntrn_app::{AppHost, Waker};
 use lntrn_ui::keymap::CTX_WINDOW;
+use lntrn_props::Value;
 use lntrn_ui::{Action, AreaCx, AreaId, Dialog, Host, HostCx, KeyConfig, KeyItem, KeyPress, Menu, Shell, ShellRequest, Ui, WidgetId, actions};
 
 use crate::buffer::Pos;
@@ -72,6 +73,9 @@ pub struct App {
     pub last_editor_focus: Option<WidgetId>,
     /// The terminal last right-clicked: what its menu acts on.
     pub context_term: Option<crate::term::TermId>,
+    /// The terminal area that is active, so the frame one becomes active
+    /// (and takes the keyboard) is told apart from every frame after.
+    pub term_active_area: Option<AreaId>,
     /// File and folder icons from the theme on disk.
     pub icons: crate::icons::IconTheme,
     /// The changed file last right-clicked in the Git editor: its path,
@@ -103,6 +107,9 @@ pub struct App {
     pub(crate) paste_armed: bool,
     pub(crate) popup_was_open: bool,
     pub session_dirty: bool,
+    /// Quit was confirmed in the unsaved-changes dialog: the next close
+    /// goes straight through instead of asking again.
+    pub(crate) quit_confirmed: bool,
     pub(crate) session: Session,
     /// The loop's waker, for the terminals' reader threads.
     pub(crate) waker: Option<Waker>,
@@ -150,6 +157,7 @@ impl App {
             focus_area: None,
             last_editor_focus: None,
             context_term: None,
+            term_active_area: None,
             context_tab: None,
             context_change: None,
             icons: crate::icons::IconTheme::load(),
@@ -170,6 +178,7 @@ impl App {
             paste_armed: false,
             popup_was_open: false,
             session_dirty: false,
+            quit_confirmed: false,
             session: session.clone(),
             waker: None,
             bridge: None,
@@ -549,11 +558,11 @@ impl Host for App {
     /// that dialog goes straight through.
     fn close_requested(&mut self, main: bool, cx: &mut HostCx) -> bool {
         let dirty = self.docs.iter().filter(|d| d.is_dirty()).count();
-        if !main || dirty == 0 {
+        if !main || dirty == 0 || self.quit_confirmed {
             return true;
         }
         let body = format!("{dirty} file{} ha{} unsaved changes. Quit anyway?", if dirty == 1 { "" } else { "s" }, if dirty == 1 { "s" } else { "ve" });
-        cx.request(ShellRequest::Dialog(Dialog::confirm("Unsaved changes", &body, "Quit", Action::new(actions::QUIT))));
+        cx.request(ShellRequest::Dialog(Dialog::confirm("Unsaved changes", &body, "Quit", Action::new(actions::QUIT).with("force", Value::Bool(true)))));
         false
     }
 

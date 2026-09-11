@@ -25,12 +25,17 @@ unsafe extern "C" {
     fn ptsname_r(fd: c_int, buf: *mut c_char, len: usize) -> c_int;
     fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
     fn setsid() -> c_int;
+    fn kill(pid: c_int, sig: c_int) -> c_int;
 }
 
 const O_RDWR: c_int = 2;
 const O_NOCTTY: c_int = 0o400;
 const TIOCSCTTY: c_ulong = 0x540E;
 const TIOCSWINSZ: c_ulong = 0x5414;
+const TIOCGPGRP: c_ulong = 0x540F;
+const SIGHUP: c_int = 1;
+/// How long a hung-up shell and its jobs get to leave on their own.
+const HANGUP_GRACE: std::time::Duration = std::time::Duration::from_millis(300);
 
 #[repr(C)]
 struct Winsize {
@@ -191,12 +196,43 @@ impl Pty {
         self.exited
     }
 
+    /// Close the terminal the way a real one closing does: hang up on
+    /// everything in it. The foreground job (a program the shell is
+    /// running, say `claude`) is in a process group of its own, so a
+    /// plain kill of the shell leaves it running with nobody to talk to;
+    /// SIGHUP to that group and to the shell's is what a terminal's
+    /// disappearance means to them. Whatever is still there after a short
+    /// grace is killed outright.
     pub fn kill(&mut self) {
-        if self.exited.is_none() {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-            self.exited = Some(-1);
+        if self.exited.is_some() {
+            return;
         }
+        let shell = self.child.id() as c_int;
+        let mut fg: c_int = 0;
+        // SAFETY: TIOCGPGRP on the master reports the slave's foreground
+        // process group; a failure leaves `fg` at 0, which is skipped.
+        if unsafe { ioctl(self.master.as_raw_fd(), TIOCGPGRP, &mut fg as *mut c_int) } == 0 && fg > 0 && fg != shell {
+            // SAFETY: signalling a process group we own.
+            unsafe {
+                kill(-fg, SIGHUP);
+            }
+        }
+        // SAFETY: the shell is our child and a session leader (setsid).
+        unsafe {
+            kill(-shell, SIGHUP);
+            kill(shell, SIGHUP);
+        }
+        let deadline = std::time::Instant::now() + HANGUP_GRACE;
+        while std::time::Instant::now() < deadline {
+            if let Ok(Some(_)) = self.child.try_wait() {
+                self.exited = Some(-1);
+                return;
+            }
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        self.exited = Some(-1);
     }
 }
 

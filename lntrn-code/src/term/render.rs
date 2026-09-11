@@ -78,7 +78,10 @@ fn link_under(term: &mut Terminal, row: usize, col: usize) -> Option<(usize, lin
     Some((row, link, target))
 }
 
-pub fn draw_terminal(ui: &mut Ui, term: &mut Terminal, settings: &Settings, area_active: bool) -> TermOut {
+/// `grab_focus` is set on the frame the terminal's area became the active
+/// one: the terminal takes the keyboard right away, so switching panels
+/// means typing, not clicking first. A search bar or popup keeps it.
+pub fn draw_terminal(ui: &mut Ui, term: &mut Terminal, settings: &Settings, area_active: bool, grab_focus: bool) -> TermOut {
     let id = ui.id("term");
     let m = ui.m;
     let theme = ui.theme;
@@ -100,6 +103,10 @@ pub fn draw_terminal(ui: &mut Ui, term: &mut Terminal, settings: &Settings, area
         term.search = Some(s);
     }
 
+    if grab_focus && ui.state.popup.is_none() && ui.state.focus != Some(ui.id("find")) {
+        ui.state.focus = Some(id);
+        ui.state.focus_visible = false;
+    }
     let r = ui.interact(id, rect, Sense::FOCUS);
     let focused = ui.focusable(id, rect);
     let popup_blocks = ui.state.popup.is_some_and(|(p, layer)| layer > ui.layer() && p.contains(ui.state.pointer));
@@ -158,7 +165,8 @@ pub fn draw_terminal(ui: &mut Ui, term: &mut Terminal, settings: &Settings, area
         }
         ui.state.wheel = Vec2::ZERO;
     }
-    // ---- selection: drag over cells, double click a word, release copies ----
+    // ---- selection: drag over cells, double click a word; copy is explicit
+    // (Ctrl+Shift+C or the menu), never a side effect of selecting ----
     if r.pressed {
         let (y, x) = boundary_at(ui.state.pointer);
         let abs = term.grid.abs_row(y);
@@ -186,11 +194,6 @@ pub fn draw_terminal(ui: &mut Ui, term: &mut Terminal, settings: &Settings, area
         let (y, x) = boundary_at(inner.clamp_point(ui.state.pointer));
         let end = (term.grid.abs_row(y), x);
         term.selection = (end != anchor).then_some((anchor, end));
-    }
-    if r.released
-        && let Some(text) = term.selection_text()
-    {
-        ui.state.set_clipboard(text);
     }
     if focused {
         input::handle(ui, term);

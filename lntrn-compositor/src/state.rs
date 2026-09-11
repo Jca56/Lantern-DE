@@ -395,6 +395,9 @@ pub struct Lantern {
     pub animations: AnimationState,
     /// Windows that died (client-initiated close) but still have a close animation playing.
     pub closing_windows: Vec<ClosingWindow>,
+    /// Windows the user closed whose client has yet to answer
+    /// (see `window_management::close_pending`).
+    pub close_pending: Vec<crate::window_management::ClosePending>,
     /// Per-window content snapshots for close / resize animations. Refreshed
     /// only when a window's buffers change (see `render::helpers`).
     pub window_snapshots: HashMap<WlSurface, crate::render::WindowSnapshot>,
@@ -696,6 +699,7 @@ impl Lantern {
             snapped_windows: Vec::new(),
             animations: AnimationState::new(),
             closing_windows: Vec::new(),
+            close_pending: Vec::new(),
             window_snapshots: HashMap::new(),
             workspaces: PerOutputWorkspaces::new(),
             window_state_anim: WindowStateAnimState::new(),

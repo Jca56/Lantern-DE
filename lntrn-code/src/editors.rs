@@ -100,9 +100,17 @@ impl App {
                     }
                 };
                 let active = cx.active;
+                // The frame this area became the active one: the terminal
+                // takes the keyboard without a click.
+                let grab_focus = active && self.term_active_area != Some(cx.area);
+                if active {
+                    self.term_active_area = Some(cx.area);
+                } else if self.term_active_area == Some(cx.area) {
+                    self.term_active_area = None;
+                }
                 let settings = &self.settings;
                 if let Some(t) = self.terminals.iter_mut().find(|t| t.id == id) {
-                    let out = draw_terminal(ui, t, settings, active);
+                    let out = draw_terminal(ui, t, settings, active, grab_focus);
                     if out.focused {
                         self.last_editor_focus = Some(ui.id("term"));
                     }

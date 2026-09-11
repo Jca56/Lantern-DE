@@ -111,6 +111,14 @@ pub(crate) fn send_frame_callbacks(state: &Lantern, output: &Output, time: Durat
     for window in state.space.elements() {
         window.send_frame(output, time, throttle, surface_primary_scanout_output);
     }
+    // Windows asked to close and not yet answered: hidden, so no output
+    // is theirs, but a close only lands with a redraw — answer at full rate.
+    for p in &state.close_pending {
+        if p.window.alive() {
+            p.window
+                .send_frame(output, time, None, |_, _| Some(output.clone()));
+        }
+    }
     // Minimized windows: throttled trickle only (see for_each_presentable_surface).
     for entry in &state.minimized_windows {
         if entry.window.alive() {

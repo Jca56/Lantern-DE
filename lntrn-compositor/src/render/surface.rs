@@ -219,6 +219,7 @@ pub fn render_surface(
             state.finish_close_animation(surface);
         }
     }
+    state.tick_close_pending();
     state.workspace_anim.tick();
     state.window_state_anim.tick();
     // Smooth-resize: stream a configure to every trusted in-progress

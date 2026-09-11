@@ -15,13 +15,12 @@
   - Ask about this. Right-click a diagnostic, a git hunk, or a selection and send it straight to the focused Claude session as a prompt, not just
     as an @-mention.
     
-    ---
+---
 
 # Git, round three
   - Hunk staging. Stage or discard one hunk from the gutter mark or the diff view, instead of whole files.
   - Blame. Author and age in the gutter on hover, or a "Blame" tab.
   - Stash list with apply and drop, and a conflict view for merges.
-
 ---
 
 # Look and feel
@@ -29,4 +28,8 @@
   - Editor color themes as files, the same way the shell themes are, so syntax colors travel with the theme. Right now they're a separate Settings
     group.
     
+
 ---
+
+
+

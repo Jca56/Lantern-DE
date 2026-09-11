@@ -7,6 +7,7 @@ use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 
 mod alt_tab;
 mod axis_resize;
+mod close_pending;
 mod focus;
 mod fullscreen;
 mod half_pose;
@@ -19,6 +20,7 @@ mod solo_tile;
 mod ssd;
 mod window_swap;
 
+pub use close_pending::ClosePending;
 pub use half_pose::PoseSlot;
 
 /// A cardinal direction for the keyboard window-management scheme
