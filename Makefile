@@ -118,6 +118,7 @@ install-desktop: dirs
 		lntrn-snapshot/lntrn-snapshot-gui.desktop \
 		lntrn-calculator/lntrn-calculator.desktop \
 		lntrn-notepad/lntrn-notepad.desktop \
+		lntrn-code/lntrn-code.desktop \
 		lntrn-sysmon/lntrn-sysmon.desktop \
 		lntrn-git/lntrn-git.desktop \
 		lntrn-afterglow/lntrn-afterglow.desktop \

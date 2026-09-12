@@ -263,7 +263,7 @@ mod tests {
         let mut h = Harness::new(1200.0, 800.0);
         for _ in 0..3 {
             h.frame(|ui| {
-                draw_terminal(ui, &mut term, &settings, true);
+                draw_terminal(ui, &mut term, &settings, true, false);
             });
             h.advance(0.05);
         }
