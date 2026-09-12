@@ -2371,7 +2371,6 @@ dependencies = [
  "lntrn-render 0.2.0",
  "lntrn-text 0.2.0",
  "lntrn-ui 0.2.0",
- "winit",
 ]
 
 [[package]]

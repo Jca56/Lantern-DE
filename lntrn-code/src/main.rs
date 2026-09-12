@@ -6,6 +6,8 @@
 
 mod actions;
 mod app;
+mod attention;
+mod launch;
 #[cfg(test)]
 mod app_tests;
 mod bridge;
@@ -20,6 +22,7 @@ mod editors;
 mod file_ops;
 mod files;
 mod git;
+mod host;
 mod icons;
 mod ide;
 mod json;

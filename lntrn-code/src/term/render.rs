@@ -67,6 +67,8 @@ pub struct TermOut {
     pub context: Option<Vec2>,
     /// A web address was clicked.
     pub open_url: Option<String>,
+    /// Where the screen was drawn, for drops on it.
+    pub rect: Rect,
 }
 
 /// The file path under a point of the terminal, if it names a file
@@ -96,6 +98,7 @@ pub fn draw_terminal(ui: &mut Ui, term: &mut Terminal, settings: &Settings, area
     let rows = ((inner.height() / lh).floor() as usize).max(1);
     term.resize(cols, rows);
     let now = ui.state.now;
+    term.viewed_at = now;
     term.pump(now);
     if let Some(mut s) = term.search.take() {
         s.refresh(term);
@@ -107,10 +110,24 @@ pub fn draw_terminal(ui: &mut Ui, term: &mut Terminal, settings: &Settings, area
         ui.state.focus = Some(id);
         ui.state.focus_visible = false;
     }
+    // The scrolled-back pill, hit-tested before the screen so a click on
+    // it jumps to the bottom instead of starting a selection.
+    let ts = ui.text_style();
+    let pill = (term.grid.view_offset > 0).then(|| {
+        let label = format!("↑ {} · Jump to bottom", term.grid.view_offset);
+        let w = ui.measure(&label, &ts) + m.pad * 2.0;
+        (Rect::from_min_size(Vec2::new(rect.max.x - w - m.gap, rect.min.y + m.gap), Vec2::new(w, m.widget_h)), label)
+    });
+    let pill_r = pill.as_ref().map(|(pr, _)| ui.interact(id.with("bottom"), *pr, Sense::CLICK));
+    if pill_r.is_some_and(|p| p.clicked) {
+        let off = term.grid.view_offset as isize;
+        term.grid.scroll_view(-off);
+        ui.state.request_rebuild = true;
+    }
     let r = ui.interact(id, rect, Sense::FOCUS);
     let focused = ui.focusable(id, rect);
     let popup_blocks = ui.state.popup.is_some_and(|(p, layer)| layer > ui.layer() && p.contains(ui.state.pointer));
-    let mut out = TermOut { focused, open: None, context: None, open_url: None };
+    let mut out = TermOut { focused, open: None, context: None, open_url: None, rect };
     // The pointer as a cell (row, column) and as a boundary between cells.
     let cell_at = |p: Vec2| -> (usize, usize) {
         let y = (((p.y - inner.min.y) / lh).floor().max(0.0) as usize).min(rows - 1);
@@ -167,7 +184,7 @@ pub fn draw_terminal(ui: &mut Ui, term: &mut Terminal, settings: &Settings, area
     }
     // ---- selection: drag over cells, double click a word; copy is explicit
     // (Ctrl+Shift+C or the menu), never a side effect of selecting ----
-    if r.pressed {
+    if r.pressed && !pill.as_ref().is_some_and(|(pr, _)| pr.contains(ui.state.press_pos)) {
         let (y, x) = boundary_at(ui.state.pointer);
         let abs = term.grid.abs_row(y);
         term.selection = None;
@@ -325,13 +342,13 @@ pub fn draw_terminal(ui: &mut Ui, term: &mut Terminal, settings: &Settings, area
             }
         }
     }
-    if g.view_offset > 0 {
-        let label = format!("↑ {}", g.view_offset);
-        let ts = ui.text_style();
-        let w = ui.measure(&label, &ts) + m.pad * 2.0;
-        let badge = Rect::from_min_size(Vec2::new(rect.max.x - w - m.gap, rect.min.y + m.gap), Vec2::new(w, m.widget_h));
-        ui.floating_panel(badge, theme.header);
-        ui.text_centered(&label, &ts, badge, theme.text);
+    if let (Some((badge, label)), Some(pr)) = (&pill, pill_r) {
+        if pr.hovered {
+            ui.hover_glow(*badge, theme.accent);
+            ui.state.cursor_icon = CursorIcon::Pointer;
+        }
+        ui.floating_panel(*badge, theme.header);
+        ui.text_centered(label, &ts, *badge, if pr.hovered { theme.accent } else { theme.text });
     }
     ui.draw.pop_clip();
     if focused {
@@ -349,7 +366,6 @@ pub fn draw_terminal(ui: &mut Ui, term: &mut Terminal, settings: &Settings, area
         };
         ui.state.request_redraw_after(interval);
     }
-    term.grid.bell = false;
     out
 }
 

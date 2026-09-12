@@ -54,11 +54,21 @@ pub struct Terminal {
     link_cache: Option<(String, Option<PathBuf>)>,
     /// Find in this terminal, while its bar is open.
     pub search: Option<search::TermSearch>,
+    /// The bell rang since the app last looked ([`crate::attention`]).
+    pub rang: bool,
+    /// The bell rang while nobody was looking: the tab wears a dot, the
+    /// status bar says so, until the terminal shows in a focused window.
+    pub attention: bool,
+    /// Frame time of the last draw: on screen this frame or not.
+    pub viewed_at: f64,
+    /// Frame time of the last desktop notification, so a burst of bells
+    /// makes one.
+    pub notified_at: f64,
 }
 
 impl Terminal {
     pub fn new(id: TermId, cwd: Option<PathBuf>, cols: usize, rows: usize, scrollback: usize, waker: Option<Waker>, env: Vec<(String, String)>) -> Self {
-        let mut t = Self { id, pty: None, parser: Parser::new(), grid: Grid::new(cols, rows, scrollback), last_output: 0.0, exited: None, cwd, paste_pending: false, buf: Vec::new(), waker, env, sel_anchor: None, selection: None, diags: Diagnostics::default(), link_cache: None, search: None };
+        let mut t = Self { id, pty: None, parser: Parser::new(), grid: Grid::new(cols, rows, scrollback), last_output: 0.0, exited: None, cwd, paste_pending: false, buf: Vec::new(), waker, env, sel_anchor: None, selection: None, diags: Diagnostics::default(), link_cache: None, search: None, rang: false, attention: false, viewed_at: -1.0, notified_at: -10.0 };
         t.spawn();
         t
     }
@@ -116,6 +126,9 @@ impl Terminal {
                 grid.replies.clear();
             }
             self.last_output = now;
+            if std::mem::take(&mut grid.bell) {
+                self.rang = true;
+            }
         }
         if self.exited.is_none()
             && let Some(code) = pty.poll_exit()
@@ -214,6 +227,20 @@ impl Terminal {
     pub fn cwd_now(&self) -> Option<PathBuf> {
         let pid = self.pty.as_ref()?.pid();
         std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
+    }
+
+    /// A path dropped on the screen, typed at the prompt with a space
+    /// after it: relative to the shell's folder when it sits under it,
+    /// quoted when the shell would trip on it.
+    pub fn type_path(&mut self, path: &std::path::Path) {
+        let shown = match self.cwd_now().and_then(|cwd| path.strip_prefix(&cwd).ok().map(std::path::Path::to_path_buf)) {
+            Some(rel) if !rel.as_os_str().is_empty() => rel,
+            _ => path.to_path_buf(),
+        };
+        let s = shown.display().to_string();
+        let plain = s.chars().all(|c| c.is_alphanumeric() || "/._-~+:@%,=".contains(c));
+        let text = if plain { format!("{s} ") } else { format!("'{}' ", s.replace('\'', "'\\''")) };
+        self.paste(&text);
     }
 
     /// The program's title, else the shell's folder.

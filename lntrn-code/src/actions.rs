@@ -137,6 +137,12 @@ impl App {
                 self.tree.refresh();
             }
             REFRESH_TREE => self.refresh_tree(),
+            COLLAPSE_ALL => self.tree.generation += 1,
+            FILES_FILTER => {
+                self.tree.open_filter();
+                self.pending_show.push(Editor::Files);
+            }
+            OPEN_EXTERNAL => crate::launch::open_external(&path().display().to_string()),
             SAVE => self.save_doc(cx),
             SAVE_AS => {
                 if let Some(d) = self.focus_doc() {

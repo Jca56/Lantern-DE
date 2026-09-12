@@ -117,6 +117,12 @@ pub const GO: &str = "files.go";
 /// Make the folder in the `path` arg the project.
 pub const SET_PROJECT: &str = "files.set_project";
 pub const TOGGLE_HIDDEN: &str = "files.toggle_hidden";
+/// Every folder of the tree closed.
+pub const COLLAPSE_ALL: &str = "files.collapse_all";
+/// The tree's filter box, open with the keyboard in it.
+pub const FILES_FILTER: &str = "files.filter";
+/// The `path` arg to the desktop's default app for it.
+pub const OPEN_EXTERNAL: &str = "files.open_external";
 pub const REFRESH_TREE: &str = "files.refresh";
 pub const IDE_ACCEPT: &str = "ide.accept";
 pub const IDE_REJECT: &str = "ide.reject";
@@ -125,7 +131,7 @@ pub const IDE_SEND: &str = "ide.send_selection";
 pub const OPEN_PREFIX: &str = "open:";
 
 /// The palette's commands: (action id, label).
-pub const PALETTE: [(&str, &str); 57] = [
+pub const PALETTE: [(&str, &str); 59] = [
     (GOTO_DEF, "Go to Definition"),
     (MOVE_LINE_UP, "Move Line Up"),
     (MOVE_LINE_DOWN, "Move Line Down"),
@@ -169,6 +175,8 @@ pub const PALETTE: [(&str, &str); 57] = [
     (UNDO, "Undo"),
     (REDO, "Redo"),
     (SHOW_FILES, "Show Files"),
+    (FILES_FILTER, "Files: Filter…"),
+    (COLLAPSE_ALL, "Files: Collapse All"),
     (SHOW_TERMINAL, "Show Terminal"),
     (NEW_TERMINAL, "New Terminal"),
     (SHOW_PROBLEMS, "Show Problems"),
@@ -279,9 +287,11 @@ fn files_menu(app: &App, context: bool) -> Menu {
             items.push(MenuItem::new("Go Into", with_path(GO, &p)));
             items.push(MenuItem::new("Set as Project", with_path(SET_PROJECT, &p)).enabled(!is_project(&p)));
             items.push(MenuItem::new("Open Terminal Here", with_path(TERMINAL_HERE, &p)));
+            items.push(MenuItem::new("Open in File Manager", with_path(OPEN_EXTERNAL, &p)));
         } else {
             into = p.parent().map(Path::to_path_buf);
             items.push(MenuItem::new("Open", with_path(OPENED, &p)));
+            items.push(MenuItem::new("Open in Default App", with_path(OPEN_EXTERNAL, &p)));
             items.push(MenuItem::new("Open Terminal Here", with_path(TERMINAL_HERE, into.as_deref().unwrap_or(&root))));
         }
         items.push(MenuItem::separator());
@@ -319,6 +329,9 @@ fn files_menu(app: &App, context: bool) -> Menu {
     if !context {
         items.push(MenuItem::new("Open Terminal Here", with_path(TERMINAL_HERE, &root)));
     }
+    items.push(MenuItem::separator());
+    items.push(MenuItem::new("Filter…", Action::new(FILES_FILTER)));
+    items.push(MenuItem::new("Collapse All", Action::new(COLLAPSE_ALL)));
     items.push(MenuItem::separator());
     items.push(MenuItem::new("Show Hidden Files", Action::new(TOGGLE_HIDDEN)).checked(app.tree.show_hidden));
     items.push(MenuItem::new("Refresh", Action::new(REFRESH_TREE)));

@@ -7,6 +7,7 @@
 //! path, `⌂` goes back to the project ([`project`]), which browsing
 //! never changes; the `☰` beside them opens the panel's menu.
 
+mod filter;
 pub mod project;
 pub mod row;
 
@@ -110,12 +111,21 @@ pub struct Tree {
     /// Line counts of code files, keyed by path, with the modified time
     /// and size they were counted at.
     line_counts: HashMap<PathBuf, (SystemTime, u64, usize)>,
+    /// Type-to-filter: the box open, its text, whether it takes the
+    /// keyboard on the next draw, and the walk of the root it searches.
+    pub filter_open: bool,
+    pub filter: String,
+    filter_focus: bool,
+    walk: Option<filter::Walk>,
+    /// Bumped by Collapse All: the folders' open flags are keyed under
+    /// it, so a new number starts every folder closed.
+    pub generation: u64,
 }
 
 impl Tree {
     pub fn new(root: PathBuf) -> Self {
         let root = if root.is_dir() { root } else { home() };
-        Self { root, listings: HashMap::new(), show_hidden: false, editing: None, edit_focus: false, drag: None, selected_dir: None, reveal: None, path_text: String::new(), edit_path: None, typing_for_project: false, selected: None, context: None, line_counts: HashMap::new() }
+        Self { root, listings: HashMap::new(), show_hidden: false, editing: None, edit_focus: false, drag: None, selected_dir: None, reveal: None, path_text: String::new(), edit_path: None, typing_for_project: false, selected: None, context: None, line_counts: HashMap::new(), filter_open: false, filter: String::new(), filter_focus: false, walk: None, generation: 0 }
     }
 
     /// Show `dir` as the root.
@@ -133,6 +143,7 @@ impl Tree {
     pub fn refresh(&mut self) {
         self.listings.clear();
         self.line_counts.clear();
+        self.walk = None;
     }
 
     /// The lines in `path`, counted again when the file changed on disk.
@@ -161,6 +172,7 @@ impl Tree {
     /// `dir` changed on disk: read it again when it next shows.
     pub fn invalidate(&mut self, dir: &Path) {
         self.listings.remove(dir);
+        self.walk = None;
     }
 
     /// The entries of `dir`, read on first ask.
@@ -219,6 +231,8 @@ pub struct FilesOut {
     pub set_project: Option<PathBuf>,
     /// The menu button: open the panel's menu at this point.
     pub menu_at: Option<Vec2>,
+    /// A row dragged out of the panel and let go: what, and where.
+    pub dropped_out: Option<(PathBuf, Vec2)>,
 }
 
 /// Problem counts by path: `(errors, warnings)`, folders holding the sum
@@ -241,7 +255,7 @@ pub fn draw_files(ui: &mut Ui, t: &mut Tree, mut cx: FilesCx) -> FilesOut {
     let m = ui.m;
     let mut go: Option<PathBuf> = None;
     // ---- one row: ⌂, the path as crumbs, the panel menu ----------------
-    ui.columns(&[m.widget_h, FILL, m.widget_h], |ui, i| match i {
+    ui.columns(&[m.widget_h, FILL, m.widget_h, m.widget_h], |ui, i| match i {
         0 => {
             let tip = if cx.project.is_some() { "Back to the project" } else { "Home" };
             if ui.icon_button("home", Icon::Custom(house), false, tip).clicked {
@@ -271,6 +285,17 @@ pub fn draw_files(ui: &mut Ui, t: &mut Tree, mut cx: FilesCx) -> FilesOut {
                 t.typing_for_project = false;
             }
         }
+        2 => {
+            if ui.icon_button("filter", Icon::Filter, t.filter_open, "Filter files").clicked {
+                if t.filter_open {
+                    t.filter_open = false;
+                    t.filter.clear();
+                } else {
+                    t.open_filter();
+                }
+                ui.state.request_rebuild = true;
+            }
+        }
         _ => {
             let r = ui.icon_button("menu", Icon::Menu, false, "Files menu");
             if r.clicked {
@@ -278,6 +303,23 @@ pub fn draw_files(ui: &mut Ui, t: &mut Tree, mut cx: FilesCx) -> FilesOut {
             }
         }
     });
+    // ---- the filter box while open: Escape closes it, Enter opens the
+    // first match ----
+    let mut open_first = false;
+    if t.filter_open {
+        let fid = ui.id("filter");
+        if std::mem::take(&mut t.filter_focus) {
+            ui.state.focus = Some(fid);
+            ui.state.focus_visible = false;
+        }
+        let r = ui.text_field_hint("filter", &mut t.filter, "Filter files");
+        if r.cancelled {
+            t.filter_open = false;
+            t.filter.clear();
+            ui.state.request_rebuild = true;
+        }
+        open_first = r.committed;
+    }
 
     let root = t.root.clone();
     // A drag in flight: it begins once the pointer has moved, and lands on
@@ -295,7 +337,13 @@ pub fn draw_files(ui: &mut Ui, t: &mut Tree, mut cx: FilesCx) -> FilesOut {
     let mut targets: Vec<(Rect, PathBuf)> = Vec::new();
     let mut shown: Option<Rect> = None;
     ui.scroll_area("tree", None, |ui| {
-        draw_dir(ui, t, &root, &mut cx, &mut out, &mut targets, &mut go, &mut shown);
+        if t.filtering() {
+            filter::draw_matches(ui, t, &mut cx, &mut out, &mut targets, &mut go, open_first);
+        } else {
+            ui.push_id(&format!("g{}", t.generation));
+            draw_dir(ui, t, &root, &mut cx, &mut out, &mut targets, &mut go, &mut shown);
+            ui.pop_id();
+        }
     });
     // The revealed row comes into view.
     if let Some(r) = shown {
@@ -340,6 +388,8 @@ pub fn draw_files(ui: &mut Ui, t: &mut Tree, mut cx: FilesCx) -> FilesOut {
         if ui.state.released {
             if allowed && let Some(t) = target {
                 out.moved = Some((d.path.clone(), t));
+            } else if !panel.contains(pointer) {
+                out.dropped_out = Some((d.path.clone(), pointer));
             }
             t.drag = None;
             ui.state.request_rebuild = true;

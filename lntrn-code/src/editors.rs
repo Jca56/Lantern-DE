@@ -88,6 +88,11 @@ impl App {
                 if let Some(at) = out.context {
                     cx.request(ShellRequest::MenuAt("files-context".to_owned(), at));
                 }
+                // A row let go outside the panel: a terminal under it types the path.
+                if let Some((p, at)) = out.dropped_out {
+                    self.pending_drop = Some((p, at, ui.state.now));
+                    cx.rebuild();
+                }
                 false
             }
             Editor::Terminal => {
@@ -114,13 +119,26 @@ impl App {
                     if out.focused {
                         self.last_editor_focus = Some(ui.id("term"));
                     }
+                    // A file dragged out of the tree: lit while it hovers,
+                    // its path typed at the prompt when it lands.
+                    if self.tree.drag.as_ref().is_some_and(|d| d.started) && out.rect.contains(ui.state.pointer) {
+                        let saved = ui.draw.layer();
+                        ui.draw.set_layer(saved + 2);
+                        ui.draw.stroke_rect(out.rect, ui.m.px(2.0), 0.0, ui.theme.accent);
+                        ui.draw.set_layer(saved);
+                    }
+                    if let Some((p, _, _)) = self.pending_drop.take_if(|(_, at, _)| out.rect.contains(*at)) {
+                        t.type_path(&p);
+                        ui.state.focus = Some(ui.id("term"));
+                        cx.rebuild();
+                    }
                     if let Some((path, line, col)) = out.open {
                         self.pending_paths.push(path.clone());
                         self.pending_goto = Some((path, Goto::Printed { line, col }));
                         cx.rebuild();
                     }
                     if let Some(url) = out.open_url {
-                        open_url(&url);
+                        crate::launch::open_external(&url);
                         cx.host().toast(&format!("Opening {url}"));
                     }
                     if let Some(at) = out.context {
@@ -258,18 +276,5 @@ impl App {
                 false
             }
         }
-    }
-}
-
-/// Hand a web address to the desktop's browser, without waiting on it.
-fn open_url(url: &str) {
-    use std::process::{Command, Stdio};
-    match Command::new("xdg-open").arg(url).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
-        Ok(mut child) => {
-            std::thread::spawn(move || {
-                let _ = child.wait();
-            });
-        }
-        Err(e) => lntrn_core::log_warn!("open url: {e}"),
     }
 }
