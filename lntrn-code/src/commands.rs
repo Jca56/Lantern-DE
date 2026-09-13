@@ -61,6 +61,7 @@ pub const ZOOM_RESET: &str = "view.zoom_reset";
 /// Flip soft wrap for Markdown and plain text.
 pub const TOGGLE_WRAP: &str = "view.toggle_wrap";
 pub const TOGGLE_MINIMAP: &str = "view.toggle_minimap";
+pub const TOGGLE_OPAQUE_BARS: &str = "view.toggle_opaque_bars";
 pub const SHOW_FILES: &str = "view.files";
 pub const SHOW_TERMINAL: &str = "view.terminal";
 pub const SHOW_PROBLEMS: &str = "view.problems";
@@ -131,7 +132,7 @@ pub const IDE_SEND: &str = "ide.send_selection";
 pub const OPEN_PREFIX: &str = "open:";
 
 /// The palette's commands: (action id, label).
-pub const PALETTE: [(&str, &str); 59] = [
+pub const PALETTE: [(&str, &str); 60] = [
     (GOTO_DEF, "Go to Definition"),
     (MOVE_LINE_UP, "Move Line Up"),
     (MOVE_LINE_DOWN, "Move Line Down"),
@@ -144,6 +145,7 @@ pub const PALETTE: [(&str, &str); 59] = [
     (ZOOM_RESET, "Reset Zoom"),
     (TOGGLE_WRAP, "Toggle Wrap Prose"),
     (TOGGLE_MINIMAP, "Toggle Minimap"),
+    (TOGGLE_OPAQUE_BARS, "Toggle Opaque Bars"),
     (GIT_PUSH, "Git: Push"),
     (GIT_PULL, "Git: Pull"),
     (GIT_FETCH, "Git: Fetch"),
@@ -528,6 +530,7 @@ pub fn menu(app: &App, name: &str) -> Option<Menu> {
                     item("Reset Zoom", ZOOM_RESET),
                     item("Wrap Prose", TOGGLE_WRAP).checked(app.settings.wrap_prose),
                     item("Minimap", TOGGLE_MINIMAP).checked(app.settings.minimap),
+                    item("Opaque Bars", TOGGLE_OPAQUE_BARS).checked(app.settings.opaque_bars),
                     MenuItem::separator(),
                     item("Preferences", SHOW_PREFS),
                     item("Key Bindings", SHOW_KEYS),

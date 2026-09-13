@@ -294,6 +294,10 @@ impl App {
                 self.settings.minimap = !self.settings.minimap;
                 self.settings.save(crate::app::APP_ID);
             }
+            TOGGLE_OPAQUE_BARS => {
+                self.settings.opaque_bars = !self.settings.opaque_bars;
+                self.settings.save(crate::app::APP_ID);
+            }
             NEXT_FILE => self.pending_cycle = Some(1),
             PREV_FILE => self.pending_cycle = Some(-1),
             RENAME_SYMBOL => {

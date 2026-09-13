@@ -91,6 +91,10 @@ impl Host for App {
         true
     }
 
+    fn opaque_bars(&self) -> bool {
+        self.settings.opaque_bars
+    }
+
     fn title_menus(&self) -> &[(&str, &str)] {
         commands::title_menus()
     }

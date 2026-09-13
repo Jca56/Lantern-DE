@@ -87,6 +87,8 @@ props! {
         pub wrap_prose: bool = true => { id: 16, label: "Wrap Prose" },
         /// The whole file as a strip of colored dashes at the editor's right.
         pub minimap: bool = true => { id: 17 },
+        /// The title and status bars stay solid when the window is translucent.
+        pub opaque_bars: bool = true => { id: 18, label: "Opaque Bars" },
     }
 }
 
