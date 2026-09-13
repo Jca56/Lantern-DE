@@ -79,6 +79,13 @@ impl Lantern {
         for surface in &maximized_surfaces {
             if let Some(window) = self.find_mapped_window(surface) {
                 if let Some(geo) = self.window_output_geometry(&window) {
+                    // The renderer draws a maximized window into the stored
+                    // target, not its live buffer: keep it in step or the
+                    // client's new, smaller buffer gets stretched into the
+                    // old full-output rect under the panel.
+                    if let Some(e) = self.maximized_windows.iter_mut().find(|e| e.surface == *surface) {
+                        e.target = geo;
+                    }
                     window.configure_rect(geo);
                     self.remap_tracked_window(window, geo.loc, false);
                 }
@@ -94,6 +101,9 @@ impl Lantern {
         for (surface, zone) in &snapped {
             if let Some(target) = self.snap_zone_geometry(*zone) {
                 if let Some(window) = self.find_mapped_window(&surface) {
+                    if let Some(e) = self.snapped_windows.iter_mut().find(|e| e.surface == *surface) {
+                        e.target = target;
+                    }
                     window.configure_rect(target);
                     self.remap_tracked_window(window, target.loc, false);
                 }
