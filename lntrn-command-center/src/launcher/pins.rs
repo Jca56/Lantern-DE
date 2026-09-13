@@ -28,7 +28,6 @@ const DEFAULT_PINS: &[&str] = &[
     "lntrn-file-manager",
     "lntrn-code",
     "firefox",
-    "lntrn-music-player",
 ];
 
 pub struct Pins {

@@ -3,7 +3,6 @@ resolver = "2"
 members = [
     "lntrn-render/draw",
     "lntrn-render/gfx",
-    "lntrn-ui/test",
     "lntrn-text",
     "lntrn-compositor",
     "lntrn-ui",
@@ -26,20 +25,14 @@ members = [
     "lntrn-git",
     "lntrn-calculator",
     "lntrn-dbus",
-    "lntrn-app-template",
     "lntrn-sysmon",
     "lntrn-icons",
     "lntrn-screencopy",
-    "lntrn-lava-lamp",
     "lntrn-command-center",
-    "lntrn-gear",
-    "lntrn-gear-ui",
     "lntrn-keychain",
     "lntrn-keys",
-    "lntrn-clock",
     "lntrn-rice",
     "lntrn-lockscreen",
-    "lntrn-spotify-theme",
     "lntrn-afterglow",
 ]
 

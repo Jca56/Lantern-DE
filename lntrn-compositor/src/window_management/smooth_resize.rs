@@ -3,8 +3,6 @@
 //! existing committed buffer to fit the interpolated rect throughout the
 //! animation, then sends a single configure at the end. Untrusted clients
 //! (Wine, generic Wayland) keep the existing crossfade path.
-//!
-//! See `docs/native-smooth-resize-plan.md`.
 
 use smithay::{
     desktop::Window,

@@ -1,8 +1,8 @@
 //! Emojis overlay page.
 //!
-//! Loads Fluent UI Emoji 3D PNGs from `~/.lantern/emojis/3d/{codepoint}.png`
+//! Loads Noto emoji PNGs from `~/.lantern/emojis/png/{codepoint}.png`
 //! and lays them out in a category-tabbed, filterable grid. See
-//! `scripts/setup-emojis.py` for the one-time asset/data-table install.
+//! `lntrn-command-center/scripts/setup-emojis.py` for the one-time asset/data-table install.
 
 pub mod data;
 pub mod render;

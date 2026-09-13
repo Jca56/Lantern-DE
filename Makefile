@@ -10,12 +10,10 @@ APP_DIR      := $(HOME)/.local/share/applications
 BINARIES := \
 	lntrn-compositor \
 	lntrn-session-manager \
-	lntrn-bar \
 	lntrn-command-center \
 	lntrn-desktop \
 	lntrn-terminal \
 	lntrn-file-manager \
-	lntrn-menu \
 	lntrn-notepad \
 	lntrn-code \
 	lntrn-notifyd \
@@ -87,8 +85,8 @@ install-bins: dirs
 install-icons: dirs
 	@cp -r icons/apps/*.svg icons/apps/*.png $(ICON_DIR)/ 2>/dev/null && \
 		echo "  ✓ app icons" || true
-	@cp -r icons/bar/*.svg $(ICON_DIR)/ 2>/dev/null && \
-		echo "  ✓ bar icons" || true
+	@cp -r icons/system/*.svg $(ICON_DIR)/ 2>/dev/null && \
+		echo "  ✓ system icons" || true
 	@mkdir -p $(ICON_DIR)/cursors && \
 		cp -r icons/cursors/*.svg $(ICON_DIR)/cursors/ 2>/dev/null && \
 		echo "  ✓ cursor icons" || true
@@ -204,7 +202,7 @@ fresh-install: build install install-system
 	elif command -v s6-rc >/dev/null 2>&1; then \
 		echo "  → s6"; INIT=s6; \
 	else \
-		echo "  → unknown — see docs/GENTOO-OPENRC.md for non-systemd setup"; INIT=unknown; \
+		echo "  → unknown"; INIT=unknown; \
 	fi; \
 	echo ""; \
 	echo "🔍 Checking required packages..."; \

@@ -33,7 +33,7 @@ pub fn state_curve() -> Curve {
 /// the rect animation ends, the smooth-hold persists with `held_target`
 /// only until the client commits a buffer at the matching size — that
 /// bridges the 1-2 frame gap between "anim done" and "client redrew at
-/// target". See `docs/native-smooth-resize-plan.md`.
+/// target".
 pub struct SmoothHold {
     /// Final rect we're animating to. Used both as the destination for
     /// the per-frame configure stream and as the held-visual rect during

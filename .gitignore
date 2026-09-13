@@ -1,6 +1,5 @@
 # Build artifacts
 /target/
-lntrn-app-template/target/
 
 # Generated docs
 /doc/

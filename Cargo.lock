@@ -2374,37 +2374,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "lntrn-app-template"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "lntrn-render 0.1.0",
- "lntrn-theme",
- "lntrn-ui 0.1.0",
- "raw-window-handle",
- "wayland-backend",
- "wayland-client",
- "wayland-protocols",
- "wgpu",
-]
-
-[[package]]
 name = "lntrn-calculator"
 version = "0.1.0"
 dependencies = [
  "lntrn-render 0.1.0",
  "lntrn-theme",
  "winit",
-]
-
-[[package]]
-name = "lntrn-clock"
-version = "0.1.0"
-dependencies = [
- "libc",
- "lntrn-theme",
- "serde",
- "toml 0.8.2",
 ]
 
 [[package]]
@@ -2432,7 +2407,6 @@ dependencies = [
  "lntrn-icons",
  "lntrn-render 0.1.0",
  "lntrn-terminal",
- "lntrn-ui 0.1.0",
  "png 0.17.16",
  "raw-window-handle",
  "resvg 0.45.1",
@@ -2544,26 +2518,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lntrn-gear"
-version = "0.1.0"
-
-[[package]]
-name = "lntrn-gear-ui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "lntrn-gear",
- "lntrn-render 0.1.0",
- "lntrn-theme",
- "lntrn-ui 0.1.0",
- "raw-window-handle",
- "wayland-backend",
- "wayland-client",
- "wayland-protocols",
- "wgpu",
-]
-
-[[package]]
 name = "lntrn-gfx"
 version = "0.1.0"
 dependencies = [
@@ -2640,19 +2594,6 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "lntrn-dbus",
-]
-
-[[package]]
-name = "lntrn-lava-lamp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "lntrn-render 0.1.0",
- "raw-window-handle",
- "wayland-backend",
- "wayland-client",
- "wayland-protocols",
- "wgpu",
 ]
 
 [[package]]
@@ -2856,14 +2797,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lntrn-spotify-theme"
-version = "0.1.0"
-dependencies = [
- "flate2",
- "lntrn-theme",
-]
-
-[[package]]
 name = "lntrn-svg"
 version = "0.2.0"
 dependencies = [
@@ -2986,21 +2919,6 @@ dependencies = [
  "lntrn-props",
  "lntrn-render 0.2.0",
  "lntrn-text 0.2.0",
-]
-
-[[package]]
-name = "lntrn-ui-test"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "lntrn-render 0.1.0",
- "lntrn-theme",
- "lntrn-ui 0.1.0",
- "raw-window-handle",
- "wayland-backend",
- "wayland-client",
- "wayland-protocols",
- "wgpu",
 ]
 
 [[package]]

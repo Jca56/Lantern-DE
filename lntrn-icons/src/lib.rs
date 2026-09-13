@@ -3,46 +3,20 @@
 //! All Lantern-owned SVG/PNG icons are compiled into the binary via `include_bytes!`.
 //! Use `get(name)` to retrieve raw bytes by filename.
 
-// ── Bar status icons ────────────────────────────────────────────────────────
+// ── System icons ────────────────────────────────────────────────────────────
 
-const SPARK_BATTERY_CHARGING: &[u8] =
-    include_bytes!("../../icons/bar/spark-battery-charging(1).svg");
-const SPARK_BATTERY_HIGH: &[u8] = include_bytes!("../../icons/bar/spark-battery-high.svg");
-const SPARK_BATTERY_LOW: &[u8] = include_bytes!("../../icons/bar/spark-battery-low.svg");
-const SPARK_BATTERY_MEDIUM: &[u8] = include_bytes!("../../icons/bar/spark-battery-medium.svg");
-const SPARK_BLUETOOTH_CONNECTED: &[u8] =
-    include_bytes!("../../icons/bar/spark-bluetooth-connected.svg");
-const SPARK_BLUETOOTH_OFF: &[u8] = include_bytes!("../../icons/bar/spark-bluetooth-off.svg");
-const SPARK_BLUETOOTH_ON: &[u8] = include_bytes!("../../icons/bar/spark-bluetooth-on.svg");
-const SPARK_BRIGHTNESS_HIGH: &[u8] = include_bytes!("../../icons/bar/spark-brightness-high.svg");
-const SPARK_BRIGHTNESS_LOW: &[u8] = include_bytes!("../../icons/bar/spark-brightness-low.svg");
-const SPARK_MENU_ALL: &[u8] = include_bytes!("../../icons/bar/spark-menu-all.svg");
-const SPARK_MENU_DEVELOPMENT: &[u8] = include_bytes!("../../icons/bar/spark-menu-development.svg");
-const SPARK_MENU_FAVORITES: &[u8] = include_bytes!("../../icons/bar/spark-menu-favorites.svg");
-const SPARK_MENU_GRAPHICS: &[u8] = include_bytes!("../../icons/bar/spark-menu-graphics.svg");
-const SPARK_MENU_INTERNET: &[u8] = include_bytes!("../../icons/bar/spark-menu-internet.svg");
-const SPARK_MENU_LOCKSCREEN: &[u8] = include_bytes!("../../icons/bar/spark-menu-lockscreen.svg");
-const SPARK_MENU_LOGOUT: &[u8] = include_bytes!("../../icons/bar/spark-menu-logout.svg");
-const SPARK_MENU_MEDIA: &[u8] = include_bytes!("../../icons/bar/spark-menu-media.svg");
-const SPARK_MENU_RESTART: &[u8] = include_bytes!("../../icons/bar/spark-menu-restart.svg");
-const SPARK_MENU_SETTINGS: &[u8] = include_bytes!("../../icons/bar/spark-menu-settings.svg");
-const SPARK_MENU_SHUTDOWN: &[u8] = include_bytes!("../../icons/bar/spark-menu-shutdown.svg");
-const SPARK_MENU_SLEEP: &[u8] = include_bytes!("../../icons/bar/spark-menu-sleep.svg");
-const SPARK_MENU_SYSTEM: &[u8] = include_bytes!("../../icons/bar/spark-menu-system.svg");
-const SPARK_NOTIFICATION_BELL: &[u8] =
-    include_bytes!("../../icons/bar/spark-notification-bell.svg");
-const SPARK_SOUND_HIGH: &[u8] = include_bytes!("../../icons/bar/spark-sound-high.svg");
-const SPARK_SOUND_LOW: &[u8] = include_bytes!("../../icons/bar/spark-sound-low.svg");
-const SPARK_SOUND_MEDIUM: &[u8] = include_bytes!("../../icons/bar/spark-sound-medium.svg");
-const SPARK_SOUND_MUTED: &[u8] = include_bytes!("../../icons/bar/spark-sound-muted.svg");
-const SPARK_TEMP_COOL: &[u8] = include_bytes!("../../icons/bar/spark-temp-cool.svg");
-const SPARK_TEMP_HOT: &[u8] = include_bytes!("../../icons/bar/spark-temp-hot.svg");
-const SPARK_TEMP_WARM: &[u8] = include_bytes!("../../icons/bar/spark-temp-warm.svg");
-const SPARK_USB: &[u8] = include_bytes!("../../icons/bar/spark-usb.svg");
-const SPARK_WIFI_HIGH: &[u8] = include_bytes!("../../icons/bar/spark-wifi-high.svg");
-const SPARK_WIFI_LOW: &[u8] = include_bytes!("../../icons/bar/spark-wifi-low.svg");
-const SPARK_WIFI_MEDIUM: &[u8] = include_bytes!("../../icons/bar/spark-wifi-medium.svg");
-const BAR_TERMINAL: &[u8] = include_bytes!("../../icons/bar/terminal.svg");
+const SPARK_BRIGHTNESS_HIGH: &[u8] =
+    include_bytes!("../../icons/system/spark-brightness-high.svg");
+const SPARK_BRIGHTNESS_LOW: &[u8] = include_bytes!("../../icons/system/spark-brightness-low.svg");
+const SPARK_MENU_LOCKSCREEN: &[u8] =
+    include_bytes!("../../icons/system/spark-menu-lockscreen.svg");
+const SPARK_MENU_RESTART: &[u8] = include_bytes!("../../icons/system/spark-menu-restart.svg");
+const SPARK_MENU_SHUTDOWN: &[u8] = include_bytes!("../../icons/system/spark-menu-shutdown.svg");
+const SPARK_MENU_SLEEP: &[u8] = include_bytes!("../../icons/system/spark-menu-sleep.svg");
+const SPARK_SOUND_HIGH: &[u8] = include_bytes!("../../icons/system/spark-sound-high.svg");
+const SPARK_SOUND_LOW: &[u8] = include_bytes!("../../icons/system/spark-sound-low.svg");
+const SPARK_SOUND_MEDIUM: &[u8] = include_bytes!("../../icons/system/spark-sound-medium.svg");
+const SPARK_SOUND_MUTED: &[u8] = include_bytes!("../../icons/system/spark-sound-muted.svg");
 
 // ── App icons ───────────────────────────────────────────────────────────────
 
@@ -138,46 +112,21 @@ const FOLDER_WAVE: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-fol
 
 /// Get embedded icon bytes by filename.
 ///
-/// Bar/app/cursor icons use flat names: `"spark-sound-high.svg"`, `"lntrn-cursor.svg"`
+/// System/app/cursor icons use flat names: `"spark-sound-high.svg"`, `"lntrn-cursor.svg"`
 /// Folder icons use path-style: `"folders/Standard/lntrn-folder-desktop.svg"`
 pub fn get(name: &str) -> Option<&'static [u8]> {
     Some(match name {
-        // Bar status icons
-        "spark-battery-charging(1).svg" => SPARK_BATTERY_CHARGING,
-        "spark-battery-high.svg" => SPARK_BATTERY_HIGH,
-        "spark-battery-low.svg" => SPARK_BATTERY_LOW,
-        "spark-battery-medium.svg" => SPARK_BATTERY_MEDIUM,
-        "spark-bluetooth-connected.svg" => SPARK_BLUETOOTH_CONNECTED,
-        "spark-bluetooth-off.svg" => SPARK_BLUETOOTH_OFF,
-        "spark-bluetooth-on.svg" => SPARK_BLUETOOTH_ON,
+        // System icons
         "spark-brightness-high.svg" => SPARK_BRIGHTNESS_HIGH,
         "spark-brightness-low.svg" => SPARK_BRIGHTNESS_LOW,
-        "spark-menu-all.svg" => SPARK_MENU_ALL,
-        "spark-menu-development.svg" => SPARK_MENU_DEVELOPMENT,
-        "spark-menu-favorites.svg" => SPARK_MENU_FAVORITES,
-        "spark-menu-graphics.svg" => SPARK_MENU_GRAPHICS,
-        "spark-menu-internet.svg" => SPARK_MENU_INTERNET,
         "spark-menu-lockscreen.svg" => SPARK_MENU_LOCKSCREEN,
-        "spark-menu-logout.svg" => SPARK_MENU_LOGOUT,
-        "spark-menu-media.svg" => SPARK_MENU_MEDIA,
         "spark-menu-restart.svg" => SPARK_MENU_RESTART,
-        "spark-menu-settings.svg" => SPARK_MENU_SETTINGS,
         "spark-menu-shutdown.svg" => SPARK_MENU_SHUTDOWN,
         "spark-menu-sleep.svg" => SPARK_MENU_SLEEP,
-        "spark-menu-system.svg" => SPARK_MENU_SYSTEM,
-        "spark-notification-bell.svg" => SPARK_NOTIFICATION_BELL,
         "spark-sound-high.svg" => SPARK_SOUND_HIGH,
         "spark-sound-low.svg" => SPARK_SOUND_LOW,
         "spark-sound-medium.svg" => SPARK_SOUND_MEDIUM,
         "spark-sound-muted.svg" => SPARK_SOUND_MUTED,
-        "spark-temp-cool.svg" => SPARK_TEMP_COOL,
-        "spark-temp-hot.svg" => SPARK_TEMP_HOT,
-        "spark-temp-warm.svg" => SPARK_TEMP_WARM,
-        "spark-usb.svg" => SPARK_USB,
-        "spark-wifi-high.svg" => SPARK_WIFI_HIGH,
-        "spark-wifi-low.svg" => SPARK_WIFI_LOW,
-        "spark-wifi-medium.svg" => SPARK_WIFI_MEDIUM,
-        "terminal.svg" => BAR_TERMINAL,
 
         // App icons
         "lntrn-calculator.svg" => LNTRN_CALCULATOR,
