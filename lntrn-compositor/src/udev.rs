@@ -46,10 +46,6 @@ pub const BG_COLOR: [f32; 4] = [0.094, 0.094, 0.094, 1.0];
 pub(crate) const SUPPORTED_FORMATS: &[Fourcc] = &[Fourcc::Argb8888, Fourcc::Abgr8888];
 /// Fallback render interval when no output info is available (60Hz).
 pub const RENDER_INTERVAL: Duration = Duration::from_millis(16);
-/// Compositor output scale (reads [display] scale from lantern.toml, defaults 1.0).
-pub(crate) fn lantern_output_scale() -> f64 {
-    crate::output_scale()
-}
 
 pub fn frame_callback_interval(output: &smithay::output::Output) -> Duration {
     // smithay reports `mode.refresh` in millihertz (60Hz → 60_000). Period
@@ -160,7 +156,7 @@ pub struct UdevData {
     /// its own textures + throttle/fingerprint bookkeeping — otherwise
     /// multi-monitor with different resolutions thrashes a single shared
     /// state every render and the fingerprint never matches.
-    pub blur_states: std::collections::HashMap<UdevOutputId, crate::blur::BlurState>,
+    pub(crate) blur_states: std::collections::HashMap<UdevOutputId, crate::blur::BlurState>,
     /// One-shot timer token for demand-driven rendering.
     /// When a render is scheduled, we insert an *immediate* timer to flush it
     /// on the next loop iteration; `None` means no render is queued (idle — zero

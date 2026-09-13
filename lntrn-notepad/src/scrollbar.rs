@@ -66,19 +66,6 @@ impl ScrollbarState {
             self.opacity += diff * 0.35;
         }
     }
-
-    /// True while the fade animation is still settling — host should keep
-    /// requesting redraws.
-    pub fn animating(&self) -> bool {
-        if self.opacity > 0.005 && self.opacity < 0.995 {
-            return true;
-        }
-        let Some(last) = self.last_activity else {
-            return false;
-        };
-        let elapsed = Instant::now().duration_since(last).as_millis() as f32;
-        elapsed < FADE_HOLD_MS + FADE_DURATION_MS
-    }
 }
 
 /// Geometry of the scrollbar within a scrollable region.

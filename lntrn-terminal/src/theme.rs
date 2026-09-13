@@ -53,16 +53,6 @@ impl Theme {
         }
     }
 
-    pub fn fox_light() -> Self {
-        Self {
-            bg: Color8::from_rgb(46, 46, 50),
-            surface: Color8::from_rgb(56, 56, 60),
-            text: Color8::from_rgb(220, 220, 220),
-            terminal_fg: Color8::from_rgb(220, 220, 220),
-            terminal_bold: false,
-        }
-    }
-
     pub fn lantern() -> Self {
         Self {
             bg: Color8::from_rgb(30, 25, 20),

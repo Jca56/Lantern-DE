@@ -5,12 +5,11 @@
 
 use smithay::{
     reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::{Logical, Point, Rectangle, Serial, Size},
+    utils::{Logical, Point, Rectangle, Size},
 };
 
 use crate::state::Lantern;
 use crate::window_ext::WindowExt;
-use crate::window_management::PoseSlot;
 use crate::window_state::SoloTiledWindow;
 
 impl Lantern {

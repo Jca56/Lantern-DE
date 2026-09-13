@@ -25,12 +25,6 @@ pub fn doc_id_from_path(rel: &str) -> String {
     enc.replace('/', "__")
 }
 
-pub fn path_from_doc_id(id: &str) -> String {
-    let with_slash = id.replace("__", "/");
-    urlencoding::decode(&with_slash)
-        .map(|s| s.into_owned())
-        .unwrap_or(with_slash)
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileDoc {
@@ -125,22 +119,6 @@ pub fn put(authed: &Authed, doc: &FileDoc) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn get(authed: &Authed, rel_path: &str) -> anyhow::Result<Option<FileDoc>> {
-    let url = doc_url(authed, rel_path);
-    match authed.get(&url) {
-        Ok(resp) => {
-            let v: serde_json::Value = resp.into_json()?;
-            Ok(v.get("fields").and_then(from_fields))
-        }
-        Err(e) => {
-            if format!("{e}").contains("404") {
-                Ok(None)
-            } else {
-                Err(e)
-            }
-        }
-    }
-}
 
 /// Incremental pull: every doc whose `updated_at` (client-set millis) is
 /// strictly greater than `since_ms`. Firestore bills one read per RETURNED

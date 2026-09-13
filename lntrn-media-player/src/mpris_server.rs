@@ -11,7 +11,6 @@ use lntrn_dbus::{
 };
 
 const BUS_NAME: &str = "org.mpris.MediaPlayer2.lntrn_media_player";
-const OBJECT_PATH: &str = "/org/mpris/MediaPlayer2";
 const IFACE_ROOT: &str = "org.mpris.MediaPlayer2";
 const IFACE_PLAYER: &str = "org.mpris.MediaPlayer2.Player";
 const IFACE_PROPS: &str = "org.freedesktop.DBus.Properties";
@@ -37,7 +36,6 @@ pub enum MprisCmd {
     Next,
     Previous,
     Stop,
-    SetVolume(f64),
     Seek(i64),
 }
 
@@ -339,43 +337,6 @@ fn encode_variant_empty_array_string(buf: &mut Vec<u8>) {
     encode_u32(buf, 0); // empty array
 }
 
-fn emit_properties_changed(conn: &mut Connection, state: &PlayerState) {
-    // Signal body: STRING interface_name, DICT changed_properties, ARRAY invalidated
-    let mut body = Vec::new();
-    encode_string(&mut body, IFACE_PLAYER);
-
-    // Changed properties dict: a{sv} — align before marking the start so the
-    // length excludes the padding (see encode_all_properties).
-    align_to(&mut body, 4);
-    let len_pos = body.len();
-    encode_u32(&mut body, 0);
-    align_to(&mut body, 8);
-    let array_start = body.len();
-
-    encode_dict_entry_sv(&mut body, "PlaybackStatus", |b| {
-        let s = if state.playing { "Playing" } else { "Paused" };
-        encode_variant_string(b, s);
-    });
-    encode_dict_entry_sv(&mut body, "Metadata", |b| {
-        encode_variant_metadata(b, state);
-    });
-
-    let array_len = (body.len() - array_start) as u32;
-    body[len_pos..len_pos + 4].copy_from_slice(&array_len.to_le_bytes());
-
-    // Invalidated properties: empty array of strings
-    align_to(&mut body, 4);
-    encode_u32(&mut body, 0);
-
-    conn.send_signal(
-        OBJECT_PATH,
-        IFACE_PROPS,
-        "PropertiesChanged",
-        "sa{sv}as",
-        &body,
-    );
-}
-
 fn introspect_xml() -> String {
     r#"<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
  "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
@@ -400,7 +361,7 @@ fn introspect_xml() -> String {
     <method name="Seek"><arg direction="in" type="x" name="Offset"/></method>
     <property name="PlaybackStatus" type="s" access="read"/>
     <property name="Metadata" type="a{sv}" access="read"/>
-    <property name="Volume" type="d" access="readwrite"/>
+    <property name="Volume" type="d" access="read"/>
     <property name="Position" type="x" access="read"/>
     <property name="Rate" type="d" access="read"/>
     <property name="CanGoNext" type="b" access="read"/>

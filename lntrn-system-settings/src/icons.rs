@@ -210,42 +210,6 @@ pub fn icon_appearance() -> Vec<PathCmd> {
     ]
 }
 
-/// Window Manager — overlapping windows icon
-pub fn icon_window_manager() -> Vec<PathCmd> {
-    use PathCmd::*;
-    vec![
-        // Back window
-        Move(7.0, 5.0),
-        Line(20.0, 5.0),
-        Cubic(20.5, 5.0, 21.0, 5.5, 21.0, 6.0),
-        Line(21.0, 16.0),
-        Cubic(21.0, 16.5, 20.5, 17.0, 20.0, 17.0),
-        Line(13.0, 17.0),
-        Line(13.0, 11.0),
-        Line(7.0, 11.0),
-        Line(7.0, 6.0),
-        Cubic(7.0, 5.5, 7.0, 5.0, 7.0, 5.0),
-        Close,
-        // Front window
-        Move(4.0, 9.0),
-        Line(15.0, 9.0),
-        Cubic(15.5, 9.0, 16.0, 9.5, 16.0, 10.0),
-        Line(16.0, 19.0),
-        Cubic(16.0, 19.5, 15.5, 20.0, 15.0, 20.0),
-        Line(4.0, 20.0),
-        Cubic(3.5, 20.0, 3.0, 19.5, 3.0, 19.0),
-        Line(3.0, 10.0),
-        Cubic(3.0, 9.5, 3.5, 9.0, 4.0, 9.0),
-        Close,
-        // Front window title bar
-        Move(3.0, 10.0),
-        Line(16.0, 10.0),
-        Line(16.0, 12.0),
-        Line(3.0, 12.0),
-        Close,
-    ]
-}
-
 /// Input — keyboard icon
 pub fn icon_input() -> Vec<PathCmd> {
     use PathCmd::*;

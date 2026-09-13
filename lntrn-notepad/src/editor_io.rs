@@ -6,14 +6,6 @@ use std::path::PathBuf;
 use crate::editor::Editor;
 
 impl Editor {
-    pub fn title(&self) -> String {
-        if self.modified {
-            format!("* {} — lntrn-notepad", self.filename)
-        } else {
-            format!("{} — lntrn-notepad", self.filename)
-        }
-    }
-
     pub fn load_file(&mut self, path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         let content = std::fs::read_to_string(&path)?;
         let (lines, formats) = crate::persist::parse(&path, &content);

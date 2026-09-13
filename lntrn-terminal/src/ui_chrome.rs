@@ -151,7 +151,6 @@ pub enum ClickAction {
     Maximize,
     StartDrag,
     SliderDrag,
-    WindowModeChanged,
     SplitHorizontal,
     SplitVertical,
     ClosePane,

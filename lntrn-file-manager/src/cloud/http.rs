@@ -84,24 +84,6 @@ impl Authed {
         }
     }
 
-    pub fn delete(&self, url: &str) -> anyhow::Result<ureq::Response> {
-        let tok = self.token()?;
-        match ureq::request("DELETE", url)
-            .set("Authorization", &format!("Bearer {tok}"))
-            .call()
-        {
-            Ok(r) => Ok(r),
-            Err(ureq::Error::Status(401, _)) => {
-                self.force_refresh()?;
-                let tok = self.token()?;
-                ureq::request("DELETE", url)
-                    .set("Authorization", &format!("Bearer {tok}"))
-                    .call()
-                    .map_err(|e| anyhow::anyhow!("DELETE {url}: {e}"))
-            }
-            Err(e) => Err(anyhow::anyhow!("DELETE {url}: {e}")),
-        }
-    }
 
     /// PUT raw bytes (used for Storage uploads).
     pub fn put_bytes(

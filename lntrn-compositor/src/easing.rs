@@ -51,23 +51,6 @@ pub fn ease_in_out_quint(t: f64) -> f64 {
     }
 }
 
-/// Ease-in-out exponential: even more dramatic than quintic.
-/// Use for the showiest transitions; can feel sluggish at long durations.
-pub fn ease_in_out_expo(t: f64) -> f64 {
-    let t = t.clamp(0.0, 1.0);
-    if t == 0.0 {
-        return 0.0;
-    }
-    if t >= 1.0 {
-        return 1.0;
-    }
-    if t < 0.5 {
-        2f64.powf(20.0 * t - 10.0) / 2.0
-    } else {
-        (2.0 - 2f64.powf(-20.0 * t + 10.0)) / 2.0
-    }
-}
-
 /// Damped spring: critically/under-damped oscillation that settles to 1.0.
 ///
 /// - `damping`: 0.3..0.8 typical. Lower = more bouncy. 1.0 = critically damped.

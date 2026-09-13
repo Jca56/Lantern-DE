@@ -11,8 +11,6 @@ pub struct CloudConfig {
     pub api_key: String,
     pub project_id: String,
     pub storage_bucket: String,
-    #[serde(default)]
-    pub auth_domain: String,
 }
 
 impl CloudConfig {

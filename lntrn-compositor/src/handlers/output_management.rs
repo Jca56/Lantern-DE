@@ -264,7 +264,6 @@ impl OutputManagementState {
         let enabled = head.enabled;
         let position = head.position;
         let scale = head.scale;
-        let mode_count = head.modes.len();
 
         // Send modes — collect mode objects first, then store weak refs
         let mut mode_objs: Vec<(usize, ZwlrOutputModeV1)> = Vec::new();

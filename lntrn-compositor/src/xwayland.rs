@@ -203,8 +203,7 @@ fn handle_xwayland_ready(
 
     // (Do NOT set XRandR primary here — Steam's webhelper (CEF) hits a
     // NOTREACHED assertion shortly after XWayland reports a primary output
-    // and the Steam UI never appears. `set_randr_primary` is kept for
-    // reference but stays unused. Instead, primary-output placement is
+    // and the Steam UI never appears. Instead, primary-output placement is
     // handled compositor-side: `resort_outputs` orders the flagged
     // `primary = true` monitor first, so X11 games spawn on it via
     // `place_new_window` without XWayland ever announcing a RANDR primary.)
@@ -272,27 +271,6 @@ fn primary_output_scale(state: &Lantern) -> f64 {
         .min_by_key(|(_, loc)| loc.x.abs() + loc.y.abs())
         .map(|(o, _)| o.current_scale().fractional_scale())
         .unwrap_or(1.0)
-}
-
-fn set_randr_primary(state: &mut Lantern) {
-    // Pick the output closest to compositor (0, 0). With our normalized
-    // monitor layout that's the top-left monitor — the user's main display.
-    let primary = state
-        .workspaces
-        .known_outputs()
-        .min_by_key(|(_, loc)| loc.x.abs() + loc.y.abs())
-        .map(|(o, _)| o.clone());
-    let Some(output) = primary else {
-        tracing::warn!("set_randr_primary: no outputs available");
-        return;
-    };
-    let Some(xwm) = state.xwayland_state.wm.as_mut() else {
-        return;
-    };
-    match xwm.set_randr_primary_output(Some(&output)) {
-        Ok(()) => tracing::info!(name = output.name(), "XRandR primary output set"),
-        Err(err) => tracing::warn!("set_randr_primary_output failed: {err}"),
-    }
 }
 
 /// Push session vars into the dbus + systemd --user activation environment.

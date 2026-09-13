@@ -265,8 +265,6 @@ pub(crate) struct MonitorConfig {
     pub name: String,
     pub x: i32,
     pub y: i32,
-    pub resolution: Option<String>,
-    pub refresh_rate: Option<u32>,
     pub scale: Option<f64>,
     pub wallpaper: Option<String>,
     /// User-designated "main" monitor — UI surfaces that should always
@@ -275,12 +273,6 @@ pub(crate) struct MonitorConfig {
     /// Allow Variable Refresh Rate (adaptive sync) on this output. Honored
     /// on demand — only while a fullscreen app owns the output. See `vrr.rs`.
     pub vrr: bool,
-    /// Enable HDR output on this monitor (only meaningful if the display
-    /// reports HDR support via EDID). See the `hdr` module.
-    pub hdr: bool,
-    /// Luminance (nits) that SDR white maps to inside the HDR signal. The
-    /// BT.2408 reference is 203. Higher = brighter SDR content. Default 203.
-    pub sdr_brightness: Option<u32>,
     /// Whether this monitor's desktop is active. `false` = the user manually
     /// switched it off in System Settings; the compositor tears down its
     /// output (no dead pointer/window zone) but keeps it re-enableable. The
@@ -475,42 +467,30 @@ pub(crate) fn read_monitor_configs_raw() -> Vec<MonitorConfig> {
     let mut name = String::new();
     let mut x: Option<i32> = None;
     let mut y: Option<i32> = None;
-    let mut resolution: Option<String> = None;
-    let mut refresh_rate: Option<u32> = None;
     let mut scale: Option<f64> = None;
     let mut wallpaper: Option<String> = None;
     let mut primary = false;
     let mut vrr = false;
-    let mut hdr = false;
-    let mut sdr_brightness: Option<u32> = None;
     let mut enabled = true;
 
-    let mut flush = |name: &mut String,
-                     x: &mut Option<i32>,
-                     y: &mut Option<i32>,
-                     resolution: &mut Option<String>,
-                     refresh_rate: &mut Option<u32>,
-                     scale: &mut Option<f64>,
-                     wallpaper: &mut Option<String>,
-                     primary: &mut bool,
-                     vrr: &mut bool,
-                     hdr: &mut bool,
-                     sdr_brightness: &mut Option<u32>,
-                     enabled: &mut bool,
-                     monitors: &mut Vec<MonitorConfig>| {
+    let flush = |name: &mut String,
+                 x: &mut Option<i32>,
+                 y: &mut Option<i32>,
+                 scale: &mut Option<f64>,
+                 wallpaper: &mut Option<String>,
+                 primary: &mut bool,
+                 vrr: &mut bool,
+                 enabled: &mut bool,
+                 monitors: &mut Vec<MonitorConfig>| {
         if !name.is_empty() {
             monitors.push(MonitorConfig {
                 name: std::mem::take(name),
                 x: x.take().unwrap_or(0),
                 y: y.take().unwrap_or(0),
-                resolution: resolution.take(),
-                refresh_rate: refresh_rate.take(),
                 scale: scale.take(),
                 wallpaper: wallpaper.take(),
                 primary: std::mem::take(primary),
                 vrr: std::mem::take(vrr),
-                hdr: std::mem::take(hdr),
-                sdr_brightness: sdr_brightness.take(),
                 // Reset to the default (true) for the next section — bare
                 // `mem::take` would leave it false and silently disable any
                 // following monitor that omits the key.
@@ -530,14 +510,10 @@ pub(crate) fn read_monitor_configs_raw() -> Vec<MonitorConfig> {
                 &mut name,
                 &mut x,
                 &mut y,
-                &mut resolution,
-                &mut refresh_rate,
                 &mut scale,
                 &mut wallpaper,
                 &mut primary,
                 &mut vrr,
-                &mut hdr,
-                &mut sdr_brightness,
                 &mut enabled,
                 &mut monitors,
             );
@@ -550,14 +526,10 @@ pub(crate) fn read_monitor_configs_raw() -> Vec<MonitorConfig> {
                     &mut name,
                     &mut x,
                     &mut y,
-                    &mut resolution,
-                    &mut refresh_rate,
                     &mut scale,
                     &mut wallpaper,
                     &mut primary,
                     &mut vrr,
-                    &mut hdr,
-                    &mut sdr_brightness,
                     &mut enabled,
                     &mut monitors,
                 );
@@ -573,14 +545,10 @@ pub(crate) fn read_monitor_configs_raw() -> Vec<MonitorConfig> {
                     "name" => name = v.to_string(),
                     "x" => x = v.parse().ok(),
                     "y" => y = v.parse().ok(),
-                    "resolution" => resolution = Some(v.to_string()),
-                    "refresh_rate" => refresh_rate = v.parse().ok(),
                     "scale" => scale = v.parse().ok(),
                     "wallpaper" => wallpaper = Some(v.to_string()),
                     "primary" => primary = v == "true",
                     "vrr" => vrr = v == "true",
-                    "hdr" => hdr = v == "true",
-                    "sdr_brightness" => sdr_brightness = v.parse().ok(),
                     "enabled" => enabled = v != "false",
                     _ => {}
                 }
@@ -593,14 +561,10 @@ pub(crate) fn read_monitor_configs_raw() -> Vec<MonitorConfig> {
             &mut name,
             &mut x,
             &mut y,
-            &mut resolution,
-            &mut refresh_rate,
             &mut scale,
             &mut wallpaper,
             &mut primary,
             &mut vrr,
-            &mut hdr,
-            &mut sdr_brightness,
             &mut enabled,
             &mut monitors,
         );
@@ -627,27 +591,6 @@ pub(crate) fn output_vrr_enabled(name: &str) -> bool {
         .find(|m| m.name == name)
         .map(|m| m.vrr)
         .unwrap_or(false)
-}
-
-/// Whether the named output should be driven in HDR mode (`hdr = true` in its
-/// `[[monitors]]` block). Default false. Only takes effect if the display
-/// actually reports HDR support via EDID — see the `hdr` module.
-pub(crate) fn output_hdr_enabled(name: &str) -> bool {
-    read_monitor_configs()
-        .iter()
-        .find(|m| m.name == name)
-        .map(|m| m.hdr)
-        .unwrap_or(false)
-}
-
-/// Luminance (nits) SDR white maps to inside the HDR signal for the named
-/// output. Falls back to the BT.2408 reference of 203 when unset.
-pub(crate) fn output_sdr_brightness(name: &str) -> u32 {
-    read_monitor_configs()
-        .iter()
-        .find(|m| m.name == name)
-        .and_then(|m| m.sdr_brightness)
-        .unwrap_or(203)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

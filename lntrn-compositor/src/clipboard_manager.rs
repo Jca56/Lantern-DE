@@ -125,12 +125,6 @@ impl ClipboardManager {
         }
     }
 
-    /// True if the given entry id is what we currently have published
-    /// (so a recheck doesn't bother re-publishing the same thing).
-    fn already_publishing(&self, id: u64) -> bool {
-        self.published.as_ref().map(|e| e.id) == Some(id)
-    }
-
     /// Snapshot of the current history (newest first), cheap clone.
     pub fn history(&self) -> Vec<Arc<ClipboardEntry>> {
         self.history.iter().cloned().collect()

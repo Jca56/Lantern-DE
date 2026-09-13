@@ -24,13 +24,11 @@ fn socket_path() -> PathBuf {
 pub struct HdrCaps {
     pub hdr_capable: bool,
     pub max_nits: u32,
-    pub min_milli_nits: u32,
 }
 
 /// A live "Keep HDR?" confirmation prompt for an output, with its deadline.
 #[derive(Clone)]
 pub struct HdrPendingConfirm {
-    pub total_secs: u32,
     pub deadline: Instant,
 }
 
@@ -129,7 +127,6 @@ impl HdrClient {
                     self.pending.insert(
                         output.to_string(),
                         HdrPendingConfirm {
-                            total_secs,
                             deadline: Instant::now()
                                 + std::time::Duration::from_secs(total_secs as u64),
                         },
@@ -165,14 +162,6 @@ impl HdrClient {
         self.pending.remove(output);
     }
 
-    /// Whether the named output is HDR-capable.
-    pub fn is_capable(&self, output: &str) -> bool {
-        self.caps
-            .get(output)
-            .map(|c| c.hdr_capable)
-            .unwrap_or(false)
-    }
-
     /// Send a live HDR enable/disable request to the compositor.
     pub fn set_hdr(&mut self, output: &str, enable: bool, sdr_nits: u32) {
         let Some(stream) = self.stream.as_mut() else {
@@ -201,7 +190,6 @@ fn parse_caps_line(msg: &str) -> Option<(String, HdrCaps)> {
         HdrCaps {
             hdr_capable: parts[2] == "1",
             max_nits: parts[3].parse().ok()?,
-            min_milli_nits: parts[4].parse().ok()?,
         },
     ))
 }

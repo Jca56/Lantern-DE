@@ -5,7 +5,7 @@ use anyhow::{anyhow, Result};
 use lntrn_render::{
     Color, GpuContext, GpuTexture, Painter, Rect, TextRenderer, TextureDraw, TexturePass,
 };
-use lntrn_ui::gpu::{FoxPalette, InteractionContext, PopupSurface, WaylandPopupBackend};
+use lntrn_ui::gpu::{InteractionContext, PopupSurface, WaylandPopupBackend};
 
 use crate::config::LanternConfig;
 use crate::display_panel::{self, DisplayPanelState};
@@ -219,8 +219,6 @@ pub fn run() -> Result<()> {
     let mut painter = Painter::new(&gpu);
     let mut text = TextRenderer::new(&gpu);
     let mut ix = InteractionContext::new();
-    // Palette will be rebuilt each frame from the current window mode.
-    let mut fox = FoxPalette::dark();
 
     // Initialize popup backend
     {
@@ -263,8 +261,9 @@ pub fn run() -> Result<()> {
     let mut sidebar_state = SidebarState::new(active_panel);
     let mut config = LanternConfig::load();
     let mut saved_config = config.clone();
-    // Seed the palette from the persisted window style.
-    fox = chrome::content_palette(config.appearance.window_mode());
+    // Seed the palette from the persisted window style; it's rebuilt each
+    // frame from the current window mode.
+    let mut fox = chrome::content_palette(config.appearance.window_mode());
     let mut panel_state = PanelState::new(&fox);
     let mut display_state = DisplayPanelState::new(&config);
     let mut lock_wp_state = crate::lock_wallpaper_panel::LockWallpaperState::new();

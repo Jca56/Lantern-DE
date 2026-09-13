@@ -31,7 +31,6 @@ pub enum SyncStatus {
     Idle,
     Syncing,
     Error,
-    Offline,
     /// Firestore quota exhausted (HTTP 429) — sync is intentionally paused
     /// and will retry with backoff. Not an error; quotas reset daily.
     RateLimited,

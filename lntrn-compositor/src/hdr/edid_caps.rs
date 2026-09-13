@@ -48,8 +48,6 @@ pub struct HdrCaps {
     pub pq_supported: bool,
     /// Display advertises the HLG EOTF.
     pub hlg_supported: bool,
-    /// Display advertises BT.2020 RGB signal colorimetry.
-    pub bt2020_supported: bool,
     /// Peak luminance the display wants content mastered to, in nits.
     pub max_luminance: f32,
     /// Minimum (black) luminance, in nits.
@@ -130,12 +128,9 @@ pub fn detect(info: &Info) -> Option<HdrCaps> {
         (BT2020_PRIMARIES, D65_WHITE)
     };
 
-    let colorimetry = info.supported_signal_colorimetry();
-
     Some(HdrCaps {
         pq_supported: hdr.pq,
         hlg_supported: hdr.hlg,
-        bt2020_supported: colorimetry.bt2020_rgb,
         max_luminance,
         min_luminance,
         max_frame_avg_luminance,

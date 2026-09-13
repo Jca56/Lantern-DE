@@ -1,48 +1,13 @@
-//! Night Sky window chrome: gradient background, custom title bar, window controls.
+//! Window controls (minimize / maximize / close) drawn into the title bar.
 
 use lntrn_render::{Color, Painter, Rect};
 
-// ── Night sky palette ───────────────────────────────────────────────────────
-const BG_DEEP: Color = Color::rgb(0.008, 0.003, 0.020);
-const BG_SURFACE: Color = Color::rgb(0.020, 0.007, 0.045);
-const GLOW_PINK: Color = Color::rgba(0.45, 0.14, 0.32, 0.04);
-const GLOW_CYAN: Color = Color::rgba(0.14, 0.35, 0.52, 0.04);
+// ── Control palette ─────────────────────────────────────────────────────────
 const CLOSE_BG: Color = Color::rgb(0.45, 0.02, 0.02);
 const CLOSE_HOVER: Color = Color::rgba(0.45, 0.02, 0.02, 0.35);
 const CONTROL_HOVER: Color = Color::rgba(0.50, 0.38, 0.70, 0.25);
 const CONTROL_ICON: Color = Color::rgb(0.55, 0.50, 0.68);
 const TEXT_PRIMARY: Color = Color::rgb(0.80, 0.76, 0.90);
-
-pub const CORNER_RADIUS: f32 = 18.0;
-
-// ── Background ──────────────────────────────────────────────────────────────
-
-/// Draw gradient background + radial glows.
-pub fn draw_background(p: &mut Painter, w: f32, h: f32, maximized: bool) {
-    let r = if maximized { 0.0 } else { CORNER_RADIUS };
-    let opacity = lntrn_theme::background_opacity();
-    p.rect_gradient_linear(
-        Rect::new(0.0, 0.0, w, h),
-        r,
-        std::f32::consts::FRAC_PI_2,
-        BG_DEEP.with_alpha(opacity),
-        BG_SURFACE.with_alpha(opacity),
-    );
-    // Cyan glow — top-left
-    p.rect_gradient_radial(
-        Rect::new(-w * 0.35, -h * 0.25, w * 0.8, h * 0.7),
-        0.0,
-        GLOW_CYAN,
-        Color::TRANSPARENT,
-    );
-    // Pink glow — bottom-right
-    p.rect_gradient_radial(
-        Rect::new(w * 0.5, h * 0.5, w * 0.8, h * 0.8),
-        0.0,
-        GLOW_PINK,
-        Color::TRANSPARENT,
-    );
-}
 
 // ── Window controls ─────────────────────────────────────────────────────────
 

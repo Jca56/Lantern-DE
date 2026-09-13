@@ -343,24 +343,6 @@ impl App {
                 self.config.save();
                 self.update_grid_size();
             }
-            ui_chrome::ClickAction::WindowModeChanged => {
-                // Theme now comes from System Settings (`[appearance].theme`);
-                // re-resolve and propagate to every open pane's terminal.
-                use crate::terminal::Color8;
-                use crate::theme::Theme;
-                self.theme = Theme::current();
-                for tab in &mut self.tabs {
-                    for pane in &mut tab.panes {
-                        pane.terminal.set_default_colors(
-                            self.theme.terminal_fg,
-                            Color8::TRANSPARENT,
-                            self.theme.terminal_bold,
-                        );
-                    }
-                }
-                self.config.save();
-                self.update_grid_size();
-            }
             ui_chrome::ClickAction::SplitHorizontal => {
                 self.split_pane(SplitDir::Horizontal);
             }

@@ -1,5 +1,4 @@
 mod app;
-mod clipboard;
 mod config;
 mod dnd;
 mod events;
@@ -8,15 +7,16 @@ mod git_app;
 mod git_sidebar;
 mod input;
 mod night_sky;
-mod pty;
 mod render;
 mod render_app;
 mod sidebar;
 mod tab_bar;
 mod tabs;
-mod terminal;
 mod theme;
 mod ui_chrome;
+
+// The embeddable core is compiled once, in the lib, and shared with CC.
+use lntrn_terminal::{clipboard, pty, terminal};
 
 use std::path::PathBuf;
 

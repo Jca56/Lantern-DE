@@ -615,10 +615,6 @@ impl Editor {
         self.modified = true;
     }
 
-    pub fn set_first_indent(&mut self, indent: f32) {
-        self.set_paragraph_attr(|p| p.first_indent = indent);
-    }
-
     /// Get the paragraph attrs of the line the cursor is on.
     pub fn current_para(&self) -> ParagraphAttrs {
         self.formats.get(self.cursor_line).para

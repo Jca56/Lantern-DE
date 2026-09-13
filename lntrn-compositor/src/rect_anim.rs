@@ -75,10 +75,6 @@ impl RectAnim {
         self.target
     }
 
-    pub fn start_rect(&self) -> Rectangle<i32, Logical> {
-        self.start
-    }
-
     /// Linear progress 0..=1.
     fn raw_progress(&self) -> f64 {
         let elapsed = self.start_time.elapsed().as_secs_f64();

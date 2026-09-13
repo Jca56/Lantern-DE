@@ -453,7 +453,7 @@ pub fn render_surface(
     };
 
     // Decay cursor spin-to-grow scale each frame (must be before udev borrow)
-    let spin_needs_redraw = state.cursor.tick_spin_decay();
+    state.cursor.tick_spin_decay();
 
     // Build the list of windows to render BEFORE we mutably borrow
     // `state.udev` — that borrow is held for the rest of the function and
@@ -465,7 +465,6 @@ pub fn render_surface(
     // active workspace's windows for this output. The scratchpad (when
     // present) is tacked on last so it stays visible across workspace
     // switches.
-    let output_name_for_lookup = output.name();
     let mut windows: Vec<smithay::desktop::Window> = Vec::new();
     {
         // Gather windows from EVERY output's active workspace, not just this
@@ -532,7 +531,6 @@ pub fn render_surface(
     let top_center_glow_shader = &udev.top_center_glow_shader;
     let ssd_icon_shader = &udev.ssd_icon_shader;
     let ssd_header_shader = &udev.ssd_header_shader;
-    let corner_shader = &udev.corner_shader;
     let renderer = match udev.renderer.as_mut() {
         Some(r) => r,
         None => return,

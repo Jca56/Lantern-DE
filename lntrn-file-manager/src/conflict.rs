@@ -86,13 +86,11 @@ pub struct PendingRename {
 /// State the dialog renders from. Built when a conflict is hit.
 #[derive(Clone, Debug)]
 pub struct ConflictDialog {
-    pub source: PathBuf,
     pub target: PathBuf,
     pub source_meta: ConflictMeta,
     pub target_meta: ConflictMeta,
     pub apply_to_all: bool,
     pub remaining_count: usize,
-    pub mode: PasteMode,
 }
 
 #[derive(Clone, Debug, Default)]

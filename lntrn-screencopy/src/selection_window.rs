@@ -31,10 +31,6 @@ use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_l
 pub const KEY_ESC: u32 = 1;
 pub const KEY_ENTER: u32 = 28;
 pub const KEY_KPENTER: u32 = 96;
-pub const KEY_C: u32 = 46;
-pub const KEY_S: u32 = 31;
-pub const KEY_LEFTCTRL: u32 = 29;
-pub const KEY_RIGHTCTRL: u32 = 97;
 
 // Linux button codes.
 pub const BTN_LEFT: u32 = 0x110;
@@ -49,8 +45,6 @@ pub struct FrameInput {
     pub left_released: bool,
     pub esc: bool,
     pub enter: bool,
-    pub ctrl_c: bool,
-    pub ctrl_s: bool,
 }
 
 /// Hands wgpu a `RawDisplayHandle` / `RawWindowHandle` pair pointing at
@@ -109,11 +103,8 @@ pub struct WlState {
     cursor_dirty: bool,
     left_pressed_this_frame: bool,
     left_released_this_frame: bool,
-    ctrl_held: bool,
     esc_pressed: bool,
     enter_pressed: bool,
-    ctrl_c_pressed: bool,
-    ctrl_s_pressed: bool,
 }
 
 impl WlState {
@@ -134,11 +125,8 @@ impl WlState {
             cursor_dirty: false,
             left_pressed_this_frame: false,
             left_released_this_frame: false,
-            ctrl_held: false,
             esc_pressed: false,
             enter_pressed: false,
-            ctrl_c_pressed: false,
-            ctrl_s_pressed: false,
         }
     }
 
@@ -184,16 +172,12 @@ impl WlState {
             left_released: self.left_released_this_frame,
             esc: self.esc_pressed,
             enter: self.enter_pressed,
-            ctrl_c: self.ctrl_c_pressed,
-            ctrl_s: self.ctrl_s_pressed,
         };
         self.cursor_dirty = false;
         self.left_pressed_this_frame = false;
         self.left_released_this_frame = false;
         self.esc_pressed = false;
         self.enter_pressed = false;
-        self.ctrl_c_pressed = false;
-        self.ctrl_s_pressed = false;
         out
     }
 }
@@ -605,29 +589,13 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WlState {
                 state: key_state,
                 ..
             } => {
-                let pressed = key_state == WEnum::Value(wl_keyboard::KeyState::Pressed);
-                let released = key_state == WEnum::Value(wl_keyboard::KeyState::Released);
-                if key == KEY_LEFTCTRL || key == KEY_RIGHTCTRL {
-                    if pressed {
-                        state.ctrl_held = true;
-                    } else if released {
-                        state.ctrl_held = false;
-                    }
-                } else if pressed {
+                if key_state == WEnum::Value(wl_keyboard::KeyState::Pressed) {
                     match key {
                         KEY_ESC => state.esc_pressed = true,
                         KEY_ENTER | KEY_KPENTER => state.enter_pressed = true,
-                        KEY_C if state.ctrl_held => state.ctrl_c_pressed = true,
-                        KEY_S if state.ctrl_held => state.ctrl_s_pressed = true,
                         _ => {}
                     }
                 }
-            }
-            wl_keyboard::Event::Modifiers { mods_depressed, .. } => {
-                state.ctrl_held = (mods_depressed & 4) != 0;
-            }
-            wl_keyboard::Event::Leave { .. } => {
-                state.ctrl_held = false;
             }
             _ => {}
         }

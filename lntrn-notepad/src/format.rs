@@ -504,6 +504,7 @@ impl DocFormats {
         self.lines.remove(index)
     }
 
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.lines.len()
     }

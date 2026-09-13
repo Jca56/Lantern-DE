@@ -42,9 +42,6 @@ pub trait WindowExt {
 
     /// Set the fullscreen state on the window.
     fn set_fullscreen(&self, fullscreen: bool);
-
-    /// Set the tiled state on the window (all four edges).
-    fn set_tiled(&self, tiled: bool);
 }
 
 impl WindowExt for Window {
@@ -161,25 +158,5 @@ impl WindowExt for Window {
         } else if let Some(x11) = self.x11_surface() {
             let _ = x11.set_fullscreen(fullscreen);
         }
-    }
-
-    fn set_tiled(&self, tiled: bool) {
-        if let Some(toplevel) = self.toplevel() {
-            toplevel.with_pending_state(|state| {
-                for edge in [
-                    xdg_toplevel::State::TiledLeft,
-                    xdg_toplevel::State::TiledRight,
-                    xdg_toplevel::State::TiledTop,
-                    xdg_toplevel::State::TiledBottom,
-                ] {
-                    if tiled {
-                        state.states.set(edge);
-                    } else {
-                        state.states.unset(edge);
-                    }
-                }
-            });
-        }
-        // X11: no tiled state concept
     }
 }

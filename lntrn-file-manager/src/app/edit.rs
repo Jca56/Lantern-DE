@@ -42,13 +42,11 @@ impl App {
                     // file are allowed through — fs::rename handles those).
                     if new_path.exists() && !self.root_mode {
                         let dialog = crate::conflict::ConflictDialog {
-                            source: old.clone(),
                             target: new_path.clone(),
                             source_meta: crate::conflict::ConflictMeta::read(&old),
                             target_meta: crate::conflict::ConflictMeta::read(&new_path),
                             apply_to_all: false,
                             remaining_count: 0,
-                            mode: crate::conflict::PasteMode::Cut,
                         };
                         self.pending_rename = Some(crate::conflict::PendingRename {
                             from: old,

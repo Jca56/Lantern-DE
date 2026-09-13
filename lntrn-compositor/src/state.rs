@@ -371,7 +371,7 @@ pub struct Lantern {
     /// Global default initial window size (logical px). None = let client choose.
     pub default_window_size: Option<(i32, i32)>,
     /// Per-app initial window size overrides from `[[window_rules]]`.
-    pub window_rules: Vec<crate::WindowRule>,
+    pub(crate) window_rules: Vec<crate::WindowRule>,
     pub window_zoom: HashMap<WlSurface, f64>,
     pub focus_glow: bool,
     pub focus_glow_color: [f32; 4],

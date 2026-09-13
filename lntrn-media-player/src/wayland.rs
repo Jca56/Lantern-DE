@@ -712,12 +712,6 @@ pub fn run(
                     app.prev_track();
                     update_title(&toplevel, &app);
                 }
-                MprisCmd::SetVolume(v) => {
-                    app.volume = v;
-                    if let Some(p) = &mut app.pipeline {
-                        p.set_volume(v);
-                    }
-                }
                 MprisCmd::Seek(offset_us) => {
                     app.seek_relative(offset_us * 1000); // us → ns
                 }

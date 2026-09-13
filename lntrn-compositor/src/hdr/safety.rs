@@ -16,6 +16,10 @@
 //!
 //! HDR is also never engaged at startup (only via a live, watched toggle), so
 //! you're always present when the risky commit happens.
+//!
+//! While HDR engagement is hard-disabled (see `set_output_hdr`), nothing writes
+//! the marker, so only the recovery/clear side lives here. Re-enabling HDR MUST
+//! restore the marker write before the risky commit (original: commit 58f9e7b).
 
 use std::path::PathBuf;
 
@@ -41,19 +45,6 @@ fn marker_path(output: &str) -> PathBuf {
         })
         .collect();
     run_dir().join(format!("hdr-pending-{safe}"))
-}
-
-/// Write the pending-confirmation marker just before a risky HDR commit.
-pub fn write_marker(output: &str) {
-    let dir = run_dir();
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        warn!(?e, "HDR: could not create run dir for crash marker");
-        return;
-    }
-    let path = marker_path(output);
-    if let Err(e) = std::fs::write(&path, output.as_bytes()) {
-        warn!(?e, ?path, "HDR: could not write crash marker");
-    }
 }
 
 /// Clear the marker once HDR is confirmed kept (or cleanly reverted).

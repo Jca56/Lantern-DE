@@ -4,7 +4,7 @@
 //!   * Fox (Fox Dark) — neutral dark gray bg
 //!   * Lantern        — warm brown bg
 
-use lntrn_render::{Color, Painter, Rect, TextRenderer};
+use lntrn_render::{Color, Painter, Rect};
 use lntrn_ui::gpu::{draw_window_gradient_overlay, FoxPalette};
 
 use crate::config::WindowMode;
@@ -16,7 +16,6 @@ use crate::config::WindowMode;
 // FOX_BG is the linear equivalent of sRGB(24, 24, 24), matching lntrn-terminal.
 const FOX_BG: Color = Color::rgb(0.01032, 0.01032, 0.01032); // sRGB 24,24,24
 const FOX_TEXT_PRIMARY: Color = Color::rgb(0.84, 0.84, 0.84); // sRGB ~236
-const FOX_TEXT_SECONDARY: Color = Color::rgb(0.38, 0.38, 0.38); // sRGB ~167
 const FOX_BORDER_SUBTLE: Color = Color::rgba(1.0, 1.0, 1.0, 0.08);
 const FOX_CLOSE_BG: Color = Color::rgb(0.56, 0.013, 0.013); // sRGB ~200,30,30
 const FOX_CLOSE_HOVER: Color = Color::rgba(0.56, 0.013, 0.013, 0.45);
@@ -31,7 +30,6 @@ fn ln_bg() -> Color {
     Color::from_rgba8(30, 25, 20, 255)
 }
 const LN_TEXT_PRIMARY: Color = Color::rgb(0.82, 0.79, 0.73); // warm cream
-const LN_TEXT_SECONDARY: Color = Color::rgb(0.40, 0.36, 0.30); // muted tan
 const LN_BORDER_SUBTLE: Color = Color::rgba(1.0, 0.85, 0.65, 0.10);
 const LN_CLOSE_BG: Color = Color::rgb(0.56, 0.013, 0.013);
 const LN_CLOSE_HOVER: Color = Color::rgba(0.56, 0.013, 0.013, 0.45);
@@ -45,7 +43,6 @@ pub const CORNER_RADIUS: f32 = 16.0;
 #[derive(Clone, Copy)]
 pub struct ChromePalette {
     pub text_primary: Color,
-    pub text_secondary: Color,
     pub border: Color,
     pub control_icon: Color,
     pub control_hover: Color,
@@ -58,7 +55,6 @@ impl ChromePalette {
         match mode {
             WindowMode::Fox => Self {
                 text_primary: FOX_TEXT_PRIMARY,
-                text_secondary: FOX_TEXT_SECONDARY,
                 border: FOX_BORDER_SUBTLE,
                 control_icon: FOX_CONTROL_ICON,
                 control_hover: FOX_CONTROL_HOVER,
@@ -67,7 +63,6 @@ impl ChromePalette {
             },
             WindowMode::Lantern => Self {
                 text_primary: LN_TEXT_PRIMARY,
-                text_secondary: LN_TEXT_SECONDARY,
                 border: LN_BORDER_SUBTLE,
                 control_icon: LN_CONTROL_ICON,
                 control_hover: LN_CONTROL_HOVER,
@@ -106,31 +101,6 @@ pub fn draw_background(p: &mut Painter, mode: WindowMode, wf: f32, hf: f32, r: f
     p.rect_filled(rect, r, bg.with_alpha(opacity));
 
     draw_window_gradient_overlay(p, rect, r, opacity);
-}
-
-/// Draw CSD title text centered. Uses the secondary text color for the palette.
-pub fn draw_title(
-    t: &mut TextRenderer,
-    title: &str,
-    s: f32,
-    wf: f32,
-    title_h: f32,
-    pal: &ChromePalette,
-    sw: u32,
-    sh: u32,
-) {
-    let sz = 16.0 * s;
-    let tw = sz * 0.55 * title.len() as f32;
-    t.queue(
-        title,
-        sz,
-        (wf - tw) * 0.5,
-        (title_h - sz) * 0.5,
-        pal.text_secondary,
-        wf,
-        sw,
-        sh,
-    );
 }
 
 /// Draw window control buttons (close / maximize / minimize).

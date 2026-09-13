@@ -104,14 +104,10 @@ mod tests {
             name: name.into(),
             x,
             y,
-            resolution: None,
-            refresh_rate: None,
             scale: None,
             wallpaper: None,
             primary: false,
             vrr: false,
-            hdr: false,
-            sdr_brightness: None,
             enabled,
         }
     }

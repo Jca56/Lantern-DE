@@ -233,13 +233,11 @@ impl App {
                         // the queue so the dialog's choice handler can
                         // re-enter advance_paste and pick up here.
                         let dialog = ConflictDialog {
-                            source: src.clone(),
                             target: target.clone(),
                             source_meta: ConflictMeta::read(&src),
                             target_meta: ConflictMeta::read(&target),
                             apply_to_all: false,
                             remaining_count: paste.remaining.len().saturating_sub(1),
-                            mode: paste.mode,
                         };
                         self.conflict_dialog = Some(dialog);
                         return;
