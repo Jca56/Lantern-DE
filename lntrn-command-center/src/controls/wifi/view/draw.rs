@@ -5,9 +5,10 @@ use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
 use crate::controls::wifi::modal::draw_modal;
 use crate::controls::wifi::tile::{draw_signal_icon, signal_to_bars};
-use crate::controls::wifi::{Wifi, WifiState};
+use crate::controls::wifi::Wifi;
 
 use super::cards::draw_right_column;
+use super::header::draw_header;
 use super::layout::{
     band_pill_rect, band_row_top, connect_button_rect, detail_rows, expanded_extra_height,
     has_band_selector, left_col_width, max_scroll, row_list_top_y,
@@ -16,7 +17,7 @@ use super::{
     BAND_LABEL_FONT, BAND_PILL_FONT, BAND_PILL_H, BAND_ROW_TOP_GAP, EXPAND_BUTTON_FONT,
     EXPAND_DETAIL_FONT, EXPAND_LABEL_W_FRAC, EXPAND_LINE_GAP, EXPAND_PAD_TOP, LIST_BOTTOM_PAD,
     MAX_NETWORK_ROWS, ROW_FONT, ROW_HEIGHT, ROW_LOCK_SIZE, ROW_RIGHT_GAP, ROW_SIGNAL_GAP,
-    ROW_SIGNAL_SIZE, VIEW_HEADER_BOTTOM_GAP, VIEW_HEADER_FONT, VIEW_TOP_PAD, VPN_LABEL_FONT,
+    ROW_SIGNAL_SIZE,
 };
 
 pub fn draw_view(
@@ -34,8 +35,6 @@ pub fn draw_view(
     let inner_x = panel.x + pad;
     let inner_w = panel.w - pad * 2.0;
 
-    let header_font = VIEW_HEADER_FONT * scale;
-    let header_gap = VIEW_HEADER_BOTTOM_GAP * scale;
     let row_h = ROW_HEIGHT * scale;
     let row_font = ROW_FONT * scale;
     let signal_size = ROW_SIGNAL_SIZE * scale;
@@ -47,49 +46,12 @@ pub fn draw_view(
     let muted = white.with_alpha(0.55 * alpha);
     let gold = Color::from_rgb8(0xc8, 0x86, 0x0a);
 
-    // ── Header: "Wi-Fi" + connected SSID ──
-    let header = match wifi.state() {
-        WifiState::Connected { ssid, .. } => format!("Wi-Fi · {}", ssid),
-        WifiState::Disconnected => "Wi-Fi · Disconnected".to_string(),
-        WifiState::Off => "Wi-Fi · Off".to_string(),
-    };
-    let header_y = panel_top_y + VIEW_TOP_PAD * scale;
-    text.queue(
-        &header,
-        header_font,
-        inner_x,
-        header_y,
-        white.with_alpha(alpha),
-        inner_w,
-        surface_w,
-        surface_h,
+    // ── Header: title + refresh button ──
+    draw_header(
+        painter, text, wifi, panel, panel_top_y, scale, alpha, surface_w, surface_h,
     );
 
-    // VPN ON/OFF indicator on the far right of the header row. Only
-    // rendered when the `mullvad` CLI is present; otherwise the slot is
-    // simply empty.
-    if let Some(connected) = wifi.vpn_connected {
-        let vpn_label = if connected { "VPN: ON" } else { "VPN: OFF" };
-        let vpn_color = if connected {
-            Color::from_rgb8(0x4c, 0xd9, 0x64).with_alpha(alpha)
-        } else {
-            Color::from_rgb8(0xff, 0x4d, 0x4d).with_alpha(alpha)
-        };
-        let vpn_font = VPN_LABEL_FONT * scale;
-        let lbl_w = text.measure_width(vpn_label, vpn_font);
-        let lbl_x = panel.x + panel.w - pad - lbl_w;
-        // Vertically center the VPN label against the header text's
-        // visual mid-line (header_y is the text top edge).
-        let lbl_y = header_y + (header_font - vpn_font) / 2.0;
-        text.queue(
-            vpn_label, vpn_font, lbl_x, lbl_y, vpn_color, lbl_w, surface_w, surface_h,
-        );
-    }
-
     // ── Network rows ──
-    let list_top = header_y + header_font + header_gap;
-    let _ = list_top; // keep symmetry with the layout helper above
-
     if wifi.networks().is_empty() {
         let msg_y = row_list_top_y(panel_top_y, scale);
         text.queue(
@@ -370,24 +332,31 @@ pub fn draw_view(
                 }
             }
 
-            // Connect button.
+            // Connect / Disconnect button. The in-use network gets a red
+            // Disconnect; everything else a gold Connect.
             let btn = connect_button_rect(net, inner_x, inner_w, body_top, scale);
             let connecting_now = wifi.is_connecting_to(&net.ssid);
+            let disconnecting_now = net.in_use && wifi.is_disconnecting();
             let label = if connecting_now {
                 "Connecting…"
+            } else if disconnecting_now {
+                "Disconnecting…"
             } else if net.in_use {
-                "Connected"
+                "Disconnect"
             } else {
                 "Connect"
             };
             let btn_font = EXPAND_BUTTON_FONT * scale;
             let btn_radius = 10.0 * scale;
-            let bg = if connecting_now {
-                gold.with_alpha(0.35 * alpha)
+            let red = Color::from_rgb8(0xe0, 0x40, 0x40);
+            let (bg, fg) = if connecting_now {
+                (gold.with_alpha(0.35 * alpha), Color::rgba(0.0, 0.0, 0.0, alpha))
+            } else if disconnecting_now {
+                (red.with_alpha(0.40 * alpha), white.with_alpha(alpha))
             } else if net.in_use {
-                gold.with_alpha(0.30 * alpha)
+                (red.with_alpha(0.90 * alpha), white.with_alpha(alpha))
             } else {
-                gold.with_alpha(0.95 * alpha)
+                (gold.with_alpha(0.95 * alpha), Color::rgba(0.0, 0.0, 0.0, alpha))
             };
             painter.rect_filled(btn, btn_radius, bg);
             let lw = text.measure_width(label, btn_font);
@@ -396,7 +365,7 @@ pub fn draw_view(
                 btn_font,
                 btn.x + (btn.w - lw) / 2.0,
                 btn.y + (btn.h - btn_font) / 2.0,
-                Color::rgba(0.0, 0.0, 0.0, alpha),
+                fg,
                 btn.w,
                 surface_w,
                 surface_h,

@@ -19,13 +19,17 @@
 
 use std::collections::HashMap;
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use zbus::blocking::Connection;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue};
 
 use super::{Band, BandEntry, Network, Profile, WifiCmd, WifiEvent, WifiState};
+
+mod agent;
+
+use agent::register_agent;
 
 const IWD_BUS: &str = "net.connman.iwd";
 const IFACE_STATION: &str = "net.connman.iwd.Station";
@@ -33,7 +37,6 @@ const IFACE_STATION_DIAG: &str = "net.connman.iwd.StationDiagnostic";
 const IFACE_NETWORK: &str = "net.connman.iwd.Network";
 const IFACE_KNOWN: &str = "net.connman.iwd.KnownNetwork";
 const IFACE_AGENT_MGR: &str = "net.connman.iwd.AgentManager";
-const AGENT_PATH: &str = "/lntrn/wifi_agent";
 
 /// Every call to iwd goes through here so the message carries D-Bus's
 /// `NoAutoStart` flag. Without it, dbus-daemon spawns a fresh iwd the moment
@@ -191,18 +194,23 @@ pub(super) fn scan_networks(conn: &Connection) -> Vec<Network> {
 pub(super) fn handle_cmd(conn: &Connection, cmd: WifiCmd, tx: &mpsc::Sender<WifiEvent>) {
     match cmd {
         WifiCmd::Rescan => {
-            if let Some(objects) = managed_objects(conn) {
-                if let Some((station_path, _)) = find_station(&objects) {
-                    // Fire-and-forget; iwd refuses if a scan is already
-                    // in progress, which is fine — the next periodic
-                    // poll picks up whatever it produced.
-                    let _: zbus::Result<()> =
-                        iwd_call(conn, station_path.as_str(), IFACE_STATION, "Scan", &());
-                }
+            if let Some(station_path) = station_path(conn) {
+                // iwd answers `Busy` if a periodic scan is already
+                // running — fine, we just wait for that one instead.
+                let _: zbus::Result<()> =
+                    iwd_call(conn, station_path.as_str(), IFACE_STATION, "Scan", &());
+                wait_for_scan(conn, &station_path);
             }
-            // Give the radio a beat to finish before the shared
-            // dispatcher re-reads the ordered network list.
-            std::thread::sleep(Duration::from_millis(500));
+        }
+        WifiCmd::Disconnect => {
+            let result = match station_path(conn) {
+                Some(station_path) => {
+                    iwd_call::<_, ()>(conn, station_path.as_str(), IFACE_STATION, "Disconnect", &())
+                        .map_err(|e| short_error(&e))
+                }
+                None => Err("no wifi device".to_string()),
+            };
+            let _ = tx.send(WifiEvent::DisconnectDone(result));
         }
         WifiCmd::Connect {
             ssid,
@@ -282,66 +290,6 @@ fn connect_by_ssid(
     }
 }
 
-struct AgentHandle;
-
-impl AgentHandle {
-    fn unregister(self, conn: &Connection) {
-        let _: zbus::Result<()> = iwd_call(
-            conn,
-            "/net/connman/iwd",
-            IFACE_AGENT_MGR,
-            "UnregisterAgent",
-            &(zbus::zvariant::ObjectPath::try_from(AGENT_PATH).unwrap(),),
-        );
-        let _ = conn
-            .object_server()
-            .remove::<PassphraseAgent, _>(AGENT_PATH);
-    }
-}
-
-fn register_agent(conn: &Connection, passphrase: String) -> Result<AgentHandle, String> {
-    let agent = PassphraseAgent {
-        passphrase: Arc::new(Mutex::new(Some(passphrase))),
-    };
-    conn.object_server()
-        .at(AGENT_PATH, agent)
-        .map_err(|e| e.to_string())?;
-    iwd_call::<_, ()>(
-        conn,
-        "/net/connman/iwd",
-        IFACE_AGENT_MGR,
-        "RegisterAgent",
-        &(zbus::zvariant::ObjectPath::try_from(AGENT_PATH).map_err(|e| e.to_string())?,),
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(AgentHandle)
-}
-
-/// One-shot passphrase agent. iwd calls `RequestPassphrase` once per
-/// `Network.Connect` attempt; we hand back the user's password and
-/// then get unregistered by the caller.
-struct PassphraseAgent {
-    passphrase: Arc<Mutex<Option<String>>>,
-}
-
-#[zbus::interface(name = "net.connman.iwd.Agent")]
-impl PassphraseAgent {
-    fn release(&self) {}
-
-    fn request_passphrase(
-        &self,
-        _network: zbus::zvariant::ObjectPath<'_>,
-    ) -> zbus::fdo::Result<String> {
-        self.passphrase
-            .lock()
-            .ok()
-            .and_then(|g| g.clone())
-            .ok_or_else(|| zbus::fdo::Error::Failed("no passphrase available".into()))
-    }
-
-    fn cancel(&self, _reason: String) {}
-}
-
 // ─── ObjectManager + property helpers ───────────────────────────────────────
 
 type ObjectMap = HashMap<OwnedObjectPath, HashMap<String, HashMap<String, OwnedValue>>>;
@@ -357,6 +305,45 @@ fn find_station(objects: &ObjectMap) -> Option<(OwnedObjectPath, &HashMap<String
         }
     }
     None
+}
+
+fn station_path(conn: &Connection) -> Option<OwnedObjectPath> {
+    let objects = managed_objects(conn)?;
+    find_station(&objects).map(|(path, _)| path)
+}
+
+/// How often [`wait_for_scan`] re-reads `Station.Scanning`.
+const SCAN_POLL: Duration = Duration::from_millis(150);
+/// iwd flips `Scanning` on only once the kernel accepts the trigger, so
+/// allow it this long to show up before assuming the scan never started.
+const SCAN_START_GRACE: Duration = Duration::from_millis(1500);
+/// Hard cap so a wedged driver can't stall the worker (DFS channel
+/// sweeps on 5 GHz are the slow case, usually a few seconds).
+const SCAN_WAIT_MAX: Duration = Duration::from_secs(10);
+
+/// Block until the station's current scan finishes, so the network list
+/// read right after reflects it instead of the previous scan's cache.
+fn wait_for_scan(conn: &Connection, station: &OwnedObjectPath) {
+    let start = Instant::now();
+    let mut seen_scanning = false;
+    while start.elapsed() < SCAN_WAIT_MAX {
+        thread::sleep(SCAN_POLL);
+        let scanning: bool = iwd_call::<_, OwnedValue>(
+            conn,
+            station.as_str(),
+            "org.freedesktop.DBus.Properties",
+            "Get",
+            &(IFACE_STATION, "Scanning"),
+        )
+        .ok()
+        .and_then(|v| bool::try_from(v).ok())
+        .unwrap_or(false);
+        if scanning {
+            seen_scanning = true;
+        } else if seen_scanning || start.elapsed() >= SCAN_START_GRACE {
+            return;
+        }
+    }
 }
 
 fn find_network_path_by_name(objects: &ObjectMap, ssid: &str) -> Option<OwnedObjectPath> {

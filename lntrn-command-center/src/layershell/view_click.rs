@@ -263,8 +263,8 @@ pub(super) fn handle_control_view_click(
                     crate::controls::wifi::NetworkHit::ProfileDelete(_, uuid) => {
                         app.controls.wifi.delete_profile(&uuid);
                     }
-                    crate::controls::wifi::NetworkHit::ToggleVpn => {
-                        app.controls.wifi.toggle_vpn();
+                    crate::controls::wifi::NetworkHit::Refresh => {
+                        app.controls.wifi.request_rescan();
                     }
                     crate::controls::wifi::NetworkHit::ConnectButton(ssid) => {
                         let net = app
@@ -283,7 +283,7 @@ pub(super) fn handle_control_view_click(
                             None => false,
                         };
                         if already_in_use {
-                            // Already connected → button is purely a label.
+                            app.controls.wifi.disconnect();
                         } else if needs_password {
                             app.controls.wifi.open_prompt(&ssid);
                         } else {

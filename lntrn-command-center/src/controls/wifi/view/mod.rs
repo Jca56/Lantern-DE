@@ -5,6 +5,7 @@
 
 mod cards;
 mod draw;
+mod header;
 mod hit;
 mod layout;
 
@@ -39,7 +40,8 @@ pub(super) const EXPAND_LABEL_W_FRAC: f32 = 0.28;
 pub(super) const EXPAND_BUTTON_TOP_GAP: f32 = 14.0;
 pub(super) const EXPAND_BUTTON_H: f32 = 44.0;
 pub(super) const EXPAND_BUTTON_FONT: f32 = 22.0;
-pub(super) const EXPAND_BUTTON_W: f32 = 160.0;
+/// Wide enough for "Disconnecting…" at `EXPAND_BUTTON_FONT`.
+pub(super) const EXPAND_BUTTON_W: f32 = 200.0;
 /// Band-selector pills sit between the details list and the Connect
 /// button. Shown only when an SSID is advertised on multiple bands.
 pub(super) const BAND_ROW_TOP_GAP: f32 = 14.0;
@@ -49,11 +51,10 @@ pub(super) const BAND_PILL_GAP: f32 = 8.0;
 pub(super) const BAND_PILL_FONT: f32 = 18.0;
 pub(super) const BAND_LABEL_FONT: f32 = 18.0;
 
-/// "VPN: ON/OFF" pill on the right edge of the header row.
-pub(super) const VPN_LABEL_FONT: f32 = 22.0;
-/// Hit-zone padding around the VPN label so it's comfortable to click.
-pub(super) const VPN_HIT_PAD_X: f32 = 8.0;
-pub(super) const VPN_HIT_PAD_Y: f32 = 4.0;
+/// Round refresh button on the right edge of the header row.
+pub(super) const REFRESH_BTN_SIZE: f32 = 44.0;
+/// Spinner speed (revolutions per second) while a rescan is in flight.
+pub(super) const REFRESH_SPIN_RPS: f32 = 1.2;
 
 /// Width fraction (of the expanded inner row) for the left column
 /// (details + band pills + Connect button). The right column hosts

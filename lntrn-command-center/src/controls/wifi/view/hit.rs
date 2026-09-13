@@ -6,15 +6,13 @@ use lntrn_render::Rect;
 
 use crate::controls::wifi::{Band, Wifi};
 
+use super::header::refresh_button_rect;
 use super::layout::{
     band_pill_rect, bssid_card_rect, bssid_lock_rect, connect_button_rect, expanded_extra_height,
     has_band_selector, profile_card_rect, profile_delete_rect, row_list_top_y,
     visible_bssid_card_count, visible_profile_card_count,
 };
-use super::{
-    MAX_NETWORK_ROWS, ROW_HEIGHT, VIEW_HEADER_FONT, VIEW_TOP_PAD, VPN_HIT_PAD_X, VPN_HIT_PAD_Y,
-    VPN_LABEL_FONT,
-};
+use super::{MAX_NETWORK_ROWS, ROW_HEIGHT};
 
 /// What was clicked inside the WiFi network list.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,7 +20,8 @@ pub enum NetworkHit {
     /// The header part of a row (any area outside the Connect button
     /// in the expanded section). Caller toggles the expanded ssid.
     Row(String),
-    /// The Connect / Disconnect button inside the expanded section.
+    /// The Connect / Disconnect button inside the expanded section
+    /// (Disconnect when the network is the one in use).
     ConnectButton(String),
     /// A band-selector pill inside the expanded section.
     BandPill(String, Band),
@@ -34,27 +33,12 @@ pub enum NetworkHit {
     ProfileActivate(String, String), // (ssid, name)
     /// Click on the delete X overlaid on a profile card.
     ProfileDelete(String, String), // (ssid, uuid)
-    /// VPN ON/OFF indicator on the header row.
-    ToggleVpn,
+    /// Refresh button on the header row.
+    Refresh,
 }
 
-/// Rect for the VPN ON/OFF indicator on the header row. Returns `None`
-/// when the indicator isn't being drawn (Mullvad CLI absent). Anchored
-/// to the right edge of the panel; width is generous so "VPN: OFF" fits
-/// comfortably without measuring text from the hit-test path.
-pub fn vpn_hit_rect(wifi: &Wifi, panel: Rect, panel_top_y: f32, scale: f32) -> Option<Rect> {
-    wifi.vpn_connected?;
-    let pad = crate::controls::ROW_HORIZONTAL_PAD * scale;
-    let header_font = VIEW_HEADER_FONT * scale;
-    let label_font = VPN_LABEL_FONT * scale;
-    let header_y = panel_top_y + VIEW_TOP_PAD * scale;
-    // Approximate width — wide enough for "VPN: OFF" at any plausible
-    // scale plus a comfy hit pad.
-    let w = label_font * 5.5 + VPN_HIT_PAD_X * 2.0 * scale;
-    let h = header_font + VPN_HIT_PAD_Y * 2.0 * scale;
-    let x = panel.x + panel.w - pad - w + VPN_HIT_PAD_X * scale;
-    let y = header_y - VPN_HIT_PAD_Y * scale;
-    Some(Rect::new(x, y, w, h))
+fn contains(r: Rect, x: f32, y: f32) -> bool {
+    x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h
 }
 
 /// Hit-test a click against the network list. Walks rows top-to-
@@ -75,12 +59,10 @@ pub fn hit_test_network(
         return None;
     }
 
-    // VPN indicator sits above the network list, on the header row, so
-    // check it BEFORE the `y < list_top` early-return below.
-    if let Some(r) = vpn_hit_rect(wifi, panel, panel_top_y, scale) {
-        if x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h {
-            return Some(NetworkHit::ToggleVpn);
-        }
+    // The refresh button sits above the network list, so check it
+    // BEFORE the `y < list_top` early-return below.
+    if contains(refresh_button_rect(panel, panel_top_y, scale), x, y) {
+        return Some(NetworkHit::Refresh);
     }
 
     let header_h = ROW_HEIGHT * scale;

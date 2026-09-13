@@ -29,27 +29,31 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
         let view_top_y = crate::controls::content_top_y(panel_rect, scale_f);
         let phys_cx = wl.cursor_x as f32 * scale_f;
         let phys_cy = wl.cursor_y as f32 * scale_f;
-        let new_hover = match crate::controls::wifi::hit_test_network(
+        let hit = crate::controls::wifi::hit_test_network(
             &app.controls.wifi,
             panel_rect,
             view_top_y,
             scale_f,
             phys_cx,
             phys_cy,
-        ) {
+        );
+        app.controls.wifi.hovered_refresh =
+            matches!(hit, Some(crate::controls::wifi::NetworkHit::Refresh));
+        let new_hover = match hit {
             Some(crate::controls::wifi::NetworkHit::Row(s))
             | Some(crate::controls::wifi::NetworkHit::ConnectButton(s))
             | Some(crate::controls::wifi::NetworkHit::BandPill(s, _))
             | Some(crate::controls::wifi::NetworkHit::LockBssid(s, _))
             | Some(crate::controls::wifi::NetworkHit::ProfileActivate(s, _))
             | Some(crate::controls::wifi::NetworkHit::ProfileDelete(s, _)) => Some(s),
-            Some(crate::controls::wifi::NetworkHit::ToggleVpn) | None => None,
+            Some(crate::controls::wifi::NetworkHit::Refresh) | None => None,
         };
         if app.controls.wifi.hovered_ssid != new_hover {
             app.controls.wifi.hovered_ssid = new_hover;
         }
-    } else if app.controls.wifi.hovered_ssid.is_some() {
+    } else {
         app.controls.wifi.hovered_ssid = None;
+        app.controls.wifi.hovered_refresh = false;
     }
 
     // Power-column hover tracking (buttons live to the right of the

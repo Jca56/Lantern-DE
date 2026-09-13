@@ -498,6 +498,12 @@ impl AppState {
         if matches!(self.visibility, Visibility::Opening | Visibility::Closing) {
             return true;
         }
+        // WiFi refresh button spins while its scan is in flight.
+        if self.mode == PanelMode::Control(TileId::Wifi)
+            && self.controls.wifi.scan_elapsed().is_some()
+        {
+            return true;
+        }
 
         let in_flight = |start: Option<Instant>, secs: f32| -> bool {
             matches!(start, Some(s) if s.elapsed() < Duration::from_secs_f32(secs))

@@ -16,23 +16,27 @@
 //! loop just `try_recv`s on tick.
 //!
 //! Layout of this module:
-//! - `mod.rs` (this file): public types, [`Wifi`] state struct, password
-//!   prompt, and the worker-bound enums.
-//! - `worker/`: the background polling thread plus the per-backend
-//!   implementations (`worker/nm.rs`, `worker/iwd.rs`).
-//! - `view.rs`: tile + click-expand drawing, hit-testing, and layout.
+//! - `mod.rs` (this file): [`Wifi`] state struct, password prompt, and
+//!   the worker-bound enums.
+//! - `types.rs`: network / band / profile data types.
+//! - `worker/`: the background polling thread plus the iwd backend.
+//! - `view/`: click-expand drawing, hit-testing, and layout.
 //! - `modal.rs`: password-prompt drawing and hit-testing.
 
 use std::collections::HashMap;
 use std::sync::mpsc;
 use std::thread;
+use std::time::Instant;
 
 use crate::search::input::Input;
 
 mod modal;
 mod tile;
+mod types;
 mod view;
 mod worker;
+
+pub use types::{Band, BandEntry, Network, Profile, WifiState};
 
 // Re-export the public surface so external callers (layershell, the
 // tile dispatcher in `controls/mod.rs`, etc.) can still use
@@ -46,110 +50,7 @@ pub use modal::{modal_regions, ModalRegions};
 pub use tile::{draw_inline, TILE_WIDTH};
 pub use view::{draw_view, hit_test_network, max_scroll, row_list_top_y, NetworkHit};
 
-// ── State types ─────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WifiState {
-    Off,
-    Disconnected,
-    Connected { ssid: String, signal: u32 },
-}
-
-/// Radio band a given AP is broadcasting on. Used to let the user pin
-/// a connection to a specific band when a hotspot advertises the same
-/// SSID on both 2.4 and 5 GHz radios.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Band {
-    G24,
-    G5,
-    G6,
-}
-
-impl Band {
-    /// Short pill label, e.g. "2.4".
-    pub fn short_label(self) -> &'static str {
-        match self {
-            Band::G24 => "2.4",
-            Band::G5 => "5",
-            Band::G6 => "6",
-        }
-    }
-
-    /// Long-form label for the details panel, e.g. "2.4 GHz".
-    pub fn long_label(self) -> &'static str {
-        match self {
-            Band::G24 => "2.4 GHz",
-            Band::G5 => "5 GHz",
-            Band::G6 => "6 GHz",
-        }
-    }
-
-    pub(crate) fn from_mhz(mhz: u32) -> Option<Band> {
-        Some(match mhz {
-            2400..=2500 => Band::G24,
-            4900..=5900 => Band::G5,
-            5925..=7125 => Band::G6,
-            _ => return None,
-        })
-    }
-}
-
-/// One radio's worth of info for an SSID. A given network may have
-/// multiple `BandEntry`s — typically one for 2.4 and one for 5 GHz when
-/// a hotspot broadcasts both.
-#[derive(Debug, Clone)]
-pub struct BandEntry {
-    pub band: Band,
-    pub signal: u32,
-    pub bssid: String,
-    pub channel: String,
-    pub frequency: String,
-    pub rate: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct Network {
-    pub ssid: String,
-    /// Strongest signal across all bands — drives the row icon + sort.
-    pub signal: u32,
-    pub security: String,
-    pub in_use: bool,
-    pub saved: bool,
-    /// BSSID of the strongest band. Kept for the details panel; the
-    /// per-band BSSIDs live in `bands`.
-    pub bssid: String,
-    /// e.g. "Infra" / "Mesh".
-    pub mode: String,
-    /// Strongest band's channel (string, as nmcli reports).
-    pub channel: String,
-    /// Strongest band's frequency, e.g. "5180 MHz".
-    pub frequency: String,
-    /// Strongest band's negotiated bitrate, e.g. "270 Mbit/s".
-    pub rate: String,
-    /// Saved NetworkManager profiles whose `802-11-wireless.ssid`
-    /// matches this network. Multiple is the common case when the user
-    /// has reconnected with different settings (Wi-Fi password change,
-    /// a band/BSSID pin, etc.) — surfacing them in the UI gives them a
-    /// way to clean up duplicates.
-    pub profiles: Vec<Profile>,
-    /// All radios this SSID is advertised on, sorted by signal desc.
-    /// One entry per band, holding the strongest BSSID for that band —
-    /// drives the band-selector pills.
-    pub bands: Vec<BandEntry>,
-    /// EVERY BSSID broadcasting this SSID (any band, any AP), sorted by
-    /// signal desc. Used by the BSSID column in the expanded panel.
-    pub aps: Vec<BandEntry>,
-    /// Band the user has selected for connecting. Defaults to the
-    /// strongest band; persists across rescans (see `Wifi::tick`).
-    pub selected_band: Band,
-    /// BSSID the user has pinned via the lock icon. When `Some`, future
-    /// connect attempts will force this specific access point via
-    /// `nmcli` `wifi.bssid=<mac>`. Persists in memory across rescans.
-    pub pinned_bssid: Option<String>,
-    /// Encryption flags (e.g. "WPA2 WPA3 PSK CCMP"). Built from
-    /// SECURITY + WPA-FLAGS + RSN-FLAGS during the scan.
-    pub flags_summary: String,
-}
+// ── Worker-bound enums ──────────────────────────────────────────────────────
 
 /// Commands sent from the render thread → worker thread.
 pub(crate) enum WifiCmd {
@@ -174,27 +75,8 @@ pub(crate) enum WifiCmd {
     DeleteProfile { uuid: String },
     /// `nmcli connection up id <name>` — switch to this saved profile.
     ActivateProfile { name: String },
-}
-
-/// A saved NetworkManager profile. We attach a `Vec<Profile>` per
-/// `Network` so the expanded panel can list duplicates / per-SSID
-/// variations and offer delete + activate actions.
-#[derive(Debug, Clone)]
-pub struct Profile {
-    pub name: String,
-    pub uuid: String,
-    /// `802-11-wireless.bssid` field on the profile, if any.
-    pub pinned_bssid: Option<String>,
-    /// `802-11-wireless.band` value ("bg", "a", or empty).
-    pub pinned_band: Option<String>,
-    /// Unix seconds — last time the profile was activated. iwd's
-    /// `KnownNetwork.LastConnectedTime` populates this; zero when never
-    /// activated. Not currently surfaced in the UI but kept for future
-    /// "recent networks" ordering.
-    #[allow(dead_code)]
-    pub timestamp: i64,
-    /// True when this profile is the currently-active connection.
-    pub active: bool,
+    /// Drop the active connection (iwd `Station.Disconnect`).
+    Disconnect,
 }
 
 /// Events the worker thread emits.
@@ -203,9 +85,11 @@ pub(crate) enum WifiEvent {
     Networks(Vec<Network>),
     ConnectOk,
     ConnectFail(String),
-    /// Mullvad VPN tunnel state. `None` = CLI unavailable, hide indicator;
-    /// `Some(true)` = Connected; `Some(false)` = anything else.
-    VpnStatus(Option<bool>),
+    /// A user-requested rescan finished and its fresh network list has
+    /// already been sent. Stops the refresh spinner.
+    ScanDone,
+    /// A disconnect request finished; `Err` carries a short message.
+    DisconnectDone(Result<(), String>),
 }
 
 pub struct Wifi {
@@ -227,10 +111,17 @@ pub struct Wifi {
     /// "Connecting…" status text + lets the click handler debounce
     /// duplicate clicks while a connect is pending.
     connecting_ssid: Option<String>,
+    /// When the in-flight user-requested rescan started, or `None` when
+    /// idle. Drives the refresh button's spin angle.
+    scan_started: Option<Instant>,
+    /// True between a Disconnect click and the worker's reply.
+    disconnecting: bool,
     /// SSID under the pointer, used for the subtle hover-highlight on
     /// network rows. Set externally by the layershell pointer-motion
     /// handler; cleared when the cursor leaves the WiFi view.
     pub hovered_ssid: Option<String>,
+    /// Pointer is over the header's refresh button.
+    pub hovered_refresh: bool,
     /// SSID of the row currently expanded to show details + Connect.
     /// Only one row may be expanded at a time. None = collapsed list.
     pub expanded_ssid: Option<String>,
@@ -238,8 +129,6 @@ pub struct Wifi {
     /// the layershell wheel handler; clamped to `[0, max_scroll]` in
     /// `draw_view` so resizes / network-list changes can't strand it.
     pub scroll: f32,
-    /// Mullvad VPN status — `None` if the CLI isn't installed.
-    pub vpn_connected: Option<bool>,
 }
 
 /// State for the password-entry modal that overlays the WiFi view.
@@ -286,27 +175,13 @@ impl Wifi {
             event_rx,
             prompt: None,
             connecting_ssid: None,
+            scan_started: None,
+            disconnecting: false,
             hovered_ssid: None,
+            hovered_refresh: false,
             expanded_ssid: None,
             scroll: 0.0,
-            vpn_connected: None,
         }
-    }
-
-    /// Toggle Mullvad VPN by shelling out to the `mullvad` CLI.
-    /// Fire-and-forget — the worker's next status poll will pick up the
-    /// new state and update the indicator.
-    pub fn toggle_vpn(&mut self) {
-        let next = !self.vpn_connected.unwrap_or(false);
-        let cmd = if next {
-            "mullvad connect"
-        } else {
-            "mullvad disconnect"
-        };
-        crate::app::spawn_detached(cmd);
-        // Optimistic flip so the label changes immediately; the next
-        // worker tick will confirm or correct it.
-        self.vpn_connected = Some(next);
     }
 
     /// True if a connect attempt to `ssid` is currently in flight.
@@ -383,10 +258,15 @@ impl Wifi {
                     }
                     self.connecting_ssid = None;
                 }
-                WifiEvent::VpnStatus(s) => {
-                    self.vpn_connected = s;
+                WifiEvent::ScanDone => {
+                    self.scan_started = None;
                 }
-            }
+                WifiEvent::DisconnectDone(result) => {
+                    self.disconnecting = false;
+                    if let Err(msg) = result {
+                        self.last_error = Some(msg);
+                    }
+                }            }
         }
         changed
     }
@@ -513,11 +393,34 @@ impl Wifi {
         }
     }
 
-    /// Ask the worker to rescan + repoll. Cheap to call; the worker
-    /// rate-limits its own scan cadence.
-    #[allow(dead_code)] // call from a future "refresh" button
-    pub fn request_rescan(&self) {
-        let _ = self.cmd_tx.send(WifiCmd::Rescan);
+    /// Ask the worker for a fresh radio scan. Ignored while one is
+    /// already in flight so mashing the button doesn't queue a backlog.
+    pub fn request_rescan(&mut self) {
+        if self.scan_started.is_some() {
+            return;
+        }
+        // Only arm the spinner if a worker is there to eventually stop it.
+        if self.cmd_tx.send(WifiCmd::Rescan).is_ok() {
+            self.scan_started = Some(Instant::now());
+        }
+    }
+
+    /// Seconds since the in-flight rescan started, or `None` when idle.
+    pub fn scan_elapsed(&self) -> Option<f32> {
+        self.scan_started.map(|t| t.elapsed().as_secs_f32())
+    }
+
+    /// Drop the active connection. No-op while a disconnect is pending.
+    pub fn disconnect(&mut self) {
+        if self.disconnecting {
+            return;
+        }
+        self.last_error = None;
+        self.disconnecting = self.cmd_tx.send(WifiCmd::Disconnect).is_ok();
+    }
+
+    pub fn is_disconnecting(&self) -> bool {
+        self.disconnecting
     }
 
     /// Attempt to connect to `ssid`. If `password` is `None`, the worker
