@@ -48,20 +48,62 @@ pub struct RowOut {
     pub open: bool,
     /// Backspace on the focused row: go up a folder.
     pub back: bool,
+    /// The whole row, edge to edge.
     pub rect: Rect,
+    /// The part that takes the pointer: from the row's left edge to just
+    /// past the name. The space right of it is the panel's.
+    pub hit: Rect,
 }
 
 /// One row. A folder's children are the caller's to draw under it
 /// (indented, under `push_id(label)`) when `open` comes back true. A
-/// click anywhere on a folder row opens or closes it; a double click is
-/// the caller's (the tree goes into the folder).
+/// click on a folder's triangle, icon or name opens or closes it; a
+/// double click is the caller's (the tree goes into the folder).
 pub fn tree_row(ui: &mut Ui, spec: &RowSpec) -> RowOut {
     let id = ui.id(spec.label);
     let m = ui.m;
     let rect = ui.alloc(Vec2::new(FILL, m.widget_h));
     let disc = Rect::from_min_size(rect.min, Vec2::splat(rect.height()));
-    let mut r = ui.interact(id, rect, Sense::CLICK);
-    let focused = ui.focusable(id, rect);
+
+    // ---- layout, left to right: the triangle, the slot, the git dot, the
+    // counts, the name; the line count at the right edge ----
+    let theme = ui.theme;
+    let style = ui.text_style();
+    let small = small_style(ui);
+    let mut x = if spec.flat { rect.min.x + m.pad } else { disc.max.x };
+    let slot_w = (m.widget_h * 1.25).round();
+    let slot = Rect::from_min_size(Vec2::new(x, rect.min.y), Vec2::new(slot_w, rect.height()));
+    x += slot_w + m.gap;
+    let mut dot = None;
+    if let Some(c) = spec.git {
+        let rad = (m.widget_h * 0.12).round().max(m.px(3.0));
+        dot = Some((Vec2::new(x + rad, rect.center().y), rad, c));
+        x += rad * 2.0 + m.gap;
+    }
+    let mut counts = Vec::new();
+    for (count, color) in [(spec.errors, theme.close), (spec.warnings, theme.accent)] {
+        if count == 0 {
+            continue;
+        }
+        let text = count.to_string();
+        let w = ui.measure(&text, &small);
+        counts.push((text, Rect::new(Vec2::new(x, rect.min.y), Vec2::new(x + w + m.pad, rect.max.y)), color));
+        x += w + m.gap;
+    }
+    let mut right = rect.max.x - m.pad;
+    let mut lines = None;
+    if let Some((n, color)) = spec.lines {
+        let text = n.to_string();
+        let w = ui.measure(&text, &small);
+        lines = Some((text, Rect::new(Vec2::new(right - w, rect.min.y), Vec2::new(right + m.pad, rect.max.y)), color));
+        right -= w + m.gap;
+    }
+    let text_rect = Rect::new(Vec2::new(x, rect.min.y), Vec2::new(right.max(x), rect.max.y));
+    let name_end = (x + ui.measure(spec.label, &style) + m.pad).min(right.max(x));
+    let hit = Rect::new(rect.min, Vec2::new(name_end, rect.max.y));
+
+    let mut r = ui.interact(id, hit, Sense::CLICK);
+    let focused = ui.focusable(id, hit);
     ui.key_click(id, &mut r);
     if r.hovered {
         ui.state.cursor_icon = CursorIcon::Pointer;
@@ -85,12 +127,10 @@ pub fn tree_row(ui: &mut Ui, spec: &RowSpec) -> RowOut {
     }
 
     // ---- draw ----
-    let theme = ui.theme;
-    let style = ui.text_style();
     if spec.selected {
-        ui.fill_shaded(rect, theme.shaded(theme.selection));
+        ui.fill_shaded(hit, theme.shaded(theme.selection));
     } else if r.hovered || r.held {
-        ui.fill(rect, theme.hover(theme.panel.mid()));
+        ui.fill(hit, theme.hover(theme.panel.mid()));
     }
     let ink = if spec.selected {
         theme.selection_text
@@ -100,15 +140,9 @@ pub fn tree_row(ui: &mut Ui, spec: &RowSpec) -> RowOut {
         theme.text
     };
     let dim = if spec.selected { theme.selection_text } else { theme.text_dim };
-    let mut x = rect.min.x + m.pad;
-    if !spec.flat {
-        if spec.branch.is_some() {
-            triangle(ui, disc, open, dim);
-        }
-        x = disc.max.x;
+    if !spec.flat && spec.branch.is_some() {
+        triangle(ui, disc, open, dim);
     }
-    let slot_w = (m.widget_h * 1.25).round();
-    let slot = Rect::from_min_size(Vec2::new(x, rect.min.y), Vec2::new(slot_w, rect.height()));
     match &spec.slot {
         Slot::Folder => icons::draw(&mut *ui.draw, slot, Icon::Folder, dim, m.px(1.5)),
         Slot::File(Some((ext, color))) => chip(ui, slot, ext, *color),
@@ -119,34 +153,19 @@ pub fn tree_row(ui: &mut Ui, spec: &RowSpec) -> RowOut {
             ui.draw.image(Rect::from_min_size(Vec2::new(r.min.x.round(), r.min.y.round()), Vec2::splat(side)), *h, 0.0, Color::WHITE);
         }
     }
-    x += slot_w + m.gap;
-    if let Some(c) = spec.git {
-        let rad = (m.widget_h * 0.12).round().max(m.px(3.0));
-        ui.draw.circle(Vec2::new(x + rad, rect.center().y), rad, c);
-        x += rad * 2.0 + m.gap;
+    if let Some((at, rad, c)) = dot {
+        ui.draw.circle(at, rad, c);
     }
-    let small = small_style(ui);
-    for (count, color) in [(spec.errors, theme.close), (spec.warnings, theme.accent)] {
-        if count == 0 {
-            continue;
-        }
-        let text = count.to_string();
-        let w = ui.measure(&text, &small);
-        ui.text_in_rect(&text, &small, Rect::new(Vec2::new(x, rect.min.y), Vec2::new(x + w + m.pad, rect.max.y)), color);
-        x += w + m.gap;
+    for (text, at, color) in &counts {
+        ui.text_in_rect(text, &small, *at, *color);
     }
-    let mut right = rect.max.x - m.pad;
-    if let Some((n, color)) = spec.lines {
-        let text = n.to_string();
-        let w = ui.measure(&text, &small);
-        let color = if spec.selected { theme.selection_text } else { color };
-        ui.text_in_rect(&text, &small, Rect::new(Vec2::new(right - w, rect.min.y), Vec2::new(right + m.pad, rect.max.y)), color);
-        right -= w + m.gap;
+    // The line count sits outside the highlight, so it keeps its color.
+    if let Some((text, at, color)) = &lines {
+        ui.text_in_rect(text, &small, *at, *color);
     }
-    let text_rect = Rect::new(Vec2::new(x, rect.min.y), Vec2::new(right, rect.max.y));
     ui.text_in_rect(spec.label, &style, text_rect, ink);
-    ui.focus_ring(id, rect);
-    RowOut { clicked: r.clicked, double_clicked: r.double_clicked, open, back, rect }
+    ui.focus_ring(id, hit);
+    RowOut { clicked: r.clicked, double_clicked: r.double_clicked, open, back, rect, hit }
 }
 
 /// A house, for the `⌂` button: a roof over a box.

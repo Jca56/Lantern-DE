@@ -103,8 +103,8 @@ pub(super) fn draw_matches(ui: &mut Ui, t: &mut Tree, cx: &mut FilesCx, out: &mu
         let spec = RowSpec { label: rel, selected, branch: None, flat: true, slot, git, errors: 0, warnings: 0, dim: false, lines: None };
         let r = tree_row(ui, &spec);
         let dir = if e.is_dir { e.path.clone() } else { e.path.parent().map(Path::to_path_buf).unwrap_or_else(|| t.root.clone()) };
-        targets.push((r.rect, dir.clone()));
-        if ui.state.pressed && r.rect.contains(ui.state.press_pos) && t.drag.is_none() {
+        targets.push((r.hit, dir.clone()));
+        if ui.state.pressed && r.hit.contains(ui.state.press_pos) && t.drag.is_none() {
             t.drag = Some(Drag { path: e.path.clone(), name: e.name.clone(), started: false });
         }
         // A match is a result: a click opens a file, a double click goes
@@ -119,7 +119,7 @@ pub(super) fn draw_matches(ui: &mut Ui, t: &mut Tree, cx: &mut FilesCx, out: &mu
             }
             ui.state.request_rebuild = true;
         }
-        if ui.state.right_pressed && r.rect.contains(pointer) {
+        if ui.state.right_pressed && r.hit.contains(pointer) {
             t.context = Some((e.path.clone(), e.is_dir));
             out.context = Some(pointer);
         }

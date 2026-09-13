@@ -354,8 +354,9 @@ pub fn draw_files(ui: &mut Ui, t: &mut Tree, mut cx: FilesCx) -> FilesOut {
         }
     }
     t.reveal = None;
-    // A click on empty space drops the highlight; a right click there
-    // opens the panel's menu with no entry picked.
+    // A click on empty space (right of a name counts) drops the highlight;
+    // a right click there does too and opens the panel's menu for the
+    // shown folder, so New File lands in it.
     let on_row = |p: Vec2| targets.iter().any(|(r, _)| r.contains(p));
     if ui.state.pressed && panel.contains(ui.state.press_pos) && !on_row(ui.state.press_pos) {
         t.selected = None;
@@ -363,8 +364,11 @@ pub fn draw_files(ui: &mut Ui, t: &mut Tree, mut cx: FilesCx) -> FilesOut {
         ui.state.request_rebuild = true;
     }
     if ui.state.right_pressed && panel.contains(pointer) && !on_row(pointer) {
+        t.selected = None;
+        t.selected_dir = None;
         t.context = None;
         out.context = Some(pointer);
+        ui.state.request_rebuild = true;
     }
     if let Some(d) = &t.drag
         && d.started
@@ -466,7 +470,7 @@ fn draw_dir(ui: &mut Ui, t: &mut Tree, dir: &Path, cx: &mut FilesCx, out: &mut F
             if r.back {
                 *go = up.clone();
             }
-            let row = r.rect;
+            let row = r.hit;
             targets.push((row, e.path.clone()));
             if ui.state.pressed && row.contains(ui.state.press_pos) && t.drag.is_none() {
                 t.drag = Some(Drag { path: e.path.clone(), name: e.name.clone(), started: false });
@@ -493,15 +497,16 @@ fn draw_dir(ui: &mut Ui, t: &mut Tree, dir: &Path, cx: &mut FilesCx, out: &mut F
             if t.reveal.as_deref() == Some(e.path.as_path()) {
                 *shown = Some(r.rect);
             }
-            targets.push((r.rect, dir.to_path_buf()));
-            if ui.state.pressed && r.rect.contains(ui.state.press_pos) && t.drag.is_none() {
+            targets.push((r.hit, dir.to_path_buf()));
+            if ui.state.pressed && r.hit.contains(ui.state.press_pos) && t.drag.is_none() {
                 t.drag = Some(Drag { path: e.path.clone(), name: e.name.clone(), started: false });
             }
-            // One click picks the file; a double click renames it (the
+            // One click picks the file; a double click opens it (the
             // double click comes with the press, the click with the release).
             if r.double_clicked && !dragging {
+                t.selected_dir = Some(dir.to_path_buf());
                 t.selected = Some(e.path.clone());
-                t.start_rename(&e.path);
+                out.open = Some(e.path.clone());
                 ui.state.request_rebuild = true;
             } else if r.clicked && !dragging {
                 t.selected_dir = Some(dir.to_path_buf());
@@ -511,7 +516,7 @@ fn draw_dir(ui: &mut Ui, t: &mut Tree, dir: &Path, cx: &mut FilesCx, out: &mut F
             if r.back {
                 *go = up.clone();
             }
-            if right && r.rect.contains(pointer) {
+            if right && r.hit.contains(pointer) {
                 t.context = Some((e.path.clone(), false));
                 out.context = Some(pointer);
             }
@@ -569,43 +574,4 @@ fn inline_field(ui: &mut Ui, t: &mut Tree, hint: &str) -> Field {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_tree_lists_climbs_and_resolves() {
-        let dir = std::env::temp_dir().join(format!("lntrn-code-tree-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("src/deep")).unwrap();
-        std::fs::write(dir.join("src/main.rs"), "").unwrap();
-        std::fs::write(dir.join(".hidden"), "").unwrap();
-        std::fs::write(dir.join("README.md"), "").unwrap();
-        let mut t = Tree::new(dir.clone());
-        let names: Vec<&str> = t.entries(&dir).iter().map(|e| e.name.as_str()).collect();
-        assert_eq!(names, vec!["src", "README.md"], "folders first, no dotfiles");
-        t.show_hidden = true;
-        t.refresh();
-        assert!(t.entries(&dir).iter().any(|e| e.name == ".hidden"));
-        assert_eq!(t.target_dir(), dir, "nothing picked: the root");
-        t.selected_dir = Some(dir.join("src"));
-        assert_eq!(t.target_dir(), dir.join("src"));
-        t.start_create(&dir.join("src"), false);
-        assert!(matches!(t.editing, Some(Editing::Create { is_dir: false, .. })));
-        assert_eq!(t.reveal, Some(dir.join("src")), "the folder opens for the new row");
-        // Going somewhere drops what was picked; up climbs; a file is no root.
-        t.go(dir.join("src/deep"));
-        assert_eq!(t.root, dir.join("src/deep"));
-        assert!(t.selected_dir.is_none() && t.editing.is_none());
-        t.go(dir.join("src"));
-        assert_eq!(t.root, dir.join("src"));
-        t.go(dir.join("main.rs"));
-        assert_eq!(t.root, dir.join("src"), "a file is not a root");
-        // Typed paths: `~`, relative to the root, absolute.
-        assert_eq!(t.resolve("~/x"), home().join("x"));
-        assert_eq!(t.resolve("deep"), dir.join("src/deep"));
-        assert_eq!(t.resolve("/usr"), PathBuf::from("/usr"));
-        // A missing root falls back to home.
-        assert_eq!(Tree::new(dir.join("nope")).root, home());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
+mod tests;
