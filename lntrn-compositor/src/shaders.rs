@@ -51,7 +51,8 @@ void main() {
 
 /// Custom texture shader for rounded-corner alpha masking.
 /// Applied to window textures rendered offscreen; clips corners via SDF.
-/// Custom uniforms: `tex_size` (vec2, physical px), `corner_radius` (float, physical px)
+/// Custom uniforms: `tex_size` (vec2, physical px), `corner_radius` (float, physical px),
+/// `top_extend` (float, physical px — see the shader comment)
 pub const ROUNDED_TEX_SHADER_SRC: &str = r#"
 //_DEFINES_
 
@@ -70,6 +71,11 @@ uniform sampler2D tex;
 uniform float alpha;
 uniform vec2 tex_size;
 uniform float corner_radius;
+// Extra height virtually added ABOVE the texture before the SDF is evaluated.
+// 0 rounds all four corners; >= 2*corner_radius pushes the top corners off
+// the visible texture so only the bottom pair is rounded — used for windows
+// with a server-side titlebar, whose top edge is covered by the bar.
+uniform float top_extend;
 varying vec2 v_coords;
 
 #if defined(DEBUG_FLAGS)
@@ -85,9 +91,10 @@ void main() {
     color = color * alpha;
 #endif
 
-    // SDF rounded-rect mask
-    vec2 pos = v_coords * tex_size;
-    vec2 half_size = tex_size * 0.5;
+    // SDF rounded-rect mask (rect = texture extended upward by top_extend)
+    vec2 ext_size = tex_size + vec2(0.0, top_extend);
+    vec2 pos = v_coords * tex_size + vec2(0.0, top_extend);
+    vec2 half_size = ext_size * 0.5;
     vec2 q = abs(pos - half_size) - half_size + vec2(corner_radius);
     float dist = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - corner_radius;
     float mask = 1.0 - smoothstep(-0.5, 0.5, dist);
@@ -200,23 +207,31 @@ uniform vec4 icon_color;
 uniform float tint;
 #endif
 
+// Distance from p to the segment a-b.
+float seg_dist(vec2 p, vec2 a, vec2 b) {
+    vec2 pa = p - a;
+    vec2 ba = b - a;
+    float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+    return length(pa - ba * h);
+}
+
 void main() {
     vec2 pos = v_coords * size;
     vec2 center = size * 0.5;
     float icon_sz = min(size.x, size.y) * 0.35;
     float line_w = max(1.5, icon_sz * 0.15);
 
-    float d = 1e10;
+    // All distances stay within a few hundred px: no huge sentinel values.
+    // The previous 1e10 sentinel in a mediump float made the close button
+    // fill its whole element on NVIDIA.
+    float d = 0.0;
 
     if (icon_type < 0.5) {
-        // Close: X shape — two diagonal lines
+        // Close: X shape — two diagonal segments
         vec2 p = pos - center;
         float hsize = icon_sz * 0.5;
-        float d1 = abs(p.x - p.y) / 1.41421;
-        float d2 = abs(p.x + p.y) / 1.41421;
-        float len_check = max(abs(p.x), abs(p.y));
-        d1 = len_check > hsize ? 1e10 : d1;
-        d2 = len_check > hsize ? 1e10 : d2;
+        float d1 = seg_dist(p, vec2(-hsize, -hsize), vec2(hsize, hsize));
+        float d2 = seg_dist(p, vec2(-hsize, hsize), vec2(hsize, -hsize));
         d = min(d1, d2);
     } else if (icon_type < 1.5) {
         // Maximize: square outline

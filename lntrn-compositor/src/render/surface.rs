@@ -1035,17 +1035,19 @@ pub fn render_surface(
         // their buffer resizes underneath the element.
         let too_small_for_rounding =
             win_phys_w_raw < corner_r * 2.0 + 1.0 || win_phys_h_raw < corner_r * 2.0 + 1.0;
-        // Skip surface rounding when an SSD bar is present (bar+surface rounding
-        // mismatch produces a notch) or when the window is tiled (client CSD
-        // headers don't expect compositor clipping; clients receive set_tiled
-        // and can flatten their own corners).
+        // Skip surface rounding when the window is tiled (client CSD headers
+        // don't expect compositor clipping; clients receive set_tiled and can
+        // flatten their own corners). Windows with a server-side titlebar ARE
+        // rounded, but only at the bottom: the bar's shader rounds the top
+        // pair, and leaving the content square let its bottom corners poke
+        // out past the rounded border/shadow outline.
         let needs_rounding = !is_fullscreen
             && !is_maximized
             && snap_zone.is_none()
             && !too_small_for_rounding
-            && !has_ssd
             && !is_tiled_now
             && udev.rounded_tex_shader.is_some();
+        let round_top_extend = if has_ssd { corner_r * 2.0 + 1.0 } else { 0.0 };
         // Wrap each live surface element in a RescaleRenderElement so its
         // visible footprint matches `effective_size`. `combined_scale` is
         // 1.0 at rest so this is a no-op outside animations.
@@ -1069,6 +1071,7 @@ pub fn render_surface(
                         shader.clone(),
                         [win_phys_w, win_phys_h],
                         corner_r,
+                        round_top_extend,
                     ),
                 )
             }));
@@ -1744,6 +1747,7 @@ pub fn render_surface(
                             shader.clone(),
                             [preview_phys_w, preview_phys_h],
                             corner_phys,
+                            0.0,
                         ),
                     ));
                 } else {

@@ -254,6 +254,7 @@ fn compile_shaders(udev: &mut crate::udev::UdevData) {
         &[
             UniformName::new("tex_size", UniformType::_2f),
             UniformName::new("corner_radius", UniformType::_1f),
+            UniformName::new("top_extend", UniformType::_1f),
         ],
     ) {
         Ok(shader) => {

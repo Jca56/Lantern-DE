@@ -1659,8 +1659,20 @@ where
                     },
                 );
             } else if let Some(surface) = xwm.windows.iter().find(|x| x.window_id() == n.window).cloned() {
-                if surface.is_override_redirect() {
-                    surface.state.lock().unwrap().geometry = geometry;
+                // Lantern patch: trust the event's override_redirect flag, not
+                // only the one cached at CreateNotify. Wine/Proton creates popup
+                // menus as ordinary windows, flips them to override-redirect,
+                // configures them to their final geometry and only THEN maps
+                // them. With the stale cached flag that pre-map ConfigureNotify
+                // was dropped and the menu mapped at its creation geometry
+                // (0,0 640x480) — every Mod Organizer context menu landed in
+                // the top-left corner of the screen.
+                if surface.is_override_redirect() || n.override_redirect {
+                    {
+                        let mut state = surface.state.lock().unwrap();
+                        state.geometry = geometry;
+                        state.override_redirect = n.override_redirect;
+                    }
                     drop(_guard);
                     state.configure_notify(
                         xwm_id,

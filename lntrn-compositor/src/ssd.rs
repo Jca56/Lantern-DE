@@ -1,7 +1,8 @@
 /// Server-side decorations (SSD) for windows that don't draw their own.
 ///
-/// Integrated style: semi-transparent header overlay on the window's top region,
-/// rounded corners via corner-mask shader elements, no gold accent line.
+/// Plain style: a slim, fully opaque bar above the window with rounded top
+/// corners (the window content gets its bottom corners rounded by the
+/// renderer), three flat control buttons, no accent line.
 use smithay::{
     backend::renderer::{
         element::solid::{SolidColorBuffer, SolidColorRenderElement},
@@ -18,21 +19,25 @@ use crate::snap::SnapZone;
 // ── Constants ───────────────────────────────────────────────────────────────
 
 /// Window control button width.
-const BTN_W: i32 = 46;
+const BTN_W: i32 = 40;
+/// Bar fill — fully opaque so the window behind never shows through.
+const BAR_COLOR: [f32; 4] = [0.13, 0.13, 0.14, 1.0];
+/// Close-button hover fill (opaque red).
+const CLOSE_HOVER_COLOR: [f32; 4] = [0.85, 0.20, 0.20, 1.0];
 
 // The two SSD geometry settings, cached as atomics. `bar_height_px` and
 // `corner_radius` run per SSD window per frame AND on every pointer motion
 // over a titlebar; each used to be a full line-scan of the cached
 // lantern.toml text. `reload_config` refreshes them from the render path's
 // half-second housekeeping (and once at startup).
-static BAR_HEIGHT: AtomicI32 = AtomicI32::new(34);
+static BAR_HEIGHT: AtomicI32 = AtomicI32::new(28);
 static CORNER_RADIUS_BITS: AtomicU32 = AtomicU32::new(0x4190_0000); // 18.0f32
 
 /// Re-read `[window_manager].titlebar_height` / `.corner_radius`.
 pub fn reload_config() {
-    let bar = crate::read_config("window_manager", "titlebar_height", "34")
+    let bar = crate::read_config("window_manager", "titlebar_height", "28")
         .parse::<i32>()
-        .unwrap_or(34)
+        .unwrap_or(28)
         .clamp(20, 60);
     BAR_HEIGHT.store(bar, Ordering::Relaxed);
     let radius = crate::read_config("window_manager", "corner_radius", "18")
@@ -43,7 +48,7 @@ pub fn reload_config() {
 }
 
 /// Titlebar height in logical pixels — [window_manager].titlebar_height,
-/// default 34 (see `reload_config`).
+/// default 28 (see `reload_config`).
 pub fn bar_height_px() -> i32 {
     BAR_HEIGHT.load(Ordering::Relaxed)
 }
@@ -135,8 +140,8 @@ pub struct SsdState {
 
 impl SsdState {
     fn new() -> Self {
-        let close_hover: [f32; 4] = [0.91, 0.18, 0.18, 0.70]; // semi-transparent red
-        let btn_hover: [f32; 4] = [1.0, 1.0, 1.0, 0.08];
+        let close_hover: [f32; 4] = [0.85, 0.20, 0.20, 1.0]; // opaque red
+        let btn_hover: [f32; 4] = [1.0, 1.0, 1.0, 0.10];
 
         Self {
             hovered_button: None,
@@ -290,75 +295,20 @@ pub fn render_decoration(
         )
     };
 
-    // Header background via shader (semi-transparent with rounded top corners)
-    if let Some(shader) = header_shader {
-        let corner_r = if corners.tl || corners.tr {
-            radius_logical * scale as f32
-        } else {
-            0.0
-        };
+    // PixelShaderElement binds `size` in LOGICAL px (Smithay passes
+    // area.size, not the physical dst), so every radius below stays logical
+    // too. Scaling it by the output scale cut the bar's corner tighter than
+    // the border ring / shadow (which use the logical radius), leaving a
+    // square gap at the top corners that showed whatever was behind.
+    let corner_r = if corners.tl || corners.tr {
+        radius_logical
+    } else {
+        0.0
+    };
+    let hover_r = if corners.tr { radius_logical } else { 0.0 };
 
-        let header_area = Rectangle::<i32, Logical>::new(
-            Point::from((bar_lx, bar_ly)),
-            Size::from((bar_w, bar_h)),
-        );
-
-        shaders.push(PixelShaderElement::new(
-            shader.clone(),
-            header_area,
-            None,
-            1.0,
-            vec![
-                Uniform::new("corner_radius", corner_r),
-                Uniform::new("bar_color", [0.18f32, 0.18, 0.18, 0.75]),
-            ],
-            kind,
-        ));
-    }
-
-    // Button hover highlight
-    if let Some(btn) = state.hovered_button {
-        let idx: i32 = match btn {
-            SsdButton::Close => 0,
-            SsdButton::Maximize => 1,
-            SsdButton::Minimize => 2,
-        };
-        if btn == SsdButton::Close {
-            // Close hover uses header shader so it respects the rounded top-right corner
-            if let Some(shader) = header_shader {
-                let btn_x = bar_lx + bar_w - BTN_W;
-                let hover_r = if corners.tr {
-                    radius_logical * scale as f32
-                } else {
-                    0.0
-                };
-                let hover_area = Rectangle::<i32, Logical>::new(
-                    Point::from((btn_x, bar_ly)),
-                    Size::from((BTN_W, bar_h)),
-                );
-                shaders.push(PixelShaderElement::new(
-                    shader.clone(),
-                    hover_area,
-                    None,
-                    1.0,
-                    vec![
-                        Uniform::new("corner_radius", hover_r),
-                        Uniform::new("bar_color", [0.91f32, 0.18, 0.18, 0.70]),
-                    ],
-                    kind,
-                ));
-            }
-        } else {
-            state.btn_hover_buf.resize((BTN_W, bar_h));
-            solids.push(SolidColorRenderElement::from_buffer(
-                &state.btn_hover_buf,
-                p(bar_w - BTN_W * (idx + 1), 0),
-                scale,
-                1.0,
-                kind,
-            ));
-        }
-    }
+    // Z-order: elements pushed first are drawn on top, and the bar is opaque,
+    // so icons and hover go in BEFORE the header background.
 
     // Icons via pixel shader
     if let Some(shader) = icon_shader {
@@ -391,6 +341,66 @@ pub fn render_decoration(
                 kind,
             ));
         }
+    }
+
+    // Button hover highlight
+    if let Some(btn) = state.hovered_button {
+        let idx: i32 = match btn {
+            SsdButton::Close => 0,
+            SsdButton::Maximize => 1,
+            SsdButton::Minimize => 2,
+        };
+        if btn == SsdButton::Close {
+            // Close hover uses the header shader so it follows the rounded
+            // top-right corner exactly (same radius as the bar itself).
+            if let Some(shader) = header_shader {
+                let btn_x = bar_lx + bar_w - BTN_W;
+                let hover_area = Rectangle::<i32, Logical>::new(
+                    Point::from((btn_x, bar_ly)),
+                    Size::from((BTN_W, bar_h)),
+                );
+                shaders.push(PixelShaderElement::new(
+                    shader.clone(),
+                    hover_area,
+                    None,
+                    1.0,
+                    vec![
+                        Uniform::new("corner_radius", hover_r),
+                        Uniform::new("bar_color", CLOSE_HOVER_COLOR),
+                    ],
+                    kind,
+                ));
+            }
+        } else {
+            state.btn_hover_buf.resize((BTN_W, bar_h));
+            solids.push(SolidColorRenderElement::from_buffer(
+                &state.btn_hover_buf,
+                p(bar_w - BTN_W * (idx + 1), 0),
+                scale,
+                1.0,
+                kind,
+            ));
+        }
+    }
+
+    // Header background via shader (opaque, rounded top corners) — lowest z.
+    if let Some(shader) = header_shader {
+        let header_area = Rectangle::<i32, Logical>::new(
+            Point::from((bar_lx, bar_ly)),
+            Size::from((bar_w, bar_h)),
+        );
+
+        shaders.push(PixelShaderElement::new(
+            shader.clone(),
+            header_area,
+            None,
+            1.0,
+            vec![
+                Uniform::new("corner_radius", corner_r),
+                Uniform::new("bar_color", BAR_COLOR),
+            ],
+            kind,
+        ));
     }
 
     state.decor_cache = Some((key, solids.clone(), shaders.clone()));

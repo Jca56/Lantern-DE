@@ -19,6 +19,10 @@ pub struct RoundedSurfaceElement {
     shader: GlesTexProgram,
     tex_size: [f32; 2],
     corner_radius: f32,
+    /// Physical px virtually added above the texture: 0 rounds all four
+    /// corners, `>= 2 * corner_radius` leaves the top pair square (window
+    /// content under a server-side titlebar).
+    top_extend: f32,
 }
 
 impl RoundedSurfaceElement {
@@ -29,12 +33,14 @@ impl RoundedSurfaceElement {
         shader: GlesTexProgram,
         tex_size: [f32; 2],
         corner_radius: f32,
+        top_extend: f32,
     ) -> Self {
         Self {
             inner,
             shader,
             tex_size,
             corner_radius,
+            top_extend,
         }
     }
 }
@@ -77,6 +83,7 @@ impl RenderElement<GlesRenderer> for RoundedSurfaceElement {
             vec![
                 Uniform::new("tex_size", self.tex_size),
                 Uniform::new("corner_radius", self.corner_radius),
+                Uniform::new("top_extend", self.top_extend),
             ],
         );
         let result = self.inner.draw(frame, src, dst, damage, opaque_regions);
