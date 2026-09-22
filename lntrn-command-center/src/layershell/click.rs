@@ -200,10 +200,11 @@ pub(super) fn handle_clicks(
                 wl.phys_width().max(1) as f32,
                 wl.phys_height().max(1) as f32,
             );
-            if let Some(action) = crate::launcher::context_menu::hit_test(
+            if let Some(action) = crate::launcher::context_menu::hit_test_with(
                 &menu,
                 surface_bounds,
                 scale_f,
+                Some(text),
                 phys_cx,
                 phys_cy,
             ) {
@@ -293,6 +294,7 @@ pub(super) fn handle_clicks(
         // (dock_idx, window_idx_within_app, hit_kind)
         let mut dock_preview_hit: Option<(usize, usize, crate::mini_dock::PreviewHit)> = None;
         let mut dock_pin: Option<usize> = None;
+        let mut dock_tray: Option<usize> = None;
         let mut dock_layout: Option<crate::mini_dock::DockLayout> = None;
         // Dock is visible (and clickable) in every view while collapsed.
         if app.collapse_progress() > 0.005 {
@@ -305,6 +307,7 @@ pub(super) fn handle_clicks(
                 &pinned,
                 &app.toplevels,
                 &app.apps,
+                &app.tray.items,
                 Some((phys_cx, phys_cy)),
             ) {
                 if let Some(hover_idx) = app.mini_dock_hover {
@@ -326,6 +329,9 @@ pub(super) fn handle_clicks(
                 }
                 if dock_preview_hit.is_none() {
                     dock_pin = crate::mini_dock::hit_test(&layout, phys_cx, phys_cy);
+                    if dock_pin.is_none() {
+                        dock_tray = crate::mini_dock::hit_test_tray(&layout, phys_cx, phys_cy);
+                    }
                 }
                 dock_layout = Some(layout);
             }
@@ -720,6 +726,21 @@ pub(super) fn handle_clicks(
                         }
                     }
                 }
+            }
+        } else if let Some(tray_idx) = dock_tray {
+            // Tray icon: Activate (falls back to the menu for menu-only
+            // items). The menu, when one comes back, opens above the icon.
+            let item = dock_layout
+                .as_ref()
+                .and_then(|l| l.tray.get(tray_idx).cloned().zip(l.tray_icons.get(tray_idx).copied()));
+            if let Some((item, rect)) = item {
+                tracing::debug!(id = %item.id, "tray icon click → activate");
+                let anchor = (rect.x, rect.y - 8.0 * scale_f);
+                app.tray.activate(
+                    &item.bus_name,
+                    anchor,
+                    (wl.cursor_x as i32, wl.cursor_y as i32),
+                );
             }
         } else if let Some(dock_idx) = dock_pin {
             // Click on a dock icon: if the app has open windows,

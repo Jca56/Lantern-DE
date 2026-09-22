@@ -728,6 +728,23 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         }
         app.controls.tick();
         app.media.tick();
+        // System tray: item list changes and fetched menus both need a
+        // frame. A ready menu opens as a regular context menu anchored
+        // above the icon that was clicked.
+        if app.tray.tick() {
+            wl.input_dirty = true;
+        }
+        if let Some(menu) = app.tray.ready_menu.take() {
+            app.context_menu = Some(crate::launcher::context_menu::ContextMenu {
+                app_id: menu.bus,
+                window_title: menu.menu_path,
+                anchor_x: menu.anchor.0,
+                anchor_y: menu.anchor.1,
+                items: menu.items,
+                anchor_above: true,
+            });
+            wl.input_dirty = true;
+        }
         // PTY housekeeping for the Terminal view. We spawn lazily on
         // first activation and resize whenever the body geometry
         // changes so the child shell reflows correctly.
@@ -940,6 +957,18 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         // Drag continuations (sliders + notes editor text drag-select).
         handle_drag(&mut wl, &mut app, &mut text);
 
+        // Tray items that ship their icon as raw pixels skip the
+        // resolver: upload straight into the cache under the item's key
+        // so this frame's icon request hits.
+        for item in &app.tray.items {
+            if let Some(pm) = item.effective_pixmap() {
+                let key = item.icon_key();
+                if !icon_cache.has(&key) {
+                    icon_cache.insert_rgba(&gpu, &tex_pass, &key, &pm.rgba, pm.width, pm.height);
+                    wl.input_dirty = true;
+                }
+            }
+        }
         // Upload any icons the background rasterizer finished. A fresh
         // texture is a visual change, so it counts as dirty.
         if icon_cache.pump(&gpu, &tex_pass) > 0 {

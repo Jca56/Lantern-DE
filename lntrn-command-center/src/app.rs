@@ -279,6 +279,9 @@ pub struct AppState {
     /// Now-playing media (MPRIS). Drives the centerpiece widget in the
     /// middle of the controls row.
     pub media: crate::media::Media,
+    /// System tray (StatusNotifierItem host). Items render as a small
+    /// cluster at the right end of the mini dock.
+    pub tray: crate::tray::Tray,
     /// Result slot for the background `.desktop` rescan kicked off on
     /// every fresh open (see `kick_apps_rescan`). `None` when no rescan
     /// is in flight.
@@ -373,6 +376,7 @@ impl AppState {
             pending_terminal_input: None,
             workspace_ipc: crate::workspace_ipc::WorkspaceIpc::new(),
             media: crate::media::Media::new(),
+            tray: crate::tray::Tray::new(),
             apps_rescan: None,
         }
     }

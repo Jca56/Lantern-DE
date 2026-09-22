@@ -29,6 +29,7 @@ mod settings;
 mod terminal;
 mod thumbs;
 mod toplevel;
+mod tray;
 mod view_arrows;
 mod view_indicator;
 mod workspace_ipc;

@@ -44,6 +44,22 @@ pub enum MenuAction {
     /// Dock: open Firefox in a private window. Only added to the menu
     /// when the right-clicked app is Firefox.
     FirefoxPrivate,
+    /// System tray: a dbusmenu entry. The id is the item's dbusmenu id;
+    /// `ContextMenu.app_id` holds the bus name and `window_title` the
+    /// menu object path.
+    TrayMenuItem(i32),
+    /// System tray: a greyed-out row (disabled entry or submenu heading).
+    /// Never dispatched — `hit_test` skips it.
+    TrayDisabled,
+    /// System tray: a thin divider row. Never dispatched.
+    TraySeparator,
+}
+
+impl MenuAction {
+    /// Rows the pointer can't act on.
+    pub fn is_inert(self) -> bool {
+        matches!(self, MenuAction::TrayDisabled | MenuAction::TraySeparator)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -73,6 +89,8 @@ pub struct ContextMenu {
 
 const MENU_WIDTH: f32 = 220.0;
 const ITEM_HEIGHT: f32 = 40.0;
+/// Height of a `TraySeparator` row.
+const SEPARATOR_HEIGHT: f32 = 12.0;
 const MENU_PAD_V: f32 = 8.0;
 const ITEM_FONT: f32 = 18.0;
 const ITEM_PAD_H: f32 = 16.0;
@@ -87,11 +105,49 @@ fn text_color(alpha: f32) -> Color {
     Color::from_rgb8(TEXT_RGB.0, TEXT_RGB.1, TEXT_RGB.2).with_alpha(alpha)
 }
 
+/// Logical row height for one item.
+fn row_height(item: &MenuItem) -> f32 {
+    if item.action == MenuAction::TraySeparator {
+        SEPARATOR_HEIGHT
+    } else {
+        ITEM_HEIGHT
+    }
+}
+
+/// Widest label in the menu decides the width; tray menus (Steam's
+/// recent-games list) run past the fixed 220 px.
+fn menu_width(menu: &ContextMenu, text: Option<&mut TextRenderer>, scale: f32) -> f32 {
+    let base = MENU_WIDTH * scale;
+    let Some(text) = text else {
+        return base;
+    };
+    let font = ITEM_FONT * scale;
+    let widest = menu
+        .items
+        .iter()
+        .map(|it| text.measure_width(&it.label, font))
+        .fold(0.0_f32, f32::max);
+    base.max(widest + ITEM_PAD_H * 2.0 * scale + font)
+}
+
 /// Compute the rect (in physical pixels) the menu will occupy, clamped
 /// inside the panel. Used by both draw and hit-test.
 pub fn menu_rect(menu: &ContextMenu, panel: Rect, scale: f32) -> Rect {
-    let w = MENU_WIDTH * scale;
-    let h = MENU_PAD_V * 2.0 * scale + (menu.items.len() as f32) * ITEM_HEIGHT * scale;
+    menu_rect_with(menu, panel, scale, None)
+}
+
+/// `menu_rect` with a text renderer available for label measurement.
+/// Draw and hit-test both go through here so a widened tray menu is
+/// clickable across its full width.
+pub fn menu_rect_with(
+    menu: &ContextMenu,
+    panel: Rect,
+    scale: f32,
+    text: Option<&mut TextRenderer>,
+) -> Rect {
+    let w = menu_width(menu, text, scale);
+    let h = MENU_PAD_V * 2.0 * scale
+        + menu.items.iter().map(row_height).sum::<f32>() * scale;
 
     let max_x = panel.x + panel.w - 8.0 * scale - w;
     let max_y = panel.y + panel.h - 8.0 * scale - h;
@@ -108,26 +164,33 @@ pub fn menu_rect(menu: &ContextMenu, panel: Rect, scale: f32) -> Rect {
     Rect::new(x, y, w, h)
 }
 
-/// Returns Some(action) if the click landed on an item.
-pub fn hit_test(
+/// Returns Some(action) if the click landed on an item. Pass the text
+/// renderer so the bounds match the label-widened rect `draw` used.
+pub fn hit_test_with(
     menu: &ContextMenu,
     panel: Rect,
     scale: f32,
+    text: Option<&mut TextRenderer>,
     phys_x: f32,
     phys_y: f32,
 ) -> Option<MenuAction> {
-    let rect = menu_rect(menu, panel, scale);
+    let rect = menu_rect_with(menu, panel, scale, text);
     if phys_x < rect.x || phys_x > rect.x + rect.w || phys_y < rect.y || phys_y > rect.y + rect.h {
         return None;
     }
-    let item_h = ITEM_HEIGHT * scale;
     let pad_v = MENU_PAD_V * scale;
-    let local_y = phys_y - rect.y - pad_v;
+    let mut local_y = phys_y - rect.y - pad_v;
     if local_y < 0.0 {
         return None;
     }
-    let idx = (local_y / item_h) as usize;
-    menu.items.get(idx).map(|it| it.action)
+    for item in &menu.items {
+        let h = row_height(item) * scale;
+        if local_y < h {
+            return (!item.action.is_inert()).then_some(item.action);
+        }
+        local_y -= h;
+    }
+    None
 }
 
 /// True if the click landed anywhere on the menu surface (including
@@ -150,7 +213,7 @@ pub fn draw(
     surface_w: u32,
     surface_h: u32,
 ) {
-    let rect = menu_rect(menu, panel, scale);
+    let rect = menu_rect_with(menu, panel, scale, Some(text));
     let radius = CORNER_RADIUS * scale;
 
     // Soft drop shadow for separation from grid.
@@ -172,30 +235,49 @@ pub fn draw(
         Color::rgba(1.0, 1.0, 1.0, BORDER_ALPHA),
     );
 
-    let item_h = ITEM_HEIGHT * scale;
     let pad_v = MENU_PAD_V * scale;
     let pad_h = ITEM_PAD_H * scale;
     let font = ITEM_FONT * scale;
 
-    for (i, item) in menu.items.iter().enumerate() {
-        let row_y = rect.y + pad_v + (i as f32) * item_h;
-        let row_rect = Rect::new(rect.x + 4.0 * scale, row_y, rect.w - 8.0 * scale, item_h);
+    // Real hover styling would want pointer-tracking; skip until we
+    // need it.
+    let _ = HOVER_ALPHA;
 
-        // Subtle hover-feel hint on every other row — keeps the list
-        // scannable. Real hover styling would want pointer-tracking;
-        // skip until we need it.
-        let _ = row_rect;
-        let _ = HOVER_ALPHA;
-
-        text.queue(
-            &item.label,
-            font,
-            rect.x + pad_h,
-            row_y + (item_h - font) / 2.0,
-            text_color(0.95),
-            rect.w - pad_h * 2.0,
-            surface_w,
-            surface_h,
-        );
+    let mut row_y = rect.y + pad_v;
+    for item in &menu.items {
+        let item_h = row_height(item) * scale;
+        match item.action {
+            MenuAction::TraySeparator => {
+                let line_h = (1.0 * scale).max(1.0);
+                painter.rect_filled(
+                    Rect::new(
+                        rect.x + pad_h,
+                        row_y + (item_h - line_h) / 2.0,
+                        rect.w - pad_h * 2.0,
+                        line_h,
+                    ),
+                    line_h * 0.5,
+                    Color::rgba(1.0, 1.0, 1.0, BORDER_ALPHA),
+                );
+            }
+            action => {
+                let alpha = if action == MenuAction::TrayDisabled {
+                    0.45
+                } else {
+                    0.95
+                };
+                text.queue(
+                    &item.label,
+                    font,
+                    rect.x + pad_h,
+                    row_y + (item_h - font) / 2.0,
+                    text_color(alpha),
+                    rect.w - pad_h * 2.0 + font,
+                    surface_w,
+                    surface_h,
+                );
+            }
+        }
+        row_y += item_h;
     }
 }

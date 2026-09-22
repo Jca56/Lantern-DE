@@ -153,6 +153,30 @@ impl IconCache {
         fresh
     }
 
+    /// True when a slot exists for `key` (loaded, negative, or in flight).
+    pub fn has(&self, key: &str) -> bool {
+        self.map.contains_key(key) || self.pending.contains(key)
+    }
+
+    /// Upload a ready-made RGBA image under `key`, bypassing the
+    /// resolver pool. Used for tray items that ship their icon as a
+    /// pixmap over D-Bus. No-op when the key is already populated.
+    pub fn insert_rgba(
+        &mut self,
+        gpu: &GpuContext,
+        tex_pass: &TexturePass,
+        key: &str,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) {
+        if self.has(key) || width == 0 || height == 0 {
+            return;
+        }
+        let tex = tex_pass.upload(gpu, rgba, width, height);
+        self.map.insert(key.to_string(), Some(tex));
+    }
+
     /// Read-only lookup. `None` while the icon is still loading (or if
     /// it could not be resolved at all).
     pub fn peek(&self, app_id: &str) -> Option<&GpuTexture> {

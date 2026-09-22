@@ -263,6 +263,7 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
             &pinned,
             &app.toplevels,
             &app.apps,
+            &app.tray.items,
             Some((phys_cx, phys_cy)),
         );
         if let Some(layout) = layout {

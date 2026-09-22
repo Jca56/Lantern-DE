@@ -445,6 +445,12 @@ impl AppState {
                 tracing::info!("dock → firefox --private-window");
                 self.close();
             }
+            MenuAction::TrayMenuItem(id) => {
+                // app_id = bus name, window_title = dbusmenu object path.
+                tracing::debug!(bus = %menu.app_id, id, "tray menu → clicked");
+                self.tray.menu_click(&menu.app_id, &menu.window_title, id);
+            }
+            MenuAction::TrayDisabled | MenuAction::TraySeparator => {}
         }
     }
 

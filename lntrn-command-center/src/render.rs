@@ -380,6 +380,7 @@ fn draw_content_body(
                 &pinned,
                 &state.toplevels,
                 &state.apps,
+                &state.tray.items,
                 Some(state.cursor_phys),
             );
             if let Some(mut layout) = layout {

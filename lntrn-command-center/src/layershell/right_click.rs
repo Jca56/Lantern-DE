@@ -37,11 +37,26 @@ pub(super) fn handle_right_click(wl: &mut WlState, app: &mut AppState, text: &mu
             &pinned,
             &app.toplevels,
             &app.apps,
+            &app.tray.items,
             Some((phys_cx, phys_cy)),
         ) {
             if let Some(idx) = crate::mini_dock::hit_test(&layout, phys_cx, phys_cy) {
                 if let Some(entry) = layout.entries.get(idx).cloned() {
                     app.open_dock_context_menu(entry.app_id, entry.pinned, phys_cx, phys_cy);
+                    return;
+                }
+            }
+            if let Some(idx) = crate::mini_dock::hit_test_tray(&layout, phys_cx, phys_cy) {
+                if let (Some(item), Some(rect)) =
+                    (layout.tray.get(idx).cloned(), layout.tray_icons.get(idx).copied())
+                {
+                    tracing::debug!(id = %item.id, "tray icon right-click → request menu");
+                    let anchor = (rect.x, rect.y - 8.0 * scale_f);
+                    app.tray.request_menu(
+                        &item.bus_name,
+                        anchor,
+                        (wl.cursor_x as i32, wl.cursor_y as i32),
+                    );
                     return;
                 }
             }

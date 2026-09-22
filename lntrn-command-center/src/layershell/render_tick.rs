@@ -147,6 +147,7 @@ pub(super) fn render_frame(
                 &pinned,
                 &app.toplevels,
                 &app.apps,
+                &app.tray.items,
                 Some((wl.cursor_x as f32 * scale_f, wl.cursor_y as f32 * scale_f)),
             );
             let entry = layout.as_ref().and_then(|l| l.entries.get(idx)).cloned();
