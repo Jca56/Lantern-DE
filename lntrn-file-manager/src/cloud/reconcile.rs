@@ -1,31 +1,34 @@
-// Three-way merge between local filesystem state, the local manifest, and the
-// Firestore remote index.
+// One reconcile pass: a three-way merge between the local tree, the local
+// manifest and the mirror of the Firestore index.
 //
-// For each path in the union of (local files, manifest, remote docs) we look at:
-//   L = local sha256 (or None if file missing)
-//   M = manifest sha256 (or None)
-//   R = remote sha256 (or None — None can mean "no doc" or "tombstone")
+//   scan.rs     looks at ~/Cloud (and can fail: unknown is not deleted)
+//   plan.rs     names an action for every path (pure decision table)
+//   guard.rs    holds the deletions back when they look like an accident
+//   failures.rs says which paths failed lately and are not due yet
+//   actions.rs  carries an action out on one path
+//   gc.rs       after a pass that followed a full list: old tombstones and
+//               blobs nothing refers to
+//   here        the pass itself: in what order, and what a failure means
 //
-// and pick one action. The manifest is the "what we last agreed on" pivot, so
-// "local changed" means L != M, and "remote changed" means R != M.
+// The sync root is never created here. Without it there is no pass.
 
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::collections::{BTreeSet, HashSet};
+use std::time::{Duration, Instant};
 
-use super::firestore::{self, FileDoc};
-use super::hash::sha256_file;
-use super::http::Authed;
-use super::manifest::Manifest;
-use super::{cloud_root, device_name, storage};
-
-/// Directories ignored wherever they sit in the tree, not just at the root.
-const IGNORE_DIRS: &[&str] = &[".git", ".syncthing"];
-const IGNORE_FILENAMES: &[&str] = &[".DS_Store"];
-/// Suffix of the temp file a download is written to before the rename.
-const TMP_SUFFIX: &str = ".fox-tmp";
-/// Suffix of the temp file the audio tag writer rewrites a song through.
-const TAG_TMP_SUFFIX: &str = ".lntrn-tmp";
+use super::actions::{self, Ctx, Done};
+use super::auth::AuthStop;
+use super::device_name;
+use super::failures::{self, Failures, StuckFile, StuckKind};
+use super::firestore;
+use super::gc::{self, Cleaned};
+use super::guard::{self, HeldSet, HoldReason, PassFacts};
+use super::ignore::should_ignore;
+use super::manifest::{Manifest, Origin};
+use super::plan::{decide, Action, Remote};
+use super::remote_index::RemoteIndex;
+use super::scan::{self, RootError};
+use super::stamp::Micros;
+use super::store::{Places, Store};
 
 /// HTTP statuses that mean "out of quota": 429 from Firestore, 402 from
 /// Storage once the free tier is used up. Sync pauses and backs off on
@@ -34,465 +37,340 @@ pub(super) fn is_quota_error(msg: &str) -> bool {
     msg.contains("status code 429") || msg.contains("status code 402")
 }
 
-fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+/// What the caller hands a pass.
+pub(super) struct PassInput<'a> {
+    pub store: &'a dyn Store,
+    pub places: &'a Places,
+    /// The remote snapshot to merge against. Own writes are recorded in it
+    /// as they happen.
+    pub index: &'a mut RemoteIndex,
+    /// Deletions the user confirmed: these go out whatever the guard says.
+    pub approved: &'a HashSet<String>,
+    /// Asked before every path: stop the pass (shutdown, sign-out)?
+    pub cancel: &'a mut dyn FnMut() -> bool,
+    /// Called once, when the pass turns out to have real work to do.
+    pub on_work: &'a mut dyn FnMut(),
+    /// A file written to less than this long ago is left for a later pass
+    /// (see scan.rs).
+    pub busy_window: Duration,
+    /// Set when `index` was listed in full for this pass: the server's time
+    /// from before that listing. The pass then ends with a clean-up (gc.rs),
+    /// which needs a mirror that is complete and a clock that is not ours.
+    pub maintain: Option<Micros>,
 }
 
-// ── Local scan ─────────────────────────────────────────────────────────────
-
-struct LocalFile {
-    rel: String,
-    abs: PathBuf,
-    size: u64,
-    mtime: u64,
-    sha: String,
-    /// When (size, mtime) were read, unix seconds — taken just before the
-    /// stat, so never later than the hash.
-    stat_at: u64,
+#[derive(Debug, Default)]
+pub(super) struct PassReport {
+    /// Deletions the guard held back this pass.
+    pub held: Option<HeldSet>,
+    /// Read failures in the scan; those paths were left alone.
+    pub unreadable: usize,
+    /// One line per skipped or unreadable thing, stable across passes.
+    pub notes: Vec<String>,
+    /// One "path: error" per path that failed in this pass.
+    pub failures: Vec<String>,
+    /// A failure was "out of quota": back off instead of retrying.
+    pub quota: bool,
+    /// The session ended in the middle of the pass.
+    pub auth_stop: Option<AuthStop>,
+    pub cancelled: bool,
+    /// Paths left for the next pass: the file changed after the scan, or
+    /// the cloud's doc changed after the mirror was read.
+    pub deferred: usize,
+    /// Files that are not in sync and will not be after the next pass
+    /// either: too big for the cloud, unreadable, or failed and waiting for
+    /// their next try. Sorted by path.
+    pub stuck: Vec<StuckFile>,
+    /// Files skipped because they are still being written.
+    pub busy: usize,
+    /// Paths (among `deferred`) whose doc in the cloud had changed: the
+    /// mirror has the new doc now, the next pass can decide at once.
+    pub moved: usize,
+    /// What the clean-up removed, if this pass ran one.
+    pub cleaned: Cleaned,
 }
 
-fn scan_local(root: &Path, manifest: &Manifest) -> HashMap<String, LocalFile> {
-    let mut out: HashMap<String, LocalFile> = HashMap::new();
-    walk(root, root, manifest, &mut out);
-    out
+pub(super) enum PassError {
+    /// ~/Cloud is missing or cannot be listed. Nothing was done.
+    Root(RootError),
+    Other(anyhow::Error),
 }
 
-fn walk(root: &Path, dir: &Path, manifest: &Manifest, out: &mut HashMap<String, LocalFile>) {
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in rd.flatten() {
-        let abs = entry.path();
-        let Ok(ft) = entry.file_type() else { continue };
-        if ft.is_symlink() {
-            continue;
-        }
-        if ft.is_dir() {
-            walk(root, &abs, manifest, out);
-            continue;
-        }
-        if !ft.is_file() {
-            continue;
-        }
-        let Ok(rel_pb) = abs.strip_prefix(root) else {
-            continue;
-        };
-        let rel = rel_pb.to_string_lossy().replace('\\', "/");
-        if should_ignore(&rel) {
-            continue;
-        }
-        let stat_at = now_secs();
-        let Ok(md) = entry.metadata() else { continue };
-        let size = md.len();
-        let mtime = md
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        // Stat cache: an unchanged (size, mtime) means the last-synced sha
-        // still describes this file — skip the sha256 read entirely.
-        let sha = match manifest.cached_sha(&rel, size, mtime) {
-            Some(cached) => cached.to_string(),
-            None => match sha256_file(&abs) {
-                Ok(s) => s,
-                Err(e) => {
-                    super::log_line(&format!("hash {} failed: {e}", abs.display()));
-                    continue;
-                }
-            },
-        };
-        out.insert(
-            rel.clone(),
-            LocalFile {
-                rel,
-                abs,
-                size,
-                mtime,
-                sha,
-                stat_at,
-            },
-        );
+/// How often progress is written out during a long pass. A killed process
+/// then repeats seconds of work, not the whole backlog.
+const SAVE_EVERY: Duration = Duration::from_secs(5);
+
+/// The mirror first, the manifest second: a manifest pivot for an own write
+/// must never be on disk without the mirror entry that matches it, or the
+/// next start reads "remote changed" and pulls the old version back.
+fn save_progress(ctx: &mut Ctx) -> anyhow::Result<()> {
+    ctx.index.save_to(&ctx.places.index)?;
+    ctx.manifest.save_to(&ctx.places.manifest)?;
+    // Last and least: losing this costs one retry too many, not a file.
+    if let Err(e) = ctx.failures.save_to(&ctx.places.failures) {
+        super::log_line(&format!("could not save the failure record: {e}"));
     }
-}
-
-fn should_ignore(rel: &str) -> bool {
-    if let Some((dirs, _)) = rel.rsplit_once('/') {
-        if dirs.split('/').any(|c| IGNORE_DIRS.contains(&c)) {
-            return true;
-        }
-    }
-    if let Some(name) = rel.rsplit('/').next() {
-        if IGNORE_FILENAMES.contains(&name)
-            || name.ends_with(TMP_SUFFIX)
-            || name.ends_with(TAG_TMP_SUFFIX)
-        {
-            return true;
-        }
-        // Skip in-flight conflict-rename intermediates and dotfiles starting with #
-        if name.starts_with('#') || name.ends_with('~') {
-            return true;
-        }
-    }
-    false
-}
-
-fn mime_for(name: &str) -> String {
-    let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-    match ext.as_str() {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "svg" => "image/svg+xml",
-        "pdf" => "application/pdf",
-        "txt" | "md" | "rs" | "toml" | "json" | "yaml" | "yml" | "log" => "text/plain",
-        "html" | "htm" => "text/html",
-        "css" => "text/css",
-        "js" | "mjs" => "application/javascript",
-        "mp4" => "video/mp4",
-        "mkv" => "video/x-matroska",
-        "mp3" => "audio/mpeg",
-        "flac" => "audio/flac",
-        "wav" => "audio/wav",
-        "zip" => "application/zip",
-        _ => "application/octet-stream",
-    }
-    .to_string()
-}
-
-// ── Path helpers ───────────────────────────────────────────────────────────
-
-fn abs_for(rel: &str) -> PathBuf {
-    cloud_root().join(rel)
-}
-
-fn conflict_name(rel: &str, device: &str, n: u32) -> String {
-    // foo/bar.txt -> foo/bar (conflict from <device>).txt, then "<device> 2"…
-    let (dir, name) = match rel.rfind('/') {
-        Some(i) => (&rel[..=i], &rel[i + 1..]),
-        None => ("", rel),
-    };
-    let (stem, ext) = match name.rfind('.') {
-        Some(i) if i > 0 => (&name[..i], &name[i..]),
-        _ => (name, ""),
-    };
-    if n <= 1 {
-        format!("{dir}{stem} (conflict from {device}){ext}")
-    } else {
-        format!("{dir}{stem} (conflict from {device} {n}){ext}")
-    }
-}
-
-// ── Per-path actions ───────────────────────────────────────────────────────
-
-fn upload_local(
-    authed: &Authed,
-    manifest: &mut Manifest,
-    local: &LocalFile,
-    device: &str,
-) -> anyhow::Result<()> {
-    let bytes = std::fs::read(&local.abs)?;
-    let mime = mime_for(&local.rel);
-    storage::upload_blob(authed, &local.sha, &bytes, &mime)?;
-    let doc = FileDoc {
-        path: local.rel.clone(),
-        sha256: local.sha.clone(),
-        size: local.size,
-        mtime: local.mtime,
-        mime,
-        device: device.to_string(),
-        deleted: false,
-        updated_at: None, // stamped with now_ms() by firestore::put
-    };
-    firestore::put(authed, &doc)?;
-    manifest.set(local.rel.clone(), local.sha.clone());
-    manifest.set_meta(local.rel.clone(), local.size, local.mtime, local.stat_at);
-    super::log_line(&format!("↑ {}", local.rel));
     Ok(())
 }
 
-fn download_remote(authed: &Authed, manifest: &mut Manifest, doc: &FileDoc) -> anyhow::Result<()> {
-    let bytes = storage::download_blob(authed, &doc.sha256)?;
-    let abs = abs_for(&doc.path);
-    if let Some(parent) = abs.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let mut tmp_name = abs.file_name().unwrap_or_default().to_os_string();
-    tmp_name.push(TMP_SUFFIX);
-    let tmp = abs.with_file_name(tmp_name);
-    if let Err(e) = std::fs::write(&tmp, &bytes).and_then(|()| std::fs::rename(&tmp, &abs)) {
-        // A leftover temp would be picked up by the next scan as a real file.
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.into());
-    }
-    manifest.set(doc.path.clone(), doc.sha256.clone());
-    // Stat AFTER the rename — the freshly-written file's (size, mtime) is
-    // what future scans will see for this exact content.
-    let stat_at = now_secs();
-    if let Ok(md) = std::fs::metadata(&abs) {
-        let mtime = md
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        manifest.set_meta(doc.path.clone(), md.len(), mtime, stat_at);
-    }
-    super::log_line(&format!("↓ {}", doc.path));
-    Ok(())
-}
-
-fn delete_local(rel: &str, manifest: &mut Manifest) -> anyhow::Result<()> {
-    let abs = abs_for(rel);
-    if abs.exists() {
-        std::fs::remove_file(&abs)?;
-    }
-    manifest.remove(rel);
-    super::log_line(&format!("× local {}", rel));
-    Ok(())
-}
-
-fn tombstone_remote(
-    authed: &Authed,
-    manifest: &mut Manifest,
-    rel: &str,
-    device: &str,
-) -> anyhow::Result<()> {
-    let doc = FileDoc {
-        path: rel.to_string(),
-        sha256: String::new(),
-        size: 0,
-        mtime: now_secs(),
-        mime: String::new(),
-        device: device.to_string(),
-        deleted: true,
-        updated_at: None, // stamped with now_ms() by firestore::put
-    };
-    firestore::put(authed, &doc)?;
-    manifest.remove(rel);
-    super::log_line(&format!("× remote {}", rel));
-    Ok(())
-}
-
-fn resolve_conflict(
-    authed: &Authed,
-    manifest: &mut Manifest,
-    remotes: &HashMap<String, FileDoc>,
-    local: &LocalFile,
-    remote: &FileDoc,
-    device: &str,
-) -> anyhow::Result<()> {
-    // 1. Rename local to "<name> (conflict from <device>).<ext>" on disk.
-    //    `rename` replaces silently, so pick a name nothing holds yet — on
-    //    disk, in the manifest or remotely — or a second conflict on the same
-    //    file would destroy the first conflict copy.
-    let taken = |rel: &str| {
-        abs_for(rel).symlink_metadata().is_ok()
-            || manifest.get(rel).is_some()
-            // Tombstones count too: that path is in this pass's work list,
-            // and landing a file on it mid-pass would have its fresh
-            // manifest entry dropped as "deleted on both sides".
-            || remotes.contains_key(rel)
-    };
-    let mut n = 1;
-    let mut conflict_rel = conflict_name(&local.rel, device, n);
-    while taken(&conflict_rel) && n < 1000 {
-        n += 1;
-        conflict_rel = conflict_name(&local.rel, device, n);
-    }
-    let conflict_abs = abs_for(&conflict_rel);
-    if let Some(parent) = conflict_abs.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::rename(&local.abs, &conflict_abs)?;
-    super::log_line(&format!("⚠ conflict on {} → {}", local.rel, conflict_rel));
-
-    // 2. Upload the renamed local file under its new path. Hash is unchanged.
-    let renamed = LocalFile {
-        rel: conflict_rel,
-        abs: conflict_abs,
-        size: local.size,
-        mtime: local.mtime,
-        sha: local.sha.clone(),
-        stat_at: local.stat_at,
-    };
-    upload_local(authed, manifest, &renamed, device)?;
-
-    // 3. Pull the remote version into the original path.
-    download_remote(authed, manifest, remote)?;
-    Ok(())
-}
-
-// ── Reconcile pass ─────────────────────────────────────────────────────────
-
-/// Three-way merge of the local tree against a REMOTE SNAPSHOT (the cached
-/// remote index — see cloud/remote_index.rs). Does no Firestore listing of
-/// its own; per-path uploads/downloads/tombstones are the only network here.
-pub fn reconcile_with(authed: &Authed, remotes: &HashMap<String, FileDoc>) -> anyhow::Result<()> {
-    let root = cloud_root();
-    std::fs::create_dir_all(&root)?;
-    let device = device_name();
+/// Three-way merge of the local tree against the remote mirror. Does no
+/// Firestore listing of its own; per-path uploads/downloads/tombstones (and
+/// the clean-up, when asked for) are the only network here.
+pub(super) fn run_pass(input: PassInput) -> Result<PassReport, PassError> {
+    let PassInput {
+        store,
+        places,
+        index,
+        approved,
+        cancel,
+        on_work,
+        busy_window,
+        maintain,
+    } = input;
+    let root = &places.root;
+    // Before the manifest is even opened: without a root there is no pass.
+    scan::check_root(root).map_err(PassError::Root)?;
+    let uid = store.uid();
 
     // Manifest first — the local scan needs its stat cache to skip hashing
     // unchanged files.
-    let mut manifest = Manifest::load();
-    let locals = scan_local(&root, &manifest);
+    let (manifest, origin) = Manifest::load_from(&places.manifest, &uid);
+    let hold_all = match origin {
+        Origin::Corrupt => Some(HoldReason::ManifestCorrupt),
+        Origin::OtherAccount => Some(HoldReason::AccountChanged),
+        Origin::Loaded | Origin::Fresh => None,
+    };
+    let manifest_total = manifest.entries.len();
+    let scan = scan::scan_local(root, &manifest, busy_window).map_err(PassError::Root)?;
+    let locals = &scan.files;
+
+    let mut ctx = Ctx {
+        store,
+        places,
+        manifest,
+        index,
+        failures: Failures::load_from(&places.failures, &uid),
+        device: device_name(),
+    };
+    let mut report = PassReport {
+        unreadable: scan.unknown.failures,
+        notes: scan.notes.clone(),
+        busy: scan.busy,
+        ..PassReport::default()
+    };
+    report.stuck.extend(scan.too_big.iter().map(|rel| StuckFile {
+        path: rel.clone(),
+        kind: StuckKind::TooBig,
+        detail: "1 GiB or larger".to_string(),
+        attempts: 0,
+    }));
+    report.stuck.extend(scan.unreadable.iter().map(|(rel, why)| StuckFile {
+        path: rel.clone(),
+        kind: StuckKind::Unreadable,
+        detail: why.clone(),
+        attempts: 0,
+    }));
 
     // Persist the stat cache for every file whose fresh hash matches the
     // already-agreed manifest sha before any network work — a failed pass
     // then pays the full hashing cost once, not on every retry.
-    for (rel, local) in &locals {
-        if manifest.get(rel) == Some(local.sha.as_str()) {
-            manifest.set_meta(rel.clone(), local.size, local.mtime, local.stat_at);
+    for (rel, local) in locals {
+        if ctx.manifest.get(rel) == Some(local.sha.as_str()) {
+            ctx.manifest
+                .set_meta(rel.clone(), local.size, local.mtime, local.stat_at);
         }
     }
-    let _ = manifest.save();
+    let _ = ctx.manifest.save_to(&places.manifest);
 
-    let mut all_paths: HashSet<String> = HashSet::new();
-    all_paths.extend(locals.keys().cloned());
-    all_paths.extend(remotes.keys().cloned());
-    all_paths.extend(manifest.entries.keys().cloned());
+    // ── Plan ───────────────────────────────────────────────────────────
+    let mut all_paths: BTreeSet<&str> = BTreeSet::new();
+    all_paths.extend(locals.keys().map(String::as_str));
+    all_paths.extend(ctx.index.docs.keys().map(String::as_str));
+    all_paths.extend(ctx.manifest.entries.keys().map(String::as_str));
 
-    let mut failures: Vec<String> = Vec::new();
-    for path in &all_paths {
+    let mut plan: Vec<(String, Action)> = Vec::new();
+    let mut deletions: Vec<String> = Vec::new();
+    for path in all_paths {
         // An ignored path is inert on all three sides. Without this, a path
         // that was synced before an ignore rule covered it has no local scan
         // entry, reads as "deleted here" and gets tombstoned for everyone.
-        // Same for an unsafe path out of an old on-disk mirror.
-        if should_ignore(path) || !firestore::is_safe_rel_path(path) {
+        // Same for an unsafe path out of an old on-disk mirror, and for a
+        // path the scan could not or did not look at (unreadable, too big,
+        // still being written): unknown is not deleted.
+        if should_ignore(path) || !firestore::is_safe_rel_path(path) || scan.unknown.covers(path)
+        {
             continue;
         }
+        let remote = ctx.index.docs.get(path).map(|d| {
+            if d.deleted {
+                Remote::Tombstone
+            } else {
+                Remote::Live(d.sha256.as_str())
+            }
+        });
+        let action = decide(
+            locals.get(path).map(|l| l.sha.as_str()),
+            remote,
+            ctx.manifest.get(path),
+        );
+        match action {
+            Action::Nothing => continue,
+            Action::TombstoneRemote => deletions.push(path.to_string()),
+            _ => {}
+        }
+        plan.push((path.to_string(), action));
+    }
+    // Local removals go first (the sort is stable, so otherwise by path).
+    // A folder they empty is gone before a file is downloaded to the name
+    // the folder had, and a file is out of the way before a download needs
+    // a folder of that name.
+    plan.sort_by_key(|(_, action)| *action != Action::DeleteLocal);
+
+    // ── Guard ──────────────────────────────────────────────────────────
+    let facts = PassFacts {
+        manifest_total,
+        // Synced files that are still there (or could not be looked at). A
+        // file that is merely new in the folder says nothing about whether
+        // this is the folder that was synced.
+        scan_files: ctx
+            .manifest
+            .entries
+            .keys()
+            .filter(|p| locals.contains_key(*p) || scan.unknown.covers(p))
+            .count(),
+        scan_failed: scan.unknown.failures > 0,
+        hold_all,
+    };
+    let verdict = guard::evaluate(&uid, deletions, &facts, approved);
+    report.held = verdict.held;
+    // Not one synced file is in the folder: it is an empty stand-in for the
+    // real one (a volume that is not mounted, a folder made anew). Until
+    // the user has answered, this pass does nothing at all with it. A
+    // download into it would move that file's pivot to the cloud's version,
+    // and when the real folder came back, its older copy would read as "
+    // changed here" and be uploaded over the other machine's edit. It
+    // would also make the folder look inhabited to the next pass.
+    let stand_in = report
+        .held
+        .as_ref()
+        .is_some_and(|h| h.reason == HoldReason::EmptyFolder);
+    if stand_in {
+        plan.clear();
+    }
+
+    // ── Act ────────────────────────────────────────────────────────────
+    // Paths whose file was not what the scan recorded.
+    let mut stale: HashSet<&str> = HashSet::new();
+    // Paths that have a failure on record when this pass is over.
+    let mut failing: HashSet<&str> = HashSet::new();
+    let mut announced = false;
+    let mut last_save = Instant::now();
+    for (path, action) in &plan {
+        if cancel() {
+            report.cancelled = true;
+            break;
+        }
+        let transfers = match action {
+            Action::TombstoneRemote if !verdict.release.contains(path) => continue,
+            // A pass that started without its pivots removes nothing, in
+            // either direction.
+            Action::DeleteLocal if hold_all.is_some() => {
+                report.deferred += 1;
+                continue;
+            }
+            Action::Adopt | Action::ForgetPivot => false,
+            _ => true,
+        };
         let local = locals.get(path);
-        let remote = remotes.get(path);
-        let m = manifest.get(path).map(|s| s.to_string());
-
-        let result: anyhow::Result<()> = match (local, remote, m.as_deref()) {
-            // 1. brand new local file
-            (Some(l), None, None) => upload_local(authed, &mut manifest, l, &device),
-
-            // 2. brand new remote file
-            (None, Some(r), None) if !r.deleted => download_remote(authed, &mut manifest, r),
-
-            // 2b. local + remote both exist but no manifest pivot. Happens when a path
-            //     carries a stale tombstone (deleted earlier, manifest entry purged) and
-            //     a file is re-created at that name, or after a manifest wipe. Without an
-            //     arm here these fell through to the no-op catch-all and stuck forever.
-            (Some(l), Some(r), None) if r.deleted => {
-                // Remote says deleted, but we have a live local file with no record of
-                // having agreed to that deletion → the user wants this file. Push it.
-                upload_local(authed, &mut manifest, l, &device)
+        let remote = ctx.index.docs.get(path).cloned();
+        // Failed before, looking exactly like this, and not due yet: no
+        // hashing, no reading, no sending. (Adopt and ForgetPivot touch
+        // neither disk nor network and have nothing to fail on.)
+        let sig = transfers.then(|| failures::signature(*action, local, remote.as_ref()));
+        if let Some(sig) = &sig {
+            if let Some(stuck) = ctx.failures.waiting(path, sig, firestore::now_ms()) {
+                report.stuck.push(stuck);
+                failing.insert(path);
+                continue;
             }
-            (Some(l), Some(r), None) if l.sha == r.sha256 => {
-                // Identical content on both sides — just adopt the manifest pivot.
-                manifest.set(path.clone(), r.sha256.clone());
-                Ok(())
+        }
+        if transfers && !announced {
+            on_work();
+            announced = true;
+        }
+        let result: anyhow::Result<Done> = match (action, local, remote) {
+            (Action::Upload, Some(l), _) => actions::upload_local(&mut ctx, l),
+            (Action::Download, l, Some(r)) => actions::download_remote(&mut ctx, &r, l),
+            (Action::Adopt, Some(_), Some(r)) => {
+                ctx.manifest.set(path.clone(), r.sha256);
+                Ok(Done::Yes)
             }
-            (Some(l), Some(r), None) => {
-                // Different content, no common base to merge from → keep both.
-                resolve_conflict(authed, &mut manifest, remotes, l, r, &device)
+            (Action::Conflict, Some(l), Some(r)) => actions::resolve_conflict(&mut ctx, l, &r),
+            (Action::TombstoneRemote, None, _) => actions::tombstone_remote(&mut ctx, path),
+            (Action::DeleteLocal, Some(l), _) => actions::delete_local(&mut ctx, l),
+            (Action::ForgetPivot, None, _) => {
+                // `locals` is a snapshot from the start of the pass: make
+                // sure no file has appeared at the path since.
+                if !actions::file_at(&ctx.abs_for(path)) {
+                    ctx.manifest.remove(path);
+                }
+                Ok(Done::Yes)
             }
-
-            // 3a. in sync
-            (Some(l), Some(r), Some(m_sha))
-                if !r.deleted && l.sha == m_sha && r.sha256 == m_sha =>
-            {
-                Ok(())
-            }
-
-            // 3b. local changed only
-            (Some(l), Some(r), Some(m_sha))
-                if !r.deleted && l.sha != m_sha && r.sha256 == m_sha =>
-            {
-                upload_local(authed, &mut manifest, l, &device)
-            }
-
-            // 3c. remote changed only
-            (Some(l), Some(r), Some(m_sha))
-                if !r.deleted && l.sha == m_sha && r.sha256 != m_sha =>
-            {
-                download_remote(authed, &mut manifest, r)
-            }
-
-            // 3d. both changed → conflict, keep both
-            (Some(l), Some(r), Some(m_sha))
-                if !r.deleted && l.sha != m_sha && r.sha256 != m_sha && l.sha != r.sha256 =>
-            {
-                resolve_conflict(authed, &mut manifest, remotes, l, r, &device)
-            }
-
-            // 3e. both changed to the same content (independent identical edit)
-            (Some(_l), Some(r), Some(_)) if !r.deleted => {
-                // local sha == remote sha; just realign manifest.
-                manifest.set(path.clone(), r.sha256.clone());
-                Ok(())
-            }
-
-            // 4a. local deleted, remote untouched → tombstone
-            (None, Some(r), Some(m_sha)) if !r.deleted && r.sha256 == m_sha => {
-                tombstone_remote(authed, &mut manifest, path, &device)
-            }
-
-            // 4b. local deleted but remote also changed → restore remote
-            (None, Some(r), Some(m_sha)) if !r.deleted && r.sha256 != m_sha => {
-                download_remote(authed, &mut manifest, r)
-            }
-
-            // 5a. remote tombstone, local clean → delete local
-            (Some(l), Some(r), Some(m_sha)) if r.deleted && l.sha == m_sha => {
-                delete_local(path, &mut manifest)
-            }
-
-            // 5b. remote tombstone, local changed → revive: upload local as fresh doc
-            (Some(l), Some(_r), Some(_)) => {
-                // Local has un-synced changes the user wants to keep — push.
-                upload_local(authed, &mut manifest, l, &device)
-            }
-
-            // 5c. remote tombstone, no manifest, no local → idempotent no-op
-            (None, Some(r), None) if r.deleted => Ok(()),
-
-            // 6. local present + no remote + manifest exists
-            //    means remote doc was fully deleted (rare). Treat as new local: re-upload.
-            (Some(l), None, Some(_)) => upload_local(authed, &mut manifest, l, &device),
-
-            // 7. local absent + no remote + manifest exists → stale manifest entry
-            (None, None, Some(_)) => {
-                manifest.remove(path);
-                Ok(())
-            }
-
-            // 8. deleted on both sides (both machines removed it, or we died
-            //    between writing the tombstone and saving the manifest). The
-            //    pivot is stale; left in place, a file later restored at this
-            //    path with the old content would match 5a and be deleted.
-            //    `locals` is a snapshot from the start of the pass, so make
-            //    sure nothing has appeared at the path since.
-            (None, Some(r), Some(_))
-                if r.deleted && abs_for(path).symlink_metadata().is_err() =>
-            {
-                manifest.remove(path);
-                Ok(())
-            }
-
-            // Anything else (shouldn't happen): log and skip.
-            _ => Ok(()),
+            // `decide` never pairs an action with inputs it cannot run on.
+            _ => Ok(Done::Yes),
         };
 
-        if let Err(e) = result {
-            super::log_line(&format!("reconcile {path} failed: {e}"));
-            let msg = format!("{path}: {e}");
-            let out_of_quota = is_quota_error(&msg);
-            failures.push(msg);
-            // Every further upload would be refused the same way, after
-            // hashing and reading the whole file again. Stop here; what was
-            // done is saved below and the caller backs off.
-            if out_of_quota {
-                break;
+        match result {
+            Ok(done) => {
+                // Went through, or is no longer the thing that failed.
+                ctx.failures.clear(path);
+                match done {
+                    Done::Yes => {}
+                    Done::Deferred => {
+                        super::log_line(&format!(
+                            "{path} changed during the pass, left for the next one"
+                        ));
+                        report.deferred += 1;
+                        // The scan's stat-cache entry may be what was wrong
+                        // (same size and mtime, other bytes): make the next
+                        // scan hash it.
+                        ctx.manifest.distrust(path);
+                        stale.insert(path);
+                    }
+                    Done::RemoteMoved => {
+                        super::log_line(&format!(
+                            "{path} was changed in the cloud meanwhile, decided again next pass"
+                        ));
+                        report.deferred += 1;
+                        report.moved += 1;
+                    }
+                }
             }
+            Err(e) => {
+                if let Some(stop) = super::auth::stop_reason(&e) {
+                    report.auth_stop = Some(stop);
+                    break;
+                }
+                super::log_line(&format!("reconcile {path} failed: {e}"));
+                report.failures.push(format!("{path}: {e}"));
+                // Every further upload would be refused the same way, after
+                // reading the whole file again. Stop here; what was done is
+                // saved below and the caller backs off. Not this path's
+                // fault, so nothing goes on its record.
+                if is_quota_error(&format!("{e:#}")) {
+                    report.quota = true;
+                    break;
+                }
+                if let Some(sig) = sig {
+                    let stuck = ctx.failures.record(path, sig, &e, firestore::now_ms());
+                    report.stuck.push(stuck);
+                    failing.insert(path);
+                }
+            }
+        }
+        if last_save.elapsed() >= SAVE_EVERY {
+            let _ = save_progress(&mut ctx);
+            last_save = Instant::now();
         }
     }
 
@@ -501,74 +379,43 @@ pub fn reconcile_with(authed: &Authed, remotes: &HashMap<String, FileDoc>) -> an
     // downloads already recorded theirs inline). A mismatch means an action
     // failed or the file changed mid-pass — leave those uncached so the next
     // scan re-hashes them.
-    for (rel, local) in &locals {
-        if manifest.get(rel) == Some(local.sha.as_str()) {
-            manifest.set_meta(rel.clone(), local.size, local.mtime, local.stat_at);
+    for (rel, local) in locals {
+        if ctx.manifest.get(rel) == Some(local.sha.as_str()) && !stale.contains(rel.as_str()) {
+            ctx.manifest
+                .set_meta(rel.clone(), local.size, local.mtime, local.stat_at);
+        }
+    }
+
+    // A pass that got to every path knows which failures are still real:
+    // a record for a path it neither skipped nor failed on is history (the
+    // file was deleted, renamed, or is in sync by other means).
+    let complete =
+        !stand_in && !report.cancelled && !report.quota && report.auth_stop.is_none();
+    if complete {
+        ctx.failures.retain(&failing);
+    }
+    report.stuck.sort_by(|a, b| a.path.cmp(&b.path));
+
+    // ── Clean up ───────────────────────────────────────────────────────
+    if let (true, Some(server_now)) = (complete, maintain) {
+        match gc::run(&mut ctx, &scan, server_now, cancel) {
+            Ok(cleaned) => report.cleaned = cleaned,
+            Err(e) => {
+                if let Some(stop) = super::auth::stop_reason(&e) {
+                    report.auth_stop = Some(stop);
+                } else {
+                    // Housekeeping that did not finish is not a sync error:
+                    // every file is where it should be. It runs again with
+                    // the next full list.
+                    super::log_line(&format!("clean-up of old tombstones and blobs stopped: {e}"));
+                    report.quota |= is_quota_error(&format!("{e:#}"));
+                }
+            }
         }
     }
 
     // Persist whatever progress we made before reporting any failures — successful
     // files must still be recorded so the next pass doesn't redo them.
-    manifest.save()?;
-
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        // Quota failures first: the caller reads the summary to decide
-        // between "error" and "rate limited, back off".
-        failures.sort_by_key(|f| !is_quota_error(f));
-        // Surface to the caller so sync status flips to Error instead of failing
-        // silently. The full list is already in the log; summarize here.
-        Err(anyhow::anyhow!(
-            "{} file(s) failed to sync (see ~/.lantern/log/fox-cloud.log): {}",
-            failures.len(),
-            // Each failure is already logged on its own line; the summary
-            // stays short however many files failed.
-            failures
-                .iter()
-                .take(3)
-                .map(String::as_str)
-                .collect::<Vec<_>>()
-                .join("; ")
-        ))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ignores_vcs_dirs_at_any_depth() {
-        assert!(should_ignore(".git/config"));
-        assert!(should_ignore("projects/app/.git/objects/ab/cdef"));
-        assert!(should_ignore("a/.syncthing/x"));
-        // A file merely named like the directory is a normal file.
-        assert!(!should_ignore("notes/.git"));
-        assert!(!should_ignore("notes/git/readme.md"));
-    }
-
-    #[test]
-    fn ignores_temp_and_editor_files() {
-        assert!(should_ignore("photos/cat.jpg.fox-tmp"));
-        assert!(should_ignore("music/.song.wav.4242.0.lntrn-tmp"));
-        assert!(should_ignore("doc.txt~"));
-        assert!(should_ignore("#doc.txt#"));
-        assert!(should_ignore("sub/.DS_Store"));
-        assert!(!should_ignore("photos/cat.jpg"));
-    }
-
-    #[test]
-    fn conflict_names_count_up() {
-        assert_eq!(
-            conflict_name("a/b.txt", "genforge", 1),
-            "a/b (conflict from genforge).txt"
-        );
-        assert_eq!(
-            conflict_name("a/b.txt", "genforge", 2),
-            "a/b (conflict from genforge 2).txt"
-        );
-        assert_eq!(conflict_name("noext", "pc", 1), "noext (conflict from pc)");
-        assert_eq!(conflict_name(".hidden", "pc", 1), ".hidden (conflict from pc)");
-    }
+    save_progress(&mut ctx).map_err(PassError::Other)?;
+    Ok(report)
 }

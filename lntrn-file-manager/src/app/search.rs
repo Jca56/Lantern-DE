@@ -54,11 +54,13 @@ impl App {
         });
     }
 
-    /// Poll for new search results from the background thread.
-    pub fn poll_search(&mut self) {
+    /// Poll for new search results from the background thread. True when
+    /// results arrived or the search ended (the list has to be drawn again).
+    pub fn poll_search(&mut self) -> bool {
         let Some(rx) = self.search_rx.as_ref() else {
-            return;
+            return false;
         };
+        let before = self.search_results.len();
         // Drain all available results (non-blocking)
         let finished = loop {
             match rx.try_recv() {
@@ -73,5 +75,6 @@ impl App {
             self.search_rx = None;
             self.search_tx = None;
         }
+        finished || self.search_results.len() != before
     }
 }

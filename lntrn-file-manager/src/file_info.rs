@@ -1,28 +1,16 @@
-use std::collections::HashMap;
+//! What Fox can say about a file beyond its name, size and date: the type
+//! in words, an image's or video's dimensions, a duration, the creation
+//! time. Finding out costs real I/O (ffprobe for media, a header read for
+//! images, a stat), so it happens on a worker and is kept: see
+//! file_info/cache.rs.
+
 use std::io::Read;
-use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Condvar, Mutex};
+use std::path::Path;
 use std::time::SystemTime;
 
-/// Cached file metadata for the status bar and preview pane.
-///
-/// Probing costs real I/O — ffprobe for media, a header read for images, a
-/// stat for the creation time — so it runs on one background worker.
-/// `get()` returns an extension-only placeholder immediately and the full
-/// record lands via `poll()` a frame or two later. On slow mounts (MTP,
-/// sshfs…) nothing is probed at all: jmtpfs downloads the whole file on the
-/// first read, so even "read 32 header bytes" means pulling a 3 GB video
-/// across USB on the render thread. That was the Fox-freezes-on-phone bug.
-pub struct FileInfoCache {
-    cache: HashMap<PathBuf, FileInfo>,
-    /// Paths waiting for the worker, newest last — the worker pops from the
-    /// back so the file the user just selected beats a backlog left behind
-    /// by a fast keyboard scroll.
-    jobs: Arc<(Mutex<Vec<PathBuf>>, Condvar)>,
-    rx: Receiver<(PathBuf, FileInfo)>,
-    in_flight: usize,
-}
+mod cache;
+
+pub use cache::FileInfoCache;
 
 #[derive(Clone)]
 pub struct FileInfo {
@@ -33,84 +21,6 @@ pub struct FileInfo {
     /// The worker hasn't reported yet — dimensions / duration / created may
     /// still fill in.
     pub probing: bool,
-}
-
-impl FileInfoCache {
-    pub fn new() -> Self {
-        let jobs = Arc::new((Mutex::new(Vec::new()), Condvar::new()));
-        let (tx, rx) = mpsc::channel();
-        let worker_jobs = Arc::clone(&jobs);
-        let _ = std::thread::Builder::new()
-            .name("fox-probe".into())
-            .spawn(move || probe_loop(worker_jobs, tx));
-        Self {
-            cache: HashMap::new(),
-            jobs,
-            rx,
-            in_flight: 0,
-        }
-    }
-
-    /// Cached record, or an instant placeholder with a probe queued behind
-    /// it. Never touches the file on the calling thread.
-    pub fn get(&mut self, path: &Path) -> &FileInfo {
-        if !self.cache.contains_key(path) {
-            let mut info = placeholder(path);
-            if !crate::fs::is_slow_path(path) {
-                info.probing = true;
-                self.in_flight += 1;
-                let (lock, cv) = &*self.jobs;
-                lock.lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .push(path.to_path_buf());
-                cv.notify_one();
-            }
-            self.cache.insert(path.to_path_buf(), info);
-        }
-        self.cache.get(path).unwrap()
-    }
-
-    /// Drain finished probes. Returns true when something landed and the
-    /// status bar / preview should redraw.
-    pub fn poll(&mut self) -> bool {
-        let mut landed = false;
-        while let Ok((path, info)) = self.rx.try_recv() {
-            self.in_flight = self.in_flight.saturating_sub(1);
-            self.cache.insert(path, info);
-            landed = true;
-        }
-        landed
-    }
-
-    /// Probes still running — the event loop polls instead of idling.
-    pub fn probing(&self) -> bool {
-        self.in_flight > 0
-    }
-
-    /// Clear cache when directory changes.
-    #[allow(dead_code)]
-    pub fn clear(&mut self) {
-        self.cache.clear();
-    }
-}
-
-fn probe_loop(jobs: Arc<(Mutex<Vec<PathBuf>>, Condvar)>, tx: Sender<(PathBuf, FileInfo)>) {
-    loop {
-        let path = {
-            let (lock, cv) = &*jobs;
-            let mut q = lock.lock().unwrap_or_else(|e| e.into_inner());
-            loop {
-                if let Some(p) = q.pop() {
-                    break p;
-                }
-                q = cv.wait(q).unwrap_or_else(|e| e.into_inner());
-            }
-        };
-        let info = build_info(&path);
-        if tx.send((path, info)).is_err() {
-            return; // cache dropped — shutting down
-        }
-    }
 }
 
 fn extension_of(path: &Path) -> String {

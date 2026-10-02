@@ -49,7 +49,7 @@ pub struct SplitState {
 /// is parked in its `PaneView` and indexes that pane's entries. When those
 /// entries are re-listed, the indices follow their files by path, as
 /// `apply_listing` does for the focused pane; `None` when the file is gone.
-pub(crate) fn remap_parked(view: &mut PaneView, old: &[fs::FileEntry], fresh: &[fs::FileEntry]) {
+fn remap_parked(view: &mut PaneView, old: &[fs::FileEntry], fresh: &[fs::FileEntry]) {
     let remap = |idx: Option<usize>| {
         idx.and_then(|i| old.get(i))
             .and_then(|e| fresh.iter().position(|f| f.path == e.path))
@@ -115,13 +115,14 @@ impl App {
         if self.pick.is_some() {
             return;
         }
+        // The right pane opens on the same folder with the same sort: the
+        // listing in hand is its listing. Listing the folder again would be
+        // a second trip to the device on a slow mount, on this thread.
         let mut right_tab = DirectoryTab::new(self.current_dir.clone());
-        right_tab.entries = fs::list_directory(
-            &right_tab.path,
-            self.show_hidden,
-            self.sort_by,
-            self.sort_dir,
-        );
+        right_tab.entries = self.entries.clone();
+        for e in &mut right_tab.entries {
+            e.selected = false;
+        }
         // The right pane starts in the left's view mode — except Tree, whose
         // row list is built lazily on focus; List is the honest default there.
         let start_mode = if self.view_mode == ViewMode::Tree {
@@ -154,27 +155,24 @@ impl App {
         if self.split.is_some() || self.pick.is_some() {
             return;
         }
-        let path = if right_path.is_dir() {
+        // On a slow mount even "is it a folder?" is a trip to the device,
+        // and this runs before the first frame: take the path as it is and
+        // let the off-thread loader find out.
+        let path = if fs::is_slow_path(&right_path) || right_path.is_dir() {
             right_path
         } else {
             super::dirs_home()
         };
-        let mut right_tab = DirectoryTab::new(path);
-        right_tab.entries = fs::list_directory(
-            &right_tab.path,
-            self.show_hidden,
-            self.sort_by,
-            self.sort_dir,
-        );
         self.toggle_split();
         if let Some(split) = self.split.as_mut() {
-            split.right_tab = right_tab;
+            split.right_tab = DirectoryTab::new(path);
             split.parked_view.view_mode = if view_mode == ViewMode::Tree {
                 ViewMode::List
             } else {
                 view_mode
             };
         }
+        self.reload_inactive_pane();
     }
 
     /// Move focus to the given pane, swapping its parked state into the flat
@@ -204,6 +202,9 @@ impl App {
         self.press_pos = None;
         self.context_target = None;
         self.context_override_paths.clear();
+        // Root mode belongs to the pane being left (after the rename above,
+        // which was still that pane's).
+        self.leave_root_mode();
 
         // Park the outgoing pane's dir state, swap view state, load the
         // incoming pane's dir state.
@@ -219,6 +220,23 @@ impl App {
             PaneSide::Left => self.sync_from_tab(),
             PaneSide::Right => self.sync_from_right_tab(),
         }
+        // Both listings are re-read once the click that caused this has
+        // been handled (`take_focus_refresh`). Not here: that click is
+        // re-dispatched by row index right after the swap, and a reload in
+        // between could move another row under it.
+        self.focus_refresh = true;
+    }
+
+    /// True once after a pane swap: the main loop reloads then. The watchers
+    /// are re-pointed on a swap and drop what they had pending, so without
+    /// this a change that landed around the swap would never show.
+    pub fn take_focus_refresh(&mut self) -> bool {
+        std::mem::take(&mut self.focus_refresh)
+    }
+
+    /// The directory the unfocused pane shows (None when split is off).
+    pub fn inactive_dir(&self) -> Option<&std::path::Path> {
+        self.inactive_pane().map(|(tab, _, _)| tab.path.as_path())
     }
 
     fn swap_view_with_parked(&mut self) {
@@ -296,32 +314,36 @@ impl App {
     /// through reload(), so this one hook keeps both panes honest — vital
     /// when a drop just landed files in the other pane's directory.
     pub fn reload_inactive_pane(&mut self) {
+        let Some((tab, view, _)) = self.inactive_pane() else {
+            return;
+        };
+        let path = tab.path.clone();
+        if fs::is_slow_path(&path) {
+            // Lands through `install_inactive_listing` as well, whichever
+            // pane has the focus by then (app/dir_load.rs).
+            let waiting = tab.entries.is_empty();
+            self.request_dir_load(path, waiting);
+            return;
+        }
+        let fresh = fs::list_directory(&path, self.show_hidden, view.sort_by, view.sort_dir);
+        self.install_inactive_listing(fresh);
+    }
+
+    /// Put a fresh listing into the unfocused pane: its selection and its
+    /// parked row indices follow their files, and its tree (the pane may be
+    /// parked in Tree view, where the tree is what is drawn and what drops
+    /// are hit-tested against) is rebuilt from it.
+    pub(super) fn install_inactive_listing(&mut self, fresh: Vec<fs::FileEntry>) {
         let Some(split) = self.split.as_mut() else {
             return;
         };
-        let (sort_by, sort_dir) = (split.parked_view.sort_by, split.parked_view.sort_dir);
         let tab = match split.focused {
             PaneSide::Left => &mut split.right_tab,
             PaneSide::Right => &mut self.tabs[self.current_tab],
         };
-        if fs::is_slow_path(&tab.path) {
-            let path = tab.path.clone();
-            self.spawn_dir_load(path, super::DirLoadTarget::Inactive, (sort_by, sort_dir));
-            return;
-        }
-        let selected: std::collections::HashSet<PathBuf> = tab
-            .entries
-            .iter()
-            .filter(|e| e.selected)
-            .map(|e| e.path.clone())
-            .collect();
-        let mut fresh = fs::list_directory(&tab.path, self.show_hidden, sort_by, sort_dir);
-        if !selected.is_empty() {
-            for e in &mut fresh {
-                e.selected = selected.contains(&e.path);
-            }
-        }
+        let fresh = super::dir_load::keep_selection(&tab.entries, fresh);
         remap_parked(&mut split.parked_view, &tab.entries, &fresh);
         tab.entries = fresh;
+        self.rebuild_parked_tree();
     }
 }

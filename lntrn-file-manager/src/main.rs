@@ -1,33 +1,61 @@
 mod app;
 mod audio_tags;
+mod bg;
 mod checksums;
 mod clipboard;
 mod cloud;
+mod cloud_ui;
 mod conflict;
+mod copy_tree;
 mod datetime;
 mod desktop;
+mod devices;
 mod dialogs;
 mod dir_watch;
+mod dnd_in;
+mod dnd_out;
+mod drive_ops;
 mod file_info;
 mod file_ops;
+mod format_dialog;
 mod fs;
 mod git_status;
+mod housekeeping;
+mod icon_store;
 mod icons;
+mod keyboard;
 mod lantern_config;
 mod layout;
+mod links;
+mod mount_guard;
+mod op_dialogs;
 mod ops;
+mod phone_mounts;
+mod pick_args;
 mod pick_bar;
+mod pick_output;
 mod popup_backend;
 mod preview;
+mod priv_dialog;
+mod priv_ops;
 mod properties;
 mod properties_audio;
+mod props_click;
+mod props_load;
+mod props_picker;
+mod props_scroll;
 mod quick_look;
 mod render;
+mod row_actions;
+mod scrollbar;
 mod sections;
 mod settings;
 mod sudo;
 mod thumbs;
+mod trash;
+mod trash_ops;
 pub mod undo;
+mod undo_ops;
 mod views;
 mod wayland;
 mod wayland_actions;
@@ -36,6 +64,8 @@ mod wayland_loop;
 
 use lntrn_render::{GpuContext, Painter, TextRenderer, TexturePass};
 use std::path::PathBuf;
+
+pub use pick_args::{PickConfig, PickResult, PickType};
 
 // ── Hit zone IDs ────────────────────────────────────────────────────────────
 
@@ -68,6 +98,8 @@ pub const ZONE_SIDEBAR_PLACES_HEADER: u32 = 29;
 pub const ZONE_SIDEBAR_FAVORITES_HEADER: u32 = 32;
 pub const ZONE_SIDEBAR_DEVICES_HEADER: u32 = 33;
 pub const ZONE_SIDEBAR_FAVORITES_PLUS: u32 = 34;
+/// The sidebar's scrollbar, there when its rows do not all fit.
+pub const ZONE_SIDEBAR_SCROLLBAR: u32 = 35;
 pub const ZONE_TAB_CLOSE_BASE: u32 = 550;
 pub const ZONE_TAB_NEW: u32 = 599;
 pub const ZONE_RENAME_INPUT: u32 = 30;
@@ -109,6 +141,8 @@ pub const CTX_DUPLICATE: u32 = 66;
 pub const CTX_COMPRESS: u32 = 67;
 pub const CTX_EXTRACT: u32 = 68;
 pub const CTX_OPEN_AS_ROOT: u32 = 69;
+/// Empty-area menu: switch root mode on or off for the folder shown.
+pub const CTX_ROOT_MODE: u32 = 97;
 // Context menu — new colored folder swatches
 pub const CTX_NEW_FOLDER_RED: u32 = 71;
 pub const CTX_NEW_FOLDER_ORANGE: u32 = 72;
@@ -168,7 +202,12 @@ pub const ZONE_DROP_MOVE: u32 = 44;
 pub const ZONE_DROP_COPY: u32 = 45;
 pub const ZONE_DROP_CANCEL: u32 = 46;
 
-// Sudo password modal — captures all clicks while open.
+// Root mode badge in the nav bar: a click leaves root mode.
+pub const ZONE_ROOT_BADGE: u32 = 63;
+
+// Privileged-operation modal (delete question, password, working) —
+// captures all clicks while open. See priv_ops.rs.
+pub const ZONE_SUDO_PANEL: u32 = 64;
 pub const ZONE_SUDO_SCRIM: u32 = 65;
 pub const ZONE_SUDO_PASSWORD: u32 = 66;
 pub const ZONE_SUDO_CANCEL: u32 = 67;
@@ -191,7 +230,11 @@ pub const ZONE_PROPS_ICON: u32 = 77;
 pub const ZONE_PROPS_PICKER_TAB_BASE: u32 = 78; // 78..82
 pub const ZONE_PROPS_PICKER_RESET: u32 = 83;
 pub const ZONE_PROPS_PICKER_BACK: u32 = 84;
+/// "Choose Custom Image…" on the picker's Custom tab.
+pub const ZONE_PROPS_PICKER_CUSTOM: u32 = 806;
 pub const ZONE_PROPS_ICON_BASE: u32 = 2000; // 2000+, one per shown icon
+/// Scrollbar of the dialog's scrolling part (props_scroll.rs).
+pub const ZONE_PROPS_SCROLLBAR: u32 = 803;
 // Properties → Audio section (WAV / MP3 tags). Field zones are contiguous.
 pub const ZONE_PROPS_AUDIO_FIELD_BASE: u32 = 830; // 830..838
 pub const ZONE_PROPS_AUDIO_ART: u32 = 840;
@@ -201,6 +244,29 @@ pub const ZONE_PROPS_AUDIO_REVERT: u32 = 843;
 
 // Quick Look overlay — full-screen backdrop, click closes.
 pub const ZONE_QUICK_LOOK: u32 = 905;
+
+// File-operation dialogs (failure notice, delete-permanently question,
+// close-while-busy question). See op_dialogs.rs.
+pub const ZONE_OP_DIALOG_SCRIM: u32 = 906;
+pub const ZONE_OP_DIALOG_PANEL: u32 = 907;
+/// The button that changes nothing: OK, Cancel, Keep Open.
+pub const ZONE_OP_DIALOG_SAFE: u32 = 908;
+/// The button that acts: Delete Permanently, Stop and Close.
+pub const ZONE_OP_DIALOG_ACT: u32 = 909;
+
+// Cloud sync: the pill in the status bar and the buttons only its dialogs
+// have (cloud_ui.rs). The dialogs sit in the op-dialog queue and share its
+// scrim, panel and safe-button zones.
+pub const ZONE_CLOUD_PILL: u32 = 910;
+pub const ZONE_CLOUD_DLG_RESTORE: u32 = 911;
+pub const ZONE_CLOUD_DLG_DELETE: u32 = 912;
+pub const ZONE_CLOUD_DLG_RETRY: u32 = 913;
+pub const ZONE_CLOUD_DLG_SIGN_OUT: u32 = 914;
+pub const ZONE_CLOUD_DLG_CREATE: u32 = 915;
+/// The scrollbar of a cloud dialog's file list.
+pub const ZONE_CLOUD_DLG_LIST_BAR: u32 = 916;
+/// The conflict dialog's own panel: a click on it is not a click outside.
+pub const ZONE_CONFLICT_PANEL: u32 = 917;
 
 // ── Split view ──────────────────────────────────────────────────────────────
 // The focused pane uses the standard zones above; the UNFOCUSED pane
@@ -242,65 +308,6 @@ pub enum ClickAction {
     ToggleMaximize,
 }
 
-// ── Pick mode types ────────────────────────────────────────────────────────
-
-#[derive(Clone, Debug)]
-pub struct PickConfig {
-    pub mode: PickType,
-    pub multiple: bool,
-    pub title: Option<String>,
-    pub start_dir: Option<PathBuf>,
-    pub filters: Vec<FileFilter>,
-    pub active_filter: usize,
-    pub save_name: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum PickType {
-    Open,
-    Save,
-    Directory,
-    /// Files and/or folders mixed.
-    Mixed,
-}
-
-#[derive(Clone, Debug)]
-pub struct FileFilter {
-    pub name: String,
-    pub patterns: Vec<String>,
-}
-
-pub enum PickResult {
-    Selected(Vec<PathBuf>),
-    Cancelled,
-}
-
-impl PickConfig {
-    fn default_title(&self) -> &str {
-        match self.mode {
-            PickType::Open => "Open File",
-            PickType::Save => "Save File",
-            PickType::Directory => "Select Folder",
-            PickType::Mixed => "Select Files & Folders",
-        }
-    }
-}
-
-/// Parse `--filters "Images:*.png,*.jpg|Documents:*.pdf,*.txt"`
-fn parse_filter_arg(s: &str) -> Vec<FileFilter> {
-    s.split('|')
-        .filter(|g| !g.is_empty())
-        .filter_map(|group| {
-            let (name, pats) = group.split_once(':')?;
-            let patterns: Vec<String> = pats.split(',').map(|p| p.trim().to_string()).collect();
-            Some(FileFilter {
-                name: name.trim().to_string(),
-                patterns,
-            })
-        })
-        .collect()
-}
-
 /// Command-line arguments, lossily decoded for flag matching. `std::env::args`
 /// panics on an argument that is not valid UTF-8 (a path with such a name);
 /// paths are taken from the raw `args_os` values instead.
@@ -308,65 +315,6 @@ fn lossy_args() -> Vec<String> {
     std::env::args_os()
         .map(|a| a.to_string_lossy().into_owned())
         .collect()
-}
-
-fn parse_args() -> Option<PickConfig> {
-    let raw: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
-    let args: Vec<String> = raw
-        .iter()
-        .map(|a| a.to_string_lossy().into_owned())
-        .collect();
-    if args.is_empty() {
-        return None;
-    }
-
-    let mut mode = None;
-    let mut multiple = false;
-    let mut title = None;
-    let mut start_dir = None;
-    let mut filters = Vec::new();
-    let mut save_name = None;
-    let mut i = 0;
-
-    while i < args.len() {
-        match args[i].as_str() {
-            "--pick" => mode = Some(PickType::Open),
-            "--pick-save" => mode = Some(PickType::Save),
-            "--pick-directory" => mode = Some(PickType::Directory),
-            "--pick-any" => mode = Some(PickType::Mixed),
-            "--pick-multiple" => multiple = true,
-            "--title" => {
-                i += 1;
-                title = args.get(i).cloned();
-            }
-            "--start-dir" => {
-                i += 1;
-                start_dir = raw.get(i).map(PathBuf::from);
-            }
-            "--filters" => {
-                i += 1;
-                if let Some(s) = args.get(i) {
-                    filters = parse_filter_arg(s);
-                }
-            }
-            "--save-name" => {
-                i += 1;
-                save_name = args.get(i).cloned();
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-
-    mode.map(|m| PickConfig {
-        mode: m,
-        multiple,
-        title,
-        start_dir,
-        filters,
-        active_filter: 0,
-        save_name,
-    })
 }
 
 // ── Main ────────────────────────────────────────────────────────────────────
@@ -383,7 +331,7 @@ fn main() {
     }
 
     let desktop = args.iter().any(|a| a == "--desktop");
-    let pick = parse_args();
+    let pick = pick_args::from_command_line();
     // First positional argument that isn't a recognised flag and
     // points at an existing directory becomes the initial cwd outside
     // pick mode. Lets `lntrn-file-manager ~/Documents` open Fox there.

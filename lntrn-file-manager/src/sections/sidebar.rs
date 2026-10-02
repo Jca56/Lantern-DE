@@ -4,20 +4,36 @@ use lntrn_ui::gpu::{FontSize, FoxPalette, TextLabel};
 use crate::app::App;
 use crate::layout::{sidebar_w, SidebarLayout};
 
-use super::draw_gradient_v;
 use super::icons::{draw_drive_icon, draw_phone_icon, draw_place_icon};
+use super::{draw_gradient_v, fit_label, SidebarHovered};
 
 // ── Sidebar ─────────────────────────────────────────────────────────────────
 
-pub struct SidebarHovered<'a> {
-    pub places: &'a [bool],
-    pub favorites: &'a [bool],
-    pub drives: &'a [bool],
-    pub phones: &'a [bool],
-    pub places_header: bool,
-    pub favorites_header: bool,
-    pub devices_header: bool,
-    pub favorites_plus: bool,
+/// Left edge of a row's text, after its icon.
+const TEXT_X: f32 = 38.0;
+
+/// One line of sidebar text from `TEXT_X` to `right`, cut with an ellipsis
+/// when it is longer. The rows are drawn inside a clip (they scroll), where
+/// text is bounded by the clip and not by its own line: a long favourite or
+/// drive name left to wrap would show its second line over the row below.
+#[allow(clippy::too_many_arguments)]
+fn label(
+    text: &mut TextRenderer,
+    value: &str,
+    y: f32,
+    font_px: f32,
+    color: Color,
+    right: f32,
+    screen: (u32, u32),
+    s: f32,
+) {
+    let max_w = right - TEXT_X * s;
+    let (shown, _) = fit_label(text, value, max_w, font_px);
+    TextLabel::new(&shown, TEXT_X * s, y)
+        .size(FontSize::Custom(font_px))
+        .color(color)
+        .max_width(max_w + 4.0 * s)
+        .draw(text, screen.0, screen.1);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -28,7 +44,7 @@ pub fn draw_sidebar(
     app: &App,
     sidebar_rect: Rect,
     layout: &SidebarLayout,
-    hov: &SidebarHovered<'_>,
+    hov: &SidebarHovered,
     dragging: bool,
     fav_drag: Option<usize>,
     screen: (u32, u32),
@@ -48,6 +64,36 @@ pub fn draw_sidebar(
         sidebar_rect.h,
         s,
     );
+
+    // The rows scroll: nothing of them outside their strip.
+    let v = layout.viewport;
+    painter.push_clip(v);
+    text.push_clip([v.x, v.y, v.w, v.h]);
+    draw_rows(painter, text, palette, app, layout, hov, dragging, fav_drag, screen, s);
+    text.pop_clip();
+    painter.pop_clip();
+
+    if let Some((bar, state)) = &hov.scrollbar {
+        crate::scrollbar::draw(painter, bar, *state, palette, true);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_rows(
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    palette: &FoxPalette,
+    app: &App,
+    layout: &SidebarLayout,
+    hov: &SidebarHovered,
+    dragging: bool,
+    fav_drag: Option<usize>,
+    screen: (u32, u32),
+    s: f32,
+) {
+    // Dividers and the empty-favourites hint end where the rows do (short
+    // of the scrollbar when there is one).
+    let sw = sidebar_w(s) - layout.gutter;
 
     // ── PLACES section ───────────────────────────────────────────────
     draw_section_header(
@@ -109,15 +155,17 @@ pub fn draw_sidebar(
         if favorites.is_empty() {
             // Hint text when empty so the section reads as intentional.
             let header = layout.favorites_header;
-            TextLabel::new(
+            let (hint, _) = fit_label(
+                text,
                 "Drag folders here or use \u{002B}",
-                14.0 * s,
-                header.y + header.h + 6.0 * s,
-            )
-            .size(FontSize::Custom(16.0 * s))
-            .color(palette.muted)
-            .max_width(sw - 28.0 * s)
-            .draw(text, screen.0, screen.1);
+                sw - 28.0 * s,
+                16.0 * s,
+            );
+            TextLabel::new(&hint, 14.0 * s, header.y + header.h + 6.0 * s)
+                .size(FontSize::Custom(16.0 * s))
+                .color(palette.muted)
+                .max_width(sw - 24.0 * s)
+                .draw(text, screen.0, screen.1);
         }
         for (i, fav) in favorites.iter().enumerate() {
             let r = layout.favorite_items[i];
@@ -129,9 +177,14 @@ pub fn draw_sidebar(
             if is_drop_target {
                 painter.rect_filled(r, 6.0 * s, palette.accent.with_alpha(0.22));
             }
-            draw_place_row(
-                painter, text, palette, &fav.name, r, is_active, is_hovered, dragging, screen, s,
-            );
+            if app.favorite_available(i) {
+                draw_place_row(
+                    painter, text, palette, &fav.name, r, is_active, is_hovered, dragging, screen,
+                    s,
+                );
+            } else {
+                draw_offline_row(painter, text, palette, &fav.name, r, screen, s);
+            }
             // Drag source: overlay a translucent veil to read as "lifted".
             if is_drag_source {
                 painter.rect_filled(r, 0.0, Color::from_rgba8(0, 0, 0, 96));
@@ -161,7 +214,8 @@ pub fn draw_sidebar(
         for (i, drive) in app.drives.iter().enumerate() {
             let r = layout.drive_items[i];
             let is_hovered = hov.drives.get(i).copied().unwrap_or(false);
-            draw_drive_row(painter, text, palette, drive, r, is_hovered, screen, s);
+            let busy = app.drive_busy(drive);
+            draw_drive_row(painter, text, palette, drive, busy, r, is_hovered, screen, s);
             let has_more = i + 1 < app.drives.len() || !app.phones.is_empty();
             if has_more {
                 draw_divider(painter, r.y + r.h, sw, s);
@@ -170,7 +224,8 @@ pub fn draw_sidebar(
         for (i, phone) in app.phones.iter().enumerate() {
             let r = layout.phone_items[i];
             let is_hovered = hov.phones.get(i).copied().unwrap_or(false);
-            draw_phone_row(painter, text, palette, phone, r, is_hovered, screen, s);
+            let busy = app.phone_busy(phone);
+            draw_phone_row(painter, text, palette, phone, busy, r, is_hovered, screen, s);
             if i + 1 < app.phones.len() {
                 draw_divider(painter, r.y + r.h, sw, s);
             }
@@ -292,8 +347,6 @@ fn draw_place_row(
     screen: (u32, u32),
     s: f32,
 ) {
-    let _ = painter;
-    let sw = sidebar_w(s);
     let icon_color = if dragging && is_hovered {
         palette.accent
     } else if is_active {
@@ -311,24 +364,69 @@ fn draw_place_row(
         icon_color,
         s,
     );
-    TextLabel::new(name, 38.0 * s, rect.y + (rect.h - 26.0 * s) * 0.5)
-        .size(FontSize::Custom(26.0 * s))
-        .color(palette.text)
-        .max_width(sw - 56.0 * s)
-        .draw(text, screen.0, screen.1);
+    let y = rect.y + (rect.h - 26.0 * s) * 0.5;
+    label(text, name, y, 26.0 * s, palette.text, text_right(rect, s), screen, s);
 }
 
+/// Where a row's text ends: a little inside its right edge.
+fn text_right(rect: Rect, s: f32) -> f32 {
+    rect.x + rect.w - 10.0 * s
+}
+
+/// A favourite whose folder is not there right now (its drive is
+/// unplugged): kept in the list, dimmed, with a stroke through its icon.
+fn draw_offline_row(
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    palette: &FoxPalette,
+    name: &str,
+    rect: Rect,
+    screen: (u32, u32),
+    s: f32,
+) {
+    let color = palette.muted;
+    let (cx, cy) = (19.0 * s, rect.y + rect.h * 0.5);
+    draw_place_icon(painter, name, cx, cy, color, s);
+    painter.line(
+        cx - 9.0 * s,
+        cy + 9.0 * s,
+        cx + 9.0 * s,
+        cy - 9.0 * s,
+        2.0 * s,
+        color,
+    );
+    let y = rect.y + (rect.h - 26.0 * s) * 0.5;
+    label(text, name, y, 26.0 * s, color, text_right(rect, s), screen, s);
+}
+
+/// The line under a device's name while a mount, eject or format of it is
+/// running ("Ejecting…"), in place of its usual subtitle.
+fn draw_busy_line(
+    text: &mut TextRenderer,
+    palette: &FoxPalette,
+    what: &str,
+    y: f32,
+    right: f32,
+    screen: (u32, u32),
+    s: f32,
+) {
+    let line = format!("{what}{}", crate::bg::dots());
+    label(text, &line, y, 18.0 * s, palette.accent, right, screen, s);
+}
+
+#[allow(clippy::too_many_arguments)]
 fn draw_drive_row(
     painter: &mut Painter,
     text: &mut TextRenderer,
     palette: &FoxPalette,
     drive: &crate::fs::Drive,
+    busy: Option<&str>,
     rect: Rect,
     is_hovered: bool,
     screen: (u32, u32),
     s: f32,
 ) {
-    let sw = sidebar_w(s);
+    let right = text_right(rect, s);
     let icon_color = if is_hovered {
         palette.text
     } else {
@@ -338,23 +436,17 @@ fn draw_drive_row(
     let icy = rect.y + 18.0 * s;
     draw_drive_icon(painter, icx, icy, icon_color, s);
 
-    TextLabel::new(&drive.name, 38.0 * s, rect.y + 4.0 * s)
-        .size(FontSize::Custom(22.0 * s))
-        .color(palette.text)
-        .max_width(sw - 56.0 * s)
-        .draw(text, screen.0, screen.1);
+    label(text, &drive.name, rect.y + 4.0 * s, 22.0 * s, palette.text, right, screen, s);
 
-    if drive.mounted {
+    if let Some(what) = busy {
+        draw_busy_line(text, palette, what, rect.y + 31.0 * s, right, screen, s);
+    } else if drive.mounted {
         let usage_text = format!("{} free of {}", drive.free_display(), drive.total_display());
-        TextLabel::new(&usage_text, 38.0 * s, rect.y + 32.0 * s)
-            .size(FontSize::Custom(16.0 * s))
-            .color(palette.muted)
-            .max_width(sw - 56.0 * s)
-            .draw(text, screen.0, screen.1);
+        label(text, &usage_text, rect.y + 32.0 * s, 16.0 * s, palette.muted, right, screen, s);
 
-        let bar_x = 38.0 * s;
+        let bar_x = TEXT_X * s;
         let bar_y = rect.y + 52.0 * s;
-        let bar_w = sw - 52.0 * s;
+        let bar_w = right + 4.0 * s - bar_x;
         let bar_h = 6.0 * s;
         let frac = drive.usage_fraction();
         painter.rect_filled(
@@ -381,25 +473,23 @@ fn draw_drive_row(
             drive.total_display(),
             drive.fstype
         );
-        TextLabel::new(&subtitle, 38.0 * s, rect.y + 32.0 * s)
-            .size(FontSize::Custom(16.0 * s))
-            .color(palette.accent)
-            .max_width(sw - 56.0 * s)
-            .draw(text, screen.0, screen.1);
+        label(text, &subtitle, rect.y + 32.0 * s, 16.0 * s, palette.accent, right, screen, s);
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_phone_row(
     painter: &mut Painter,
     text: &mut TextRenderer,
     palette: &FoxPalette,
     phone: &crate::fs::Phone,
+    busy: Option<&str>,
     rect: Rect,
     is_hovered: bool,
     screen: (u32, u32),
     s: f32,
 ) {
-    let sw = sidebar_w(s);
+    let right = text_right(rect, s);
     let icon_color = if is_hovered {
         palette.text
     } else {
@@ -407,20 +497,16 @@ fn draw_phone_row(
     };
     draw_phone_icon(painter, 19.0 * s, rect.y + 24.0 * s, icon_color, s);
 
-    TextLabel::new(&phone.name, 38.0 * s, rect.y + 8.0 * s)
-        .size(FontSize::Custom(22.0 * s))
-        .color(palette.text)
-        .max_width(sw - 56.0 * s)
-        .draw(text, screen.0, screen.1);
+    label(text, &phone.name, rect.y + 8.0 * s, 22.0 * s, palette.text, right, screen, s);
 
+    if let Some(what) = busy {
+        draw_busy_line(text, palette, what, rect.y + 33.0 * s, right, screen, s);
+        return;
+    }
     let status = if phone.mounted {
         "Connected"
     } else {
         "Tap to open"
     };
-    TextLabel::new(status, 38.0 * s, rect.y + 34.0 * s)
-        .size(FontSize::Custom(16.0 * s))
-        .color(palette.muted)
-        .max_width(sw - 56.0 * s)
-        .draw(text, screen.0, screen.1);
+    label(text, status, rect.y + 34.0 * s, 16.0 * s, palette.muted, right, screen, s);
 }

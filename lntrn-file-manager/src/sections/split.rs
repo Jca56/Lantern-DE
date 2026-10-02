@@ -6,7 +6,9 @@
 
 use lntrn_render::TexturePass;
 use lntrn_render::{Color, GpuContext, Painter, Rect, TextRenderer};
-use lntrn_ui::gpu::{FontSize, FoxPalette, InteractionContext, ScrollArea, Scrollbar, TextLabel};
+use lntrn_ui::gpu::{
+    FontSize, FoxPalette, InteractionContext, InteractionState, ScrollArea, TextLabel,
+};
 
 use crate::app::{DirectoryTab, PaneView, ViewMode};
 use crate::icons::IconCache;
@@ -18,7 +20,7 @@ use crate::{
 };
 
 use super::icons::{draw_sort_icon, draw_view_mode_icon};
-use super::{breadcrumb_segments, draw_scrollbar, truncate_with_ellipsis};
+use super::draw_scrollbar;
 
 /// Split-view toggle icon: two panes side by side.
 pub fn draw_split_toggle_icon(painter: &mut Painter, r: Rect, color: Color, s: f32) {
@@ -148,6 +150,8 @@ pub struct InactivePane<'a> {
     /// A drag is in flight — compute hover from the raw cursor so drop
     /// targets highlight (InteractionContext suppresses hover mid-drag).
     pub dragging: bool,
+    /// Its listing is on its way from a slow mount.
+    pub loading: bool,
 }
 
 /// Render the unfocused pane. Returns the (possibly clamped) scroll offset.
@@ -172,100 +176,110 @@ pub fn render_inactive_pane(
     let zoom = p.zoom;
 
     // ── Nav bar ─────────────────────────────────────────────────────────
-    let vt_rect = pane_view_toggle_rect(p.pane_x, s);
-    let back_rect = pane_back_rect(p.pane_x, s);
-    let fwd_rect = pane_forward_rect(p.pane_x, s);
-    let up_rect = pane_up_rect(p.pane_x, s);
-    let sort_rect = pane_sort_rect(p.pane_x, p.pane_w, s);
-    let srch_rect = pane_search_rect(p.pane_x, p.pane_w, s);
-    let path_r = pane_path_rect(p.pane_x, p.pane_w, p.is_right, s);
-
-    let vt_hov = input.add_zone(ZONE_P2_VIEW_TOGGLE, vt_rect).is_hovered();
-    let back_hov = input.add_zone(ZONE_P2_BACK, back_rect).is_hovered();
-    let fwd_hov = input.add_zone(ZONE_P2_FORWARD, fwd_rect).is_hovered();
-    let up_hov = input.add_zone(ZONE_P2_UP, up_rect).is_hovered();
-    let sort_hov = input.add_zone(ZONE_P2_SORT, sort_rect).is_hovered();
-    let srch_hov = input.add_zone(ZONE_P2_SEARCH, srch_rect).is_hovered();
-    input.add_zone(ZONE_P2_PATH, path_r);
-
-    let vt_color = if vt_hov { pal.text } else { pal.text_secondary };
-    if vt_hov {
-        painter.rect_filled(vt_rect, 4.0 * s, pal.surface_2.with_alpha(0.5));
-    }
-    draw_view_mode_icon(painter, view.view_mode, vt_rect, vt_color, s);
-
-    draw_back_arrow(
-        painter,
-        back_rect,
-        nav_arrow_color(!p.tab.history_back.is_empty(), back_hov, pal),
-        s,
-    );
-    draw_forward_arrow(
-        painter,
-        fwd_rect,
-        nav_arrow_color(!p.tab.history_forward.is_empty(), fwd_hov, pal),
-        s,
-    );
-    draw_up_arrow(
-        painter,
-        up_rect,
-        nav_arrow_color(p.tab.path.parent().is_some(), up_hov, pal),
-        s,
-    );
-
-    // Static breadcrumb path — muted; interaction comes after a focusing click.
-    {
-        let segments = breadcrumb_segments(&p.tab.path, s);
-        let font = 22.0 * s;
-        let char_w = font * 0.45;
-        let full: String = segments
-            .iter()
-            .map(|(n, _)| n.as_str())
-            .collect::<Vec<_>>()
-            .join(" / ");
-        let shown = truncate_with_ellipsis(&full, path_r.w - 8.0 * s, char_w);
-        TextLabel::new(
-            &shown,
-            path_r.x + 4.0 * s,
-            path_r.y + (path_r.h - font) * 0.5,
-        )
-        .size(FontSize::Custom(font))
-        .color(pal.text_secondary)
-        .draw(text, w, h);
-    }
-
-    let sort_color = if sort_hov {
-        pal.text
+    // One layout for all of the pane's buttons: what does not fit in a
+    // narrow pane has an empty rect and gets neither a zone nor a drawing.
+    // Root mode is switched off for a pane that loses focus (app/root.rs).
+    // Should a mark ever survive here, it must not be invisible.
+    let strip = if p.tab.root_mode() {
+        Strip::Badge(super::root_badge::min_width(text, s))
     } else {
-        pal.text_secondary
+        Strip::Path
     };
-    if sort_hov {
-        painter.rect_filled(sort_rect, 4.0 * s, pal.surface_2.with_alpha(0.5));
+    let nav = pane_nav(p.pane_x, p.pane_w, p.is_right, strip, s);
+    let (vt_rect, back_rect, fwd_rect, up_rect) = (nav.view_toggle, nav.back, nav.forward, nav.up);
+    let (sort_rect, srch_rect) = (nav.sort, nav.search);
+    let (path_r, root_badge) = super::root_badge::carve(nav.path, p.tab.root_mode(), text, s);
+    if let Some(badge) = root_badge {
+        super::root_badge::draw(painter, text, input, pal, badge, None, (w, h), s);
     }
-    draw_sort_icon(painter, sort_rect, sort_color, view.sort_dir, s);
 
-    let srch_color = if srch_hov {
-        pal.text
-    } else {
-        pal.text_secondary
+    let mut zone = |id: u32, rect: Rect| -> bool {
+        shown(&rect) && input.add_zone(id, rect).is_hovered()
     };
-    if srch_hov {
-        painter.rect_filled(srch_rect, 4.0 * s, pal.surface_2.with_alpha(0.5));
-    }
-    let sx = srch_rect.center_x() - 2.0 * s;
-    let sy = srch_rect.center_y() - 2.0 * s;
-    painter.circle_stroke(sx, sy, 6.0 * s, 1.5 * s, srch_color);
-    painter.line(
-        sx + 4.5 * s,
-        sy + 4.5 * s,
-        sx + 9.0 * s,
-        sy + 9.0 * s,
-        2.0 * s,
-        srch_color,
-    );
+    let vt_hov = zone(ZONE_P2_VIEW_TOGGLE, vt_rect);
+    let back_hov = zone(ZONE_P2_BACK, back_rect);
+    let fwd_hov = zone(ZONE_P2_FORWARD, fwd_rect);
+    let up_hov = zone(ZONE_P2_UP, up_rect);
+    let sort_hov = zone(ZONE_P2_SORT, sort_rect);
+    let srch_hov = zone(ZONE_P2_SEARCH, srch_rect);
+    zone(ZONE_P2_PATH, path_r);
 
-    if p.is_right {
-        let split_rect = pane_split_toggle_rect(p.pane_x, p.pane_w, s);
+    if shown(&vt_rect) {
+        let vt_color = if vt_hov { pal.text } else { pal.text_secondary };
+        if vt_hov {
+            painter.rect_filled(vt_rect, 4.0 * s, pal.surface_2.with_alpha(0.5));
+        }
+        draw_view_mode_icon(painter, view.view_mode, vt_rect, vt_color, s);
+    }
+    if shown(&back_rect) {
+        draw_back_arrow(
+            painter,
+            back_rect,
+            nav_arrow_color(!p.tab.history_back.is_empty(), back_hov, pal),
+            s,
+        );
+    }
+    if shown(&fwd_rect) {
+        draw_forward_arrow(
+            painter,
+            fwd_rect,
+            nav_arrow_color(!p.tab.history_forward.is_empty(), fwd_hov, pal),
+            s,
+        );
+    }
+    if shown(&up_rect) {
+        draw_up_arrow(
+            painter,
+            up_rect,
+            nav_arrow_color(p.tab.path.parent().is_some(), up_hov, pal),
+            s,
+        );
+    }
+
+    // Static breadcrumb path — muted; interaction comes after a focusing
+    // click. Laid out like the focused pane's, so it too ends on the folder
+    // the pane is showing instead of being cut off before it.
+    if shown(&path_r) {
+        super::crumbs::layout(text, &p.tab.path, path_r, s)
+            .draw(painter, text, pal, &[], true, (w, h), s);
+    }
+
+    if shown(&sort_rect) {
+        let sort_color = if sort_hov {
+            pal.text
+        } else {
+            pal.text_secondary
+        };
+        if sort_hov {
+            painter.rect_filled(sort_rect, 4.0 * s, pal.surface_2.with_alpha(0.5));
+        }
+        draw_sort_icon(painter, sort_rect, sort_color, view.sort_dir, s);
+    }
+
+    if shown(&srch_rect) {
+        let srch_color = if srch_hov {
+            pal.text
+        } else {
+            pal.text_secondary
+        };
+        if srch_hov {
+            painter.rect_filled(srch_rect, 4.0 * s, pal.surface_2.with_alpha(0.5));
+        }
+        let sx = srch_rect.center_x() - 2.0 * s;
+        let sy = srch_rect.center_y() - 2.0 * s;
+        painter.circle_stroke(sx, sy, 6.0 * s, 1.5 * s, srch_color);
+        painter.line(
+            sx + 4.5 * s,
+            sy + 4.5 * s,
+            sx + 9.0 * s,
+            sy + 9.0 * s,
+            2.0 * s,
+            srch_color,
+        );
+    }
+
+    if shown(&nav.split_toggle) {
+        let split_rect = nav.split_toggle;
         let split_hov = input.add_zone(ZONE_SPLIT_TOGGLE, split_rect).is_hovered();
         if split_hov {
             painter.rect_filled(split_rect, 4.0 * s, pal.surface_2.with_alpha(0.5));
@@ -285,9 +299,7 @@ pub fn render_inactive_pane(
     let cols = grid_columns(content.w, s, zoom);
     let total_h = match view.view_mode {
         ViewMode::Grid => grid_content_height(entries.len(), cols, s, zoom),
-        ViewMode::List => {
-            entries.len() as f32 * list_row_h(s, zoom) + 32.0 * list_zoom_multiplier(zoom) * s
-        }
+        ViewMode::List => entries.len() as f32 * list_row_h(s, zoom) + list_header_h(s, zoom),
         ViewMode::Tree => tree_content_height(view.tree_entries.len(), s, zoom),
     };
     let mut scroll = p.scroll;
@@ -346,18 +358,20 @@ pub fn render_inactive_pane(
         }
         ViewMode::List => {
             let row_h = list_row_h(s, zoom);
-            let hdr_h = 32.0 * list_zoom_multiplier(zoom) * s;
+            let hdr_h = list_header_h(s, zoom);
+            // Rows are drawn, and clickable, below the fixed header only.
+            let rows = list_rows_rect(content, s, zoom);
             let mut hovered = Vec::with_capacity(entries.len());
             let mut has_icon = Vec::with_capacity(entries.len());
             for i in 0..entries.len() {
                 let y = base_y + hdr_h + i as f32 * row_h;
-                let visible = y + row_h >= content.y && y <= content.y + content.h;
+                let visible = y + row_h >= rows.y && y <= rows.y + rows.h;
                 if visible {
                     icon_cache.get_or_load(&entries[i], ctx, tex_pass);
                 }
                 has_icon.push(visible && icon_cache.has_icon(&entries[i]));
                 let row_rect = Rect::new(content.x, y, content.w, row_h);
-                let hov = match row_rect.intersect(&content) {
+                let hov = match row_rect.intersect(&rows) {
                     Some(clipped) if visible => {
                         let state = input.add_zone(ZONE_P2_FILE_BASE + i as u32, clipped);
                         hover_at(clipped, state.is_hovered())
@@ -438,10 +452,39 @@ pub fn render_inactive_pane(
         }
     }
 
+    // Nothing to show yet: say so, as the focused pane does, instead of
+    // looking like an empty folder.
+    if entries.is_empty() && p.loading {
+        let hint = "Loading\u{2026}";
+        let font = 22.0 * s;
+        let hint_w = text.measure_width(hint, font);
+        TextLabel::new(
+            hint,
+            content.x + (content.w - hint_w) * 0.5,
+            content.y + content.h * 0.4,
+        )
+        .size(FontSize::Custom(font))
+        .color(pal.text_secondary)
+        .draw(text, w, h);
+    } else if entries.is_empty() && crate::fs::is_unreadable(&p.tab.path) {
+        // Not empty: unreadable.
+        let hint = "This folder can\u{2019}t be read";
+        let font = 22.0 * s;
+        let hint_w = text.measure_width(hint, font);
+        TextLabel::new(
+            hint,
+            content.x + (content.w - hint_w) * 0.5,
+            content.y + content.h * 0.4,
+        )
+        .size(FontSize::Custom(font))
+        .color(pal.text_secondary)
+        .draw(text, w, h);
+    }
+
     if scroll_area.is_scrollable() {
-        let scrollbar = Scrollbar::new(&content, total_h, scroll);
-        input.add_zone(ZONE_P2_SCROLLBAR, scrollbar.hover_zone());
-        let sb_state = input.zone_state(ZONE_P2_SCROLLBAR);
+        let scrollbar = crate::scrollbar::bar(&content, total_h, scroll, s);
+        let sb_state: InteractionState =
+            input.add_zone(ZONE_P2_SCROLLBAR, crate::scrollbar::hover_zone(&scrollbar, s));
         draw_scrollbar(painter, &scrollbar, sb_state, pal);
     }
 

@@ -1,16 +1,21 @@
 use lntrn_render::{Color, Painter, Rect};
 use lntrn_ui::gpu::{FoxPalette, GradientStrip, InteractionState, Scrollbar};
 
+pub mod crumbs;
+pub mod emblem;
 mod grid;
 mod icons;
 mod nav;
+pub mod root_badge;
 mod sidebar;
+mod sidebar_zones;
 mod split;
 mod status;
 
 pub use grid::{draw_content_grid, draw_rubber_band};
 pub use nav::draw_nav_bar;
-pub use sidebar::{draw_sidebar, SidebarHovered};
+pub use sidebar::draw_sidebar;
+pub use sidebar_zones::{register_sidebar_zones, SidebarHovered};
 pub use split::{draw_split_divider, draw_split_toggle_icon, render_inactive_pane, InactivePane};
 pub use status::draw_status_bar;
 
@@ -100,13 +105,15 @@ fn lerp_color(a: Color, b: Color, t: f32) -> Color {
 
 // ── Scrollbar ───────────────────────────────────────────────────────────────
 
+/// The file list's scrollbar (built by `crate::scrollbar::bar`): hidden
+/// until the pointer is on it.
 pub fn draw_scrollbar(
     painter: &mut Painter,
     scrollbar: &Scrollbar,
     state: InteractionState,
     palette: &FoxPalette,
 ) {
-    scrollbar.draw(painter, state, palette);
+    crate::scrollbar::draw(painter, scrollbar, state, palette, false);
 }
 
 // ── Breadcrumb helpers ──────────────────────────────────────────────────────
@@ -247,23 +254,10 @@ pub fn wrap_to_width(
     lines
 }
 
-pub fn truncate_with_ellipsis(name: &str, max_w: f32, char_w: f32) -> String {
-    // Chars, not bytes: a multi-byte name that fits must not get an
-    // ellipsis for nothing.
-    let est_w = name.chars().count() as f32 * char_w;
-    if est_w <= max_w {
-        return name.to_string();
-    }
-    let ellipsis_w = 3.0 * char_w; // "…"
-    let max_chars = ((max_w - ellipsis_w) / char_w).floor().max(1.0) as usize;
-    let truncated: String = name.chars().take(max_chars).collect();
-    format!("{truncated}\u{2026}")
-}
-
 /// Truncate `name` to fit `max_w` pixels using the renderer's *actual* glyph
-/// measurements (cached), with a trailing ellipsis. The char-width estimate in
-/// `truncate_with_ellipsis` underestimates wide glyphs (m, w, …), which lets the
-/// leftover wrap onto a second line; measuring is exact. Binary-searches the
+/// measurements (cached), with a trailing ellipsis. A per-character width
+/// estimate underestimates wide glyphs (m, w, …), which lets the leftover
+/// wrap onto a second line; measuring is exact. Binary-searches the
 /// longest prefix that fits — ~log2(len) cached measurements per long name.
 pub fn truncate_to_width(
     text: &mut lntrn_render::TextRenderer,

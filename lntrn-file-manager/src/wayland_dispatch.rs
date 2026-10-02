@@ -1,9 +1,9 @@
 use wayland_client::{
     protocol::{
         wl_callback, wl_compositor, wl_data_device, wl_data_device_manager, wl_data_offer,
-        wl_data_source, wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat, wl_surface,
+        wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat, wl_surface,
     },
-    Connection, Dispatch, QueueHandle, WEnum,
+    Connection, Dispatch, Proxy, QueueHandle, WEnum,
 };
 use wayland_protocols::wp::cursor_shape::v1::client::{
     wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
@@ -256,15 +256,39 @@ impl Dispatch<wl_seat::WlSeat, ()> for State {
             capabilities: WEnum::Value(cap),
         } = event
         {
+            // The compositor announces its capabilities again whenever a
+            // device comes or goes. One pointer and one keyboard object at
+            // a time: a second one would deliver every click and every key
+            // twice. One whose capability is gone is dead and is let go, so
+            // a new one is made when the device is back.
             if cap.contains(wl_seat::Capability::Pointer) {
-                let ptr = seat.get_pointer(qh, ());
-                if let Some(mgr) = &state.cursor_shape_mgr {
-                    state.cursor_shape_device = Some(mgr.get_pointer(&ptr, qh, ()));
+                if state.pointer.is_none() {
+                    let ptr = seat.get_pointer(qh, ());
+                    if let Some(mgr) = &state.cursor_shape_mgr {
+                        state.cursor_shape_device = Some(mgr.get_pointer(&ptr, qh, ()));
+                    }
+                    state.pointer = Some(ptr);
                 }
-                state.pointer = Some(ptr);
+            } else if let Some(ptr) = state.pointer.take() {
+                if let Some(dev) = state.cursor_shape_device.take() {
+                    dev.destroy();
+                }
+                state.current_cursor_shape = None;
+                state.pointer_in_surface = false;
+                state.pointer_surface = None;
+                if ptr.version() >= 3 {
+                    ptr.release();
+                }
             }
             if cap.contains(wl_seat::Capability::Keyboard) {
-                seat.get_keyboard(qh, ());
+                if state.keyboard.is_none() {
+                    state.keyboard = Some(seat.get_keyboard(qh, ()));
+                }
+            } else if let Some(keyboard) = state.keyboard.take() {
+                state.kbd.on_leave();
+                if keyboard.version() >= 3 {
+                    keyboard.release();
+                }
             }
         }
     }
@@ -298,6 +322,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
             wl_pointer::Event::Leave { .. } => {
                 state.pointer_in_surface = false;
                 state.pointer_surface = None;
+                if let Some(seen) = state.dnd_probe.as_mut() {
+                    seen.leave = true;
+                }
                 state.frame_done = true;
             }
             wl_pointer::Event::Motion {
@@ -323,6 +350,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 }
                 if button == BTN_LEFT && released {
                     state.left_released = true;
+                    if let Some(seen) = state.dnd_probe.as_mut() {
+                        seen.release = true;
+                    }
                 }
                 if button == BTN_RIGHT && pressed {
                     state.right_clicked = true;
@@ -350,41 +380,37 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         match event {
+            wl_keyboard::Event::Keymap { format, fd, size } => {
+                let xkb_v1 = format == WEnum::Value(wl_keyboard::KeymapFormat::XkbV1);
+                state.kbd.on_keymap(xkb_v1, fd, size);
+            }
             wl_keyboard::Event::Key {
                 key,
                 state: key_state,
                 ..
             } => {
-                if key_state == WEnum::Value(wl_keyboard::KeyState::Pressed) {
-                    state.key_pressed = Some(key);
-                    state.held_key = Some(key);
-                    state.repeat_started = false;
-                    state.repeat_deadline =
-                        std::time::Instant::now() + std::time::Duration::from_millis(300);
-                } else if key_state == WEnum::Value(wl_keyboard::KeyState::Released) {
-                    if state.held_key == Some(key) {
-                        state.held_key = None;
-                    }
-                }
+                // Translated and queued here, in the order and with the
+                // keymap and modifiers of the moment (keyboard.rs).
+                let pressed = key_state == WEnum::Value(wl_keyboard::KeyState::Pressed);
+                state.kbd.on_key(key, pressed, std::time::Instant::now());
                 state.frame_done = true;
             }
-            wl_keyboard::Event::Modifiers { mods_depressed, .. } => {
-                state.ctrl = mods_depressed & 4 != 0;
-                state.shift = mods_depressed & 1 != 0;
-                state.logo = mods_depressed & 64 != 0; // Mod4 / Super
+            wl_keyboard::Event::Modifiers {
+                mods_depressed,
+                mods_latched,
+                mods_locked,
+                group,
+                ..
+            } => {
+                state
+                    .kbd
+                    .on_modifiers(mods_depressed, mods_latched, mods_locked, group);
             }
             // Focus left with a key still down (Alt+Tab, a compositor
             // shortcut): its release goes to whoever has focus now, so the
-            // key would stay "held" here and keep the loop redrawing at
-            // 60 fps forever. The compositor re-sends modifiers on enter.
-            // `key_pressed` stays: a press and a leave can arrive in one
-            // batch and that press was ours.
+            // key would stay "held" here and repeat forever.
             wl_keyboard::Event::Leave { .. } => {
-                state.held_key = None;
-                state.repeat_started = false;
-                state.ctrl = false;
-                state.shift = false;
-                state.logo = false;
+                state.kbd.on_leave();
                 state.frame_done = true;
             }
             _ => {}
@@ -442,109 +468,55 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for State {
     ) {
         match event {
             // An offer object arrives with every selection change and every
-            // drag that enters. Nothing here reads them, so each is released
-            // as soon as it is superseded instead of piling up.
+            // drag that enters. The clipboard has its own connection
+            // (clipboard.rs), so selection offers are released at once;
+            // drag offers are followed by dnd_in.rs.
             wl_data_device::Event::Selection { id: Some(offer) } => offer.destroy(),
             wl_data_device::Event::Enter {
-                surface, x, y, id, ..
+                serial,
+                surface,
+                x,
+                y,
+                id,
             } => {
-                if let Some(old) = std::mem::replace(&mut state.dnd_offer, id) {
-                    old.destroy();
-                }
-                if state.surface.as_ref() == Some(&surface) {
-                    state.dnd_over_self = true;
-                    state.dnd_cursor_x = x;
-                    state.dnd_cursor_y = y;
-                    state.frame_done = true;
-                }
+                let ours = state.surface.as_ref() == Some(&surface);
+                state.drop_in.enter(id, ours, serial, x, y);
+                state.frame_done = true;
             }
             wl_data_device::Event::Motion { x, y, .. } => {
-                if state.dnd_over_self {
-                    state.dnd_cursor_x = x;
-                    state.dnd_cursor_y = y;
+                if state.drop_in.motion(x, y) {
                     state.frame_done = true;
                 }
             }
             wl_data_device::Event::Leave => {
-                if let Some(offer) = state.dnd_offer.take() {
-                    offer.destroy();
-                }
-                state.dnd_over_self = false;
+                state.drop_in.leave();
                 state.frame_done = true;
             }
             wl_data_device::Event::Drop => {
-                if let Some(offer) = state.dnd_offer.take() {
-                    offer.destroy();
-                }
-                if state.dnd_over_self {
-                    state.dnd_drop_on_self = true;
-                    state.frame_done = true;
-                }
+                state.drop_in.dropped();
+                state.frame_done = true;
             }
             _ => {}
         }
     }
 
     wayland_client::event_created_child!(State, wl_data_device::WlDataDevice, [
-        wl_data_device::EVT_DATA_OFFER_OPCODE => (wl_data_offer::WlDataOffer, ())
+        wl_data_device::EVT_DATA_OFFER_OPCODE => (wl_data_offer::WlDataOffer, crate::dnd_in::OfferMimes::default())
     ]);
 }
 
-impl Dispatch<wl_data_source::WlDataSource, ()> for State {
-    fn event(
-        state: &mut Self,
-        source: &wl_data_source::WlDataSource,
-        event: wl_data_source::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        match event {
-            wl_data_source::Event::Send { mime_type, fd } => {
-                use std::io::Write;
-                use std::os::unix::ffi::OsStrExt;
-                let mut file = std::fs::File::from(fd);
-                if mime_type == "text/uri-list" {
-                    // RFC 3986: a raw space, '#', '%' or non-ASCII byte makes
-                    // the receiver cut or misread the path.
-                    for path in &state.dnd_paths {
-                        let uri = format!(
-                            "file://{}\r\n",
-                            crate::file_ops::percent_encode_path(path)
-                        );
-                        let _ = file.write_all(uri.as_bytes());
-                    }
-                } else if mime_type == "text/plain" {
-                    for (i, path) in state.dnd_paths.iter().enumerate() {
-                        if i > 0 {
-                            let _ = file.write_all(b"\n");
-                        }
-                        let _ = file.write_all(path.as_os_str().as_bytes());
-                    }
-                }
-            }
-            wl_data_source::Event::DndFinished | wl_data_source::Event::Cancelled => {
-                state.dnd_active = false;
-                state.dnd_paths.clear();
-                state.dnd_over_self = false;
-                state.frame_done = true;
-                // One source per drag; without this each drag leaks one.
-                source.destroy();
-            }
-            _ => {}
-        }
-    }
-}
-
-impl Dispatch<wl_data_offer::WlDataOffer, ()> for State {
+impl Dispatch<wl_data_offer::WlDataOffer, crate::dnd_in::OfferMimes> for State {
     fn event(
         _: &mut Self,
         _: &wl_data_offer::WlDataOffer,
-        _: wl_data_offer::Event,
-        _: &(),
+        event: wl_data_offer::Event,
+        mimes: &crate::dnd_in::OfferMimes,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        if let wl_data_offer::Event::Offer { mime_type } = event {
+            mimes.add(mime_type);
+        }
     }
 }
 

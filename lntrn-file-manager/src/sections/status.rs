@@ -2,7 +2,7 @@ use lntrn_render::{Color, Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{FontSize, FoxPalette, InteractionContext, TextLabel};
 
 use crate::fs::FileEntry;
-use crate::ops::OpHandle;
+use crate::ops::{OpHandle, OpQueue};
 use crate::{ZONE_PROGRESS_CANCEL, ZONE_PROGRESS_STRIP};
 
 // ── Status bar ──────────────────────────────────────────────────────────────
@@ -15,9 +15,12 @@ pub fn draw_status_bar(
     status_rect: Rect,
     entries: &[FileEntry],
     dir_loading: bool,
+    // The folder could not be listed: it is not "0 folders, 0 files".
+    unreadable: bool,
     file_info: &mut crate::file_info::FileInfoCache,
-    cloud_status: Option<crate::cloud::sync::SyncStatus>,
-    op_progress: Option<&OpHandle>,
+    cloud_pill: Option<&crate::cloud_ui::Pill>,
+    ops: &OpQueue,
+    note: Option<&str>,
     git_branch: Option<&str>,
     input: &mut InteractionContext,
     screen: (u32, u32),
@@ -47,137 +50,115 @@ pub fn draw_status_bar(
     let y = status_rect.y + (status_rect.h - 20.0 * s) * 0.5;
     let cw = 9.0 * s; // approximate char width
 
-    // ── Cloud sync pill (right-aligned) ────────────────────────────────
-    if let Some(status) = cloud_status {
-        use crate::cloud::sync::SyncStatus;
-        let (label, color) = match status {
-            SyncStatus::Idle => ("Synced", palette.text_secondary),
-            SyncStatus::Syncing => ("Syncing\u{2026}", palette.accent),
-            SyncStatus::Error => ("Sync error", palette.danger),
-            // Deliberate pause, not a failure — daily quota resets at
-            // midnight PT and the loop retries on its own.
-            SyncStatus::RateLimited => ("Sync paused (quota)", palette.muted),
-        };
-        let label_w = label.chars().count() as f32 * cw;
-        let icon_w = 22.0 * s;
-        let gap = 6.0 * s;
-        let right_pad = 14.0 * s;
-        let label_x = status_rect.x + status_rect.w - right_pad - label_w;
-        let icon_cx = label_x - gap - icon_w * 0.5;
-        let icon_cy = status_rect.y + status_rect.h * 0.5;
-        let u = s * 0.85;
-        painter.circle_filled(icon_cx - 4.0 * u, icon_cy - 1.0 * u, 4.0 * u, color);
-        painter.circle_filled(icon_cx + 1.0 * u, icon_cy - 3.5 * u, 5.5 * u, color);
-        painter.circle_filled(icon_cx + 5.0 * u, icon_cy, 4.0 * u, color);
-        painter.rect_filled(
-            Rect::new(icon_cx - 7.0 * u, icon_cy - 1.0 * u, 14.0 * u, 5.0 * u),
-            2.0 * u,
-            color,
-        );
-        TextLabel::new(label, label_x, y)
-            .size(font)
-            .color(color)
-            .draw(text, screen.0, screen.1);
-    }
+    // ── Cloud sync pill (right-aligned, clickable) ─────────────────────
+    // The line of counts ends where the pill begins. Shapes cannot cover
+    // text of the same layer, so a long line would be written across the
+    // pill ("Sync paused" is not something to make unreadable).
+    // What sits in the middle of the bar, and how wide: the pill keeps out
+    // of its way (a shorter label), and if the window is too narrow even
+    // for that, the middle moves left of the pill (`middle_rect`).
+    let shown_op = ops.shown();
+    let middle_w = match (shown_op, note) {
+        (Some(_), _) => Some(strip_width(status_rect, s)),
+        (None, Some(note)) => Some(note_width(text, status_rect, note, s)),
+        (None, None) => None,
+    };
+    let keep_clear =
+        middle_w.map(|w| status_rect.x + (status_rect.w + w) * 0.5 + MIDDLE_GAP * s);
+    let text_end = match cloud_pill {
+        Some(pill) => {
+            let left = crate::cloud_ui::draw_pill(
+                painter,
+                text,
+                palette,
+                input,
+                status_rect,
+                pill,
+                keep_clear,
+                screen,
+                s,
+            );
+            left - 12.0 * s
+        }
+        None => status_rect.x + status_rect.w,
+    };
+    let middle = middle_rect(status_rect, middle_w.unwrap_or(0.0), text_end);
+    let put = |text: &mut TextRenderer, label: &str, x: f32, color: Color| {
+        let room = text_end - x;
+        if room > 0.0 {
+            TextLabel::new(label, x, y)
+                .size(font)
+                .color(color)
+                .max_width(room)
+                .draw(text, screen.0, screen.1);
+        }
+    };
 
     // Slow-mount listing still on its worker thread and nothing to count
     // yet — say so rather than claiming an empty folder.
     let (counts, counts_color) = if dir_loading && total == 0 {
         ("Loading\u{2026}".to_string(), palette.accent)
+    } else if unreadable {
+        ("This folder can\u{2019}t be read".to_string(), palette.warning)
     } else {
         (
             format!("{dirs} folders, {files} files"),
             palette.text_secondary,
         )
     };
-    TextLabel::new(&counts, x, y)
-        .size(font)
-        .color(counts_color)
-        .draw(text, screen.0, screen.1);
+    put(text, &counts, x, counts_color);
     x += counts.len() as f32 * cw;
 
     // Git branch chip — only when the current dir is inside a repo.
     if let Some(branch) = git_branch {
-        TextLabel::new(dot_sep, x, y)
-            .size(font)
-            .color(palette.muted.with_alpha(0.5))
-            .draw(text, screen.0, screen.1);
+        put(text, dot_sep, x, palette.muted.with_alpha(0.5));
         x += 24.0 * s;
         let chip = format!("git: {branch}");
-        TextLabel::new(&chip, x, y)
-            .size(font)
-            .color(palette.accent)
-            .draw(text, screen.0, screen.1);
+        put(text, &chip, x, palette.accent);
         x += chip.len() as f32 * cw;
     }
 
     if sel_count > 0 {
         // Dot separator
-        TextLabel::new(dot_sep, x, y)
-            .size(font)
-            .color(palette.muted.with_alpha(0.5))
-            .draw(text, screen.0, screen.1);
+        put(text, dot_sep, x, palette.muted.with_alpha(0.5));
         x += 24.0 * s;
 
         let sel_text = format!("{sel_count} selected");
-        TextLabel::new(&sel_text, x, y)
-            .size(font)
-            .color(palette.accent)
-            .draw(text, screen.0, screen.1);
+        put(text, &sel_text, x, palette.accent);
         x += sel_text.len() as f32 * cw + 6.0 * s;
 
         let size_text = format!("({})", format_bytes(sel_bytes));
-        TextLabel::new(&size_text, x, y)
-            .size(font)
-            .color(palette.muted)
-            .draw(text, screen.0, screen.1);
+        put(text, &size_text, x, palette.muted);
         x += size_text.len() as f32 * cw;
 
         // Single file selected — show detailed info
         if sel_count == 1 && !selected[0].is_dir {
-            let info = file_info.get(&selected[0].path);
+            let stamp = (selected[0].size, selected[0].modified);
+            let info = file_info.get(&selected[0].path, stamp);
 
             // File type
-            TextLabel::new(dot_sep, x, y)
-                .size(font)
-                .color(palette.muted.with_alpha(0.5))
-                .draw(text, screen.0, screen.1);
+            put(text, dot_sep, x, palette.muted.with_alpha(0.5));
             x += 24.0 * s;
 
-            TextLabel::new(&info.type_name, x, y)
-                .size(font)
-                .color(palette.text_secondary)
-                .draw(text, screen.0, screen.1);
+            put(text, &info.type_name, x, palette.text_secondary);
             x += info.type_name.len() as f32 * cw;
 
             // Dimensions (images and video)
             if let Some((w, h)) = info.dimensions {
-                TextLabel::new(dot_sep, x, y)
-                    .size(font)
-                    .color(palette.muted.with_alpha(0.5))
-                    .draw(text, screen.0, screen.1);
+                put(text, dot_sep, x, palette.muted.with_alpha(0.5));
                 x += 24.0 * s;
 
                 let dims = format!("{w}\u{00D7}{h}");
-                TextLabel::new(&dims, x, y)
-                    .size(font)
-                    .color(palette.text_secondary)
-                    .draw(text, screen.0, screen.1);
+                put(text, &dims, x, palette.text_secondary);
                 x += dims.len() as f32 * cw;
             }
 
             // Duration (audio and video)
             if let Some(ref dur) = info.duration {
-                TextLabel::new(dot_sep, x, y)
-                    .size(font)
-                    .color(palette.muted.with_alpha(0.5))
-                    .draw(text, screen.0, screen.1);
+                put(text, dot_sep, x, palette.muted.with_alpha(0.5));
                 x += 24.0 * s;
 
-                TextLabel::new(dur, x, y)
-                    .size(font)
-                    .color(palette.text_secondary)
-                    .draw(text, screen.0, screen.1);
+                put(text, dur, x, palette.text_secondary);
             }
         }
     }
@@ -185,11 +166,81 @@ pub fn draw_status_bar(
     // ── Background-op progress strip ────────────────────────────────
     // Overlays on top of the counts (taking horizontal space from the cloud
     // pill's left side). Renders only while a worker is active.
-    if let Some(op) = op_progress {
-        draw_progress_strip(painter, text, palette, input, status_rect, op, screen, s);
+    if let Some(op) = shown_op {
+        draw_progress_strip(
+            painter,
+            text,
+            palette,
+            input,
+            middle,
+            op,
+            ops.others(),
+            screen,
+            s,
+        );
+    } else if let Some(note) = note {
+        draw_note(painter, text, palette, middle, note, screen, s);
     }
 }
 
+/// Space kept between the middle of the bar and the cloud pill.
+const MIDDLE_GAP: f32 = 12.0;
+
+/// Width of the progress strip (cancel button included) in a bar this wide.
+fn strip_width(bar: Rect, s: f32) -> f32 {
+    (bar.w * 0.5).min(460.0 * s).max(220.0 * s)
+}
+
+/// Width of a status note's pill in a bar this wide.
+fn note_width(text: &mut TextRenderer, bar: Rect, note: &str, s: f32) -> f32 {
+    let max_w = (bar.w - 24.0 * s).max(120.0 * s);
+    (text.measure_width(note, 18.0 * s) + 32.0 * s).min(max_w)
+}
+
+/// The part of the bar an element `w` wide is centred in: the whole bar,
+/// unless it would then reach past `right_limit` (where the cloud pill
+/// begins). Then it is centred in what is left of the pill.
+fn middle_rect(bar: Rect, w: f32, right_limit: f32) -> Rect {
+    if bar.x + (bar.w + w) * 0.5 <= right_limit {
+        return bar;
+    }
+    Rect::new(bar.x, bar.y, (right_limit - bar.x).max(0.0), bar.h)
+}
+
+/// A short result line ("Undo: 3 items moved back") in the middle of the
+/// status bar, where the progress strip of the operation it reports on was.
+fn draw_note(
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    palette: &FoxPalette,
+    status_rect: Rect,
+    note: &str,
+    screen: (u32, u32),
+    s: f32,
+) {
+    let font_px = 18.0 * s;
+    let pad = 16.0 * s;
+    let pill_h = 28.0 * s;
+    let max_w = (status_rect.w - 24.0 * s).max(120.0 * s);
+    let text_w = text.measure_width(note, font_px);
+    let pill_w = (text_w + pad * 2.0).min(max_w);
+    let pill = Rect::new(
+        status_rect.x + (status_rect.w - pill_w) * 0.5,
+        status_rect.y + (status_rect.h - pill_h) * 0.5,
+        pill_w,
+        pill_h,
+    );
+    // Opaque enough that the counts underneath do not read through it.
+    painter.rect_filled(pill, pill_h * 0.5, palette.surface_2.with_alpha(0.97));
+    TextLabel::new(note, pill.x + pad, pill.y + (pill.h - font_px) * 0.5)
+        .size(FontSize::Custom(font_px))
+        .color(palette.text)
+        // Slack so the measured last glyph isn't clipped by the bound.
+        .max_width(pill.w - pad * 2.0 + 4.0 * s)
+        .draw(text, screen.0, screen.1);
+}
+
+#[allow(clippy::too_many_arguments)]
 fn draw_progress_strip(
     painter: &mut Painter,
     text: &mut TextRenderer,
@@ -197,19 +248,22 @@ fn draw_progress_strip(
     input: &mut InteractionContext,
     status_rect: Rect,
     op: &OpHandle,
+    others: usize,
     screen: (u32, u32),
     s: f32,
 ) {
-    // Strip lives in the middle of the status bar — width caps at 360px,
+    // Strip lives in the middle of the status bar — width caps at 460px,
     // shrinks for narrower windows.
-    let strip_w = (status_rect.w * 0.45).min(360.0 * s).max(200.0 * s);
-    let strip_h = 22.0 * s;
-    let cancel_w = 26.0 * s;
+    // (`status_rect` is the part of the bar the strip is centred in; when
+    // that is not the whole bar, there is less room.)
+    let strip_w = strip_width(status_rect, s).min(status_rect.w.max(120.0 * s));
+    let strip_h = 28.0 * s;
+    let cancel_w = 30.0 * s;
     let strip_x = status_rect.x + (status_rect.w - strip_w) * 0.5;
     let strip_y = status_rect.y + (status_rect.h - strip_h) * 0.5;
 
     // Background "pill"
-    let pill = Rect::new(strip_x, strip_y, strip_w - cancel_w - 4.0 * s, strip_h);
+    let pill = Rect::new(strip_x, strip_y, strip_w - cancel_w - 6.0 * s, strip_h);
     painter.rect_filled(pill, strip_h * 0.5, palette.surface_2.with_alpha(0.8));
     // Progress fill
     let pct = op.percent().clamp(0.0, 1.0);
@@ -224,8 +278,10 @@ fn draw_progress_strip(
     // Status zone (whole strip is clickable for future popover)
     input.add_zone(ZONE_PROGRESS_STRIP, pill);
 
-    // Label inside the pill: "Copying name.ext (3 of 12)"
-    let label = if op.total == 0 {
+    // Label inside the pill: "Copying • name.ext (3/12) • +2 more"
+    let mut label = if op.cancelling() {
+        "Stopping\u{2026}".to_string()
+    } else if op.total == 0 {
         op.label.to_string()
     } else if op.current_name.is_empty() {
         format!("{} \u{2022} {} of {}", op.label, op.index, op.total)
@@ -238,21 +294,32 @@ fn draw_progress_strip(
             op.total
         )
     };
-    let font = FontSize::Custom(14.0 * s);
+    if others > 0 {
+        // Operations running beside this one or waiting their turn. The
+        // cancel button stops the one named here; the next one then shows.
+        label.push_str(&format!(" \u{2022} +{others} more"));
+    }
+    let font_px = 18.0 * s;
     TextLabel::new(
         &label,
         pill.x + 12.0 * s,
-        pill.y + (pill.h - 14.0 * s) * 0.5,
+        pill.y + (pill.h - font_px) * 0.5,
     )
-    .size(font)
+    .size(FontSize::Custom(font_px))
     .color(palette.text)
     .max_width(pill.w - 24.0 * s)
     .draw(text, screen.0, screen.1);
 
-    // Cancel button — small red circle with "×"
+    // Cancel button — red circle with a cross. The click target is the
+    // full height of the status bar, wider than the circle.
     let cx = strip_x + strip_w - cancel_w * 0.5;
     let cy = strip_y + strip_h * 0.5;
-    let cancel_rect = Rect::new(cx - cancel_w * 0.5, strip_y, cancel_w, strip_h);
+    let cancel_rect = Rect::new(
+        cx - cancel_w * 0.5 - 4.0 * s,
+        status_rect.y,
+        cancel_w + 8.0 * s,
+        status_rect.h,
+    );
     let cancel_state = input.add_zone(ZONE_PROGRESS_CANCEL, cancel_rect);
     let bg = if cancel_state.is_hovered() {
         palette.danger
@@ -261,8 +328,8 @@ fn draw_progress_strip(
     };
     painter.circle_filled(cx, cy, strip_h * 0.5 - 1.0 * s, bg);
     // Cross — two thin rects forming an X
-    let arm = 8.0 * s;
-    let th = 2.0 * s;
+    let arm = 10.0 * s;
+    let th = 2.5 * s;
     let white = Color::WHITE;
     // diagonal-ish: just draw a horizontal and vertical strike for simplicity
     painter.rect_filled(

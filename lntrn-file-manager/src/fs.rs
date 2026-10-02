@@ -6,10 +6,21 @@ use std::time::{Duration, Instant, SystemTime};
 pub struct FileEntry {
     pub name: String,
     pub path: PathBuf,
+    /// A folder, or a symbolic link to one: something that is entered.
     pub is_dir: bool,
     pub size: u64,
     pub modified: Option<SystemTime>,
+    /// The entry itself is a symbolic link. `is_dir`, `size` and `modified`
+    /// then describe what it points at; every operation on the entry
+    /// (trash, delete, move, copy, rename) still acts on the link, by its
+    /// path, and never on the target.
+    pub is_symlink: bool,
     pub selected: bool,
+    /// A folder's custom icon and colour (its `user.lantern.*` attributes),
+    /// read once when the listing is built so that drawing a frame costs no
+    /// syscall. `None` for files and for folders without one.
+    pub folder_icon: Option<String>,
+    pub folder_color: Option<String>,
 }
 
 impl FileEntry {
@@ -70,24 +81,87 @@ fn is_removable_mount_root(path: &Path) -> bool {
 }
 
 /// List a directory, returning sorted entries (dirs first, then files).
+/// Blocking: on a slow mount (`is_slow_path`) call it off the render thread
+/// only (app/dir_load.rs).
 pub fn list_directory(
     path: &Path,
     show_hidden: bool,
     sort_by: SortBy,
     sort_dir: SortDir,
 ) -> Vec<FileEntry> {
-    let Ok(read_dir) = std::fs::read_dir(path) else {
-        return Vec::new();
-    };
+    let listed = read_directory(path, show_hidden);
+    note_listing(path, listed.is_some());
+    let mut entries = listed.unwrap_or_default();
+    sort_entries(&mut entries, sort_by, sort_dir);
+    entries
+}
+
+/// Folders whose last listing failed. A folder that cannot be read lists
+/// as nothing, and nothing is exactly what an empty folder lists as: the
+/// views ask here to tell the two apart and say so.
+static UNREADABLE: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// Record how the listing of `dir` went.
+pub fn note_listing(dir: &Path, readable: bool) {
+    let mut known = UNREADABLE.lock().unwrap_or_else(|e| e.into_inner());
+    let at = known.iter().position(|d| d == dir);
+    match (readable, at) {
+        (true, Some(i)) => {
+            known.swap_remove(i);
+        }
+        (false, None) => known.push(dir.to_path_buf()),
+        _ => {}
+    }
+}
+
+/// The last listing of `dir` failed (permission denied, a device gone).
+pub fn is_unreadable(dir: &Path) -> bool {
+    let known = UNREADABLE.lock().unwrap_or_else(|e| e.into_inner());
+    known.iter().any(|d| d == dir)
+}
+
+/// The entries of a directory in no particular order, or `None` when it
+/// cannot be read at all.
+pub fn read_directory(path: &Path, show_hidden: bool) -> Option<Vec<FileEntry>> {
+    let read_dir = std::fs::read_dir(path).ok()?;
 
     let hide_lost_found = is_removable_mount_root(path);
+    // Mount points of phones and network shares among the entries (an
+    // sshfs folder in the home directory, the phones under
+    // ~/.lantern/mounts). They are listed as folders without being looked
+    // at: this listing may be running on the render thread, and theirs is
+    // the one stat in it that can wait on a device.
+    let slow_children = slow_mounts_in(path);
 
-    let mut dirs = Vec::new();
-    let mut files = Vec::new();
+    let mut entries = Vec::new();
+    let mut links = crate::links::Looker::new();
 
-    for entry in read_dir.flatten() {
+    // The Trash is one place to the user, however many drives hold a trash
+    // of their own: the home trash also lists theirs. Entries keep their
+    // real paths, which is how restore finds the right trash again.
+    let mut extra: Vec<std::fs::DirEntry> = Vec::new();
+    if path == crate::trash::home_trash().files() {
+        for dir in crate::trash::other_files_dirs() {
+            if let Ok(rd) = std::fs::read_dir(&dir) {
+                extra.extend(rd.flatten());
+            }
+        }
+    }
+
+    // Unfinished copies are looked for in ordinary local folders. Not in a
+    // trash (one moved there keeps its name, and has been dealt with), and
+    // not on a share or a phone: the Fox that is still writing it may run
+    // on another machine, where this one cannot see it.
+    let spot_leftovers = !is_slow_path(path) && crate::trash::locate(path).is_none();
+
+    for entry in read_dir.flatten().chain(extra) {
         let name = entry.file_name().to_string_lossy().into_owned();
 
+        // What a copy that was cut off left here (by its name alone: no
+        // look at the disk). It is hidden, so nobody would ever find it.
+        if spot_leftovers && crate::copy_tree::is_stale_staging(&name) {
+            crate::copy_tree::report_stale(entry.path());
+        }
         if !show_hidden && name.starts_with('.') {
             continue;
         }
@@ -96,27 +170,30 @@ pub fn list_directory(
         }
 
         let path = entry.path();
-        let metadata = entry.metadata().ok();
-        let is_dir = metadata.as_ref().map_or(false, |m| m.is_dir());
-        let size = metadata.as_ref().map_or(0, |m| m.len());
-        let modified = metadata.as_ref().and_then(|m| m.modified().ok());
-
-        let fe = FileEntry {
-            name,
-            path,
-            is_dir,
-            size,
-            modified,
-            selected: false,
-        };
-
-        if is_dir {
-            dirs.push(fe);
-        } else {
-            files.push(fe);
+        if slow_children.contains(&path) {
+            entries.push(FileEntry {
+                name,
+                path,
+                is_dir: true,
+                size: 0,
+                modified: None,
+                is_symlink: false,
+                selected: false,
+                folder_icon: None,
+                folder_color: None,
+            });
+            continue;
         }
+        let metadata = entry.metadata().ok();
+        entries.push(FileEntry::listed(name, path, metadata.as_ref(), &mut links));
     }
+    links.finish(path);
+    Some(entries)
+}
 
+/// Order a listing: folders first, then files, each by `sort_by`. Also used
+/// to re-order a listing that was loaded for another pane's sort.
+pub fn sort_entries(entries: &mut Vec<FileEntry>, sort_by: SortBy, sort_dir: SortDir) {
     // Compute "ascending" ordering (smallest/earliest/A first), then flip
     // outside the match if direction is Desc. Name tiebreak stays ascending
     // so equal-rank items are still alphabetical.
@@ -138,16 +215,13 @@ pub fn list_directory(
         primary.then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     };
 
-    dirs.sort_by(sort_fn);
-    files.sort_by(sort_fn);
-
-    dirs.extend(files);
-    dirs
+    // Stable, so folders keep leading and equal keys keep their order.
+    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| sort_fn(a, b)));
 }
 
 // ── Drive / mount detection ─────────────────────────────────────────────────
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 #[allow(dead_code)]
 pub struct Drive {
     pub name: String,
@@ -558,7 +632,7 @@ struct StatVfs {
 
 // ── Phone (MTP) detection ───────────────────────────────────────────────────
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 #[allow(dead_code)]
 pub struct Phone {
     pub name: String,
@@ -572,14 +646,20 @@ pub struct Phone {
     /// refresh. The sidebar reads this instead of parsing /proc/mounts for
     /// every phone on every frame.
     pub mounted: bool,
+    /// Where the device sits on USB right now (sysfs `busnum`, `devnum`).
+    /// It tells jmtpfs which of several devices to open, and it changes on
+    /// every re-plug, which is how a mount left over from before the
+    /// re-plug is recognised as dead. `None` when sysfs did not say.
+    pub usb_address: Option<(u32, u32)>,
 }
 
 /// Scan /sys/bus/usb/devices/ for devices that expose an MTP/PTP interface
 /// (USB class 6 = "Still Image", which covers both PTP cameras and MTP phones).
-pub fn detect_phones() -> Vec<Phone> {
-    let Ok(read_dir) = std::fs::read_dir("/sys/bus/usb/devices") else {
-        return Vec::new();
-    };
+/// `None` when sysfs itself could not be read: "no phone is attached" and
+/// "could not look" must not be confused by code that cleans up after
+/// phones that went away.
+pub fn scan_phones() -> Option<Vec<Phone>> {
+    let read_dir = std::fs::read_dir("/sys/bus/usb/devices").ok()?;
     let mounts_root = mounts_root();
     let mount_points = mount_points();
     let mut phones = Vec::new();
@@ -606,6 +686,8 @@ pub fn detect_phones() -> Vec<Phone> {
         let slug = slugify(&display, &serial);
         let mount_point = mounts_root.join(slug);
         let mounted = mount_points.contains(&mount_point);
+        let number = |file: &str| read_trim(&dev_path.join(file))?.parse::<u32>().ok();
+        let usb_address = number("busnum").zip(number("devnum"));
 
         phones.push(Phone {
             name: display,
@@ -616,11 +698,17 @@ pub fn detect_phones() -> Vec<Phone> {
             serial,
             mount_point,
             mounted,
+            usb_address,
         });
     }
 
-    phones.sort_by(|a, b| a.name.cmp(&b.name));
-    phones
+    // Mount point as the last key: two phones of one model share a name.
+    phones.sort_by(|a, b| {
+        a.name
+            .cmp(&b.name)
+            .then_with(|| a.mount_point.cmp(&b.mount_point))
+    });
+    Some(phones)
 }
 
 fn device_has_image_class(dev_path: &Path, dev_name: &str) -> bool {
@@ -698,7 +786,8 @@ fn slugify(name: &str, serial: &str) -> String {
     }
 }
 
-fn mounts_root() -> PathBuf {
+/// Where phones are mounted: one folder per device under it.
+pub(crate) fn mounts_root() -> PathBuf {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/tmp"));
@@ -712,6 +801,21 @@ fn mount_points() -> std::collections::HashSet<PathBuf> {
         .lines()
         .filter_map(|line| line.split_whitespace().nth(1))
         .map(unescape_mount)
+        .collect()
+}
+
+/// Every mount as (mount point, filesystem type), in /proc/mounts order.
+pub(crate) fn mounts() -> Vec<(PathBuf, String)> {
+    std::fs::read_to_string("/proc/mounts")
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let _device = parts.next()?;
+            let mount = parts.next()?;
+            let fstype = parts.next()?;
+            Some((unescape_mount(mount), fstype.to_string()))
+        })
         .collect()
 }
 
@@ -745,7 +849,7 @@ fn has_command(cmd: &str) -> bool {
 /// Install hint tailored to the local package manager — Gentoo PC (`emerge`)
 /// vs Arch laptop (`pacman`). Pass the full command for each; falls back to
 /// listing both when neither manager is found.
-fn install_hint(gentoo: &str, arch: &str) -> String {
+pub(crate) fn install_hint(gentoo: &str, arch: &str) -> String {
     if has_command("emerge") {
         format!("run: {gentoo}")
     } else if has_command("pacman") {
@@ -753,269 +857,6 @@ fn install_hint(gentoo: &str, arch: &str) -> String {
     } else {
         format!("install it \u{2014} {gentoo} (or {arch})")
     }
-}
-
-/// Mount a phone via jmtpfs. Creates the mount directory if needed and waits
-/// for the mount to settle. Returns Err with a human-readable message if the
-/// jmtpfs binary is missing or the mount fails.
-pub fn mount_phone(phone: &Phone) -> Result<(), String> {
-    if is_path_mounted(&phone.mount_point) {
-        return Ok(());
-    }
-    if let Err(e) = std::fs::create_dir_all(&phone.mount_point) {
-        return Err(format!("create mount dir: {e}"));
-    }
-    let status = std::process::Command::new("jmtpfs")
-        .arg(&phone.mount_point)
-        .status()
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                format!(
-                    "jmtpfs is not installed \u{2014} {}",
-                    install_hint("sudo emerge sys-fs/jmtpfs", "yay -S jmtpfs")
-                )
-            } else {
-                format!("spawn jmtpfs: {e}")
-            }
-        })?;
-    if !status.success() {
-        // Almost always the phone is locked or still in charge-only mode.
-        return Err(
-            "jmtpfs couldn\u{2019}t open the phone. Unlock it and set USB mode to \
-             \u{201C}File transfer\u{201D} (tap the USB notification on the phone), \
-             then try again."
-                .to_string(),
-        );
-    }
-    // jmtpfs returns once mount is established, but give it a beat.
-    for _ in 0..20 {
-        if is_path_mounted(&phone.mount_point) {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
-    // The cached table predates this mount; without this the first listing
-    // of the phone would be treated as a fast local path.
-    invalidate_mount_table();
-    Ok(())
-}
-
-/// Mount a removable drive via `udisksctl mount -b <device>`. Polkit handles
-/// the auth prompt (no sudo). On success returns the new mount point — udisks2
-/// mounts to `/run/media/$USER/<LABEL>/`.
-pub fn mount_drive(drive: &Drive) -> Result<PathBuf, String> {
-    if drive.mounted {
-        return Ok(drive.mount_point.clone());
-    }
-    let output = std::process::Command::new("udisksctl")
-        .args(["mount", "-b", &drive.device])
-        .output()
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                format!(
-                    "udisks2 is not installed \u{2014} {}",
-                    install_hint("sudo emerge sys-fs/udisks", "sudo pacman -S udisks2")
-                )
-            } else {
-                format!("spawn udisksctl: {e}")
-            }
-        })?;
-    if !output.status.success() {
-        let msg = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("udisksctl: {}", msg.trim()));
-    }
-    // Output looks like: "Mounted /dev/sda1 at /run/media/alva/ARCH_202604."
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    if let Some(at) = stdout.find(" at ") {
-        let tail = &stdout[at + 4..];
-        let mount = tail.trim().trim_end_matches('.').trim();
-        if !mount.is_empty() {
-            invalidate_mount_table();
-            return Ok(PathBuf::from(mount));
-        }
-    }
-    // Fallback: re-scan /proc/mounts for the device.
-    if let Ok(contents) = std::fs::read_to_string("/proc/mounts") {
-        for line in contents.lines() {
-            let mut parts = line.split_whitespace();
-            if parts.next() == Some(drive.device.as_str()) {
-                if let Some(mp) = parts.next() {
-                    invalidate_mount_table();
-                    return Ok(unescape_mount(mp));
-                }
-            }
-        }
-    }
-    Err("mounted, but couldn't determine mount point".to_string())
-}
-
-/// Format a removable drive as ext4 via UDisks2 D-Bus (`busctl call`).
-/// Active-seat users are allowed by the `modify-device` polkit rule
-/// (`<allow_active>yes</allow_active>`), so no auth prompt is needed.
-///
-/// For removable drives, this targets the *whole disk* (e.g. `/dev/sda`,
-/// not `/dev/sda1`) and writes ext4 directly to the raw block device with
-/// no partition table — recovers the full disk capacity even if a leftover
-/// partition layout was present.
-pub fn format_drive_ext4(drive: &Drive, label: &str) -> Result<(), String> {
-    let target = if drive.removable && !drive.parent_disk.is_empty() {
-        drive.parent_disk.clone()
-    } else {
-        drive.device.clone()
-    };
-
-    // Unmount everything on the target disk (disk itself + all partitions).
-    unmount_all_on_disk(&target);
-
-    let basename = target.trim_start_matches("/dev/");
-    if basename.is_empty() || basename.contains('/') {
-        return Err(format!("invalid device: {target}"));
-    }
-    let obj_path = format!("/org/freedesktop/UDisks2/block_devices/{}", basename);
-
-    // Format(in s type, in a{sv} options).
-    // `take-ownership` makes UDisks2 chown the new filesystem root to the
-    // calling user — without it, ext4 belongs to root and the user can't
-    // write to their own USB.
-    let mut args: Vec<String> = vec![
-        "call".into(),
-        "--system".into(),
-        "org.freedesktop.UDisks2".into(),
-        obj_path,
-        "org.freedesktop.UDisks2.Block".into(),
-        "Format".into(),
-        "sa{sv}".into(),
-        "ext4".into(),
-    ];
-    let entries = if label.is_empty() { 1 } else { 2 };
-    args.push(entries.to_string());
-    args.push("take-ownership".into());
-    args.push("b".into());
-    args.push("true".into());
-    if !label.is_empty() {
-        args.push("label".into());
-        args.push("s".into());
-        args.push(label.into());
-    }
-
-    let output = std::process::Command::new("busctl")
-        .args(&args)
-        .output()
-        .map_err(|e| format!("spawn busctl: {e}"))?;
-    if !output.status.success() {
-        let msg = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("format: {}", msg.trim()));
-    }
-    Ok(())
-}
-
-/// Unmount the disk itself and all partitions on it via udisksctl. Errors
-/// are ignored — Format will surface a meaningful message if anything is
-/// still busy.
-fn unmount_all_on_disk(disk_device: &str) {
-    let Ok(contents) = std::fs::read_to_string("/proc/mounts") else {
-        return;
-    };
-    for line in contents.lines() {
-        let mut parts = line.split_whitespace();
-        let Some(device) = parts.next() else {
-            continue;
-        };
-        if !device.starts_with("/dev/") {
-            continue;
-        }
-        let parent = parent_disk_of(device);
-        if device == disk_device || parent == disk_device {
-            let _ = std::process::Command::new("udisksctl")
-                .args(["unmount", "-b", device])
-                .output();
-        }
-    }
-}
-
-/// Set a drive's filesystem label via UDisks2 D-Bus.
-#[allow(dead_code)]
-pub fn relabel_drive(drive: &Drive, new_label: &str) -> Result<(), String> {
-    let basename = drive.device.trim_start_matches("/dev/");
-    if basename.is_empty() || basename.contains('/') {
-        return Err(format!("invalid device: {}", drive.device));
-    }
-    let obj_path = format!("/org/freedesktop/UDisks2/block_devices/{}", basename);
-
-    let output = std::process::Command::new("busctl")
-        .args([
-            "call",
-            "--system",
-            "org.freedesktop.UDisks2",
-            &obj_path,
-            "org.freedesktop.UDisks2.Filesystem",
-            "SetLabel",
-            "sa{sv}",
-            new_label,
-            "0",
-        ])
-        .output()
-        .map_err(|e| format!("spawn busctl: {e}"))?;
-    if !output.status.success() {
-        let msg = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("relabel: {}", msg.trim()));
-    }
-    Ok(())
-}
-
-/// Unmount a removable drive via `udisksctl unmount -b <device>`. The sidebar
-/// shows one row per physical disk, so ejecting a removable disk unmounts
-/// every mounted partition on it, not just the one the row represents.
-pub fn unmount_drive(drive: &Drive) -> Result<(), String> {
-    let mut devices = vec![drive.device.clone()];
-    if drive.removable && !drive.parent_disk.is_empty() {
-        if let Ok(contents) = std::fs::read_to_string("/proc/mounts") {
-            for line in contents.lines() {
-                let Some(device) = line.split_whitespace().next() else {
-                    continue;
-                };
-                if device.starts_with("/dev/")
-                    && parent_disk_of(device) == drive.parent_disk
-                    && !devices.iter().any(|d| d == device)
-                {
-                    devices.push(device.to_string());
-                }
-            }
-        }
-    }
-    let mut first_err = None;
-    for device in &devices {
-        let result = std::process::Command::new("udisksctl")
-            .args(["unmount", "-b", device])
-            .output()
-            .map_err(|e| format!("spawn udisksctl: {e}"))
-            .and_then(|output| {
-                if output.status.success() {
-                    Ok(())
-                } else {
-                    let msg = String::from_utf8_lossy(&output.stderr);
-                    Err(format!("udisksctl: {}", msg.trim()))
-                }
-            });
-        if let Err(e) = result {
-            first_err.get_or_insert(e);
-        }
-    }
-    invalidate_mount_table();
-    first_err.map_or(Ok(()), Err)
-}
-
-/// Unmount a phone via fusermount.
-#[allow(dead_code)]
-pub fn unmount_phone(phone: &Phone) {
-    if !is_path_mounted(&phone.mount_point) {
-        return;
-    }
-    let _ = std::process::Command::new("fusermount")
-        .arg("-u")
-        .arg(&phone.mount_point)
-        .status();
-    invalidate_mount_table();
 }
 
 fn statvfs(path: &str) -> Option<StatVfs> {
@@ -1087,7 +928,7 @@ fn is_slow_fstype(fstype: &str) -> bool {
 
 /// /proc/mounts escapes whitespace and backslashes in mount points as octal
 /// (`\040` for a space) so the line stays whitespace-separated.
-fn unescape_mount(field: &str) -> PathBuf {
+pub(crate) fn unescape_mount(field: &str) -> PathBuf {
     let mut out = String::with_capacity(field.len());
     let bytes = field.as_bytes();
     let mut i = 0;
@@ -1134,10 +975,37 @@ pub fn invalidate_mount_table() {
     *MOUNT_TABLE.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
-/// True when `path` lives on a slow (FUSE / network / MTP) mount. Cheap
-/// enough to call per entry per frame: the mount table is re-read at most
-/// every two seconds and the check is a prefix match against a few roots.
+/// True when `path` lives on a slow (FUSE / network / MTP) mount, or is
+/// reached through a symbolic link a listing found to lead onto one
+/// (links.rs). Cheap enough to call per entry per frame: the mount table
+/// is re-read at most every two seconds and the check is a prefix match
+/// against a few roots.
 pub fn is_slow_path(path: &Path) -> bool {
+    with_slow_roots(|roots| {
+        roots.iter().any(|root| path.starts_with(root)) || crate::links::leads_to_slow(path, roots)
+    })
+}
+
+/// The mount points of the slow mounts, as of now.
+pub(crate) fn slow_roots() -> Vec<PathBuf> {
+    with_slow_roots(|roots| roots.to_vec())
+}
+
+/// The slow mounts whose mount point is an entry of `dir` itself. To a
+/// listing of `dir` they look like ordinary subfolders, but a stat of one
+/// is answered by its filesystem: the phone, or the server that may be
+/// gone.
+fn slow_mounts_in(dir: &Path) -> Vec<PathBuf> {
+    with_slow_roots(|roots| {
+        roots
+            .iter()
+            .filter(|root| root.parent() == Some(dir))
+            .cloned()
+            .collect()
+    })
+}
+
+fn with_slow_roots<T>(read: impl FnOnce(&[PathBuf]) -> T) -> T {
     let mut guard = MOUNT_TABLE.lock().unwrap_or_else(|e| e.into_inner());
     let stale = guard
         .as_ref()
@@ -1148,9 +1016,7 @@ pub fn is_slow_path(path: &Path) -> bool {
             slow_roots: slow_mount_roots(),
         });
     }
-    guard
-        .as_ref()
-        .map_or(false, |t| t.slow_roots.iter().any(|root| path.starts_with(root)))
+    read(guard.as_ref().map_or(&[], |t| t.slow_roots.as_slice()))
 }
 
 #[cfg(test)]
@@ -1169,6 +1035,34 @@ mod slow_mount_tests {
         assert!(!is_slow_fstype("btrfs"));
         assert!(!is_slow_fstype("ext4"));
         assert!(!is_slow_fstype("vfat"));
+    }
+
+    #[test]
+    fn sorting_keeps_folders_first_in_every_order() {
+        let entry = |name: &str, is_dir: bool, size: u64| FileEntry {
+            name: name.into(),
+            path: PathBuf::from("/x").join(name),
+            is_dir,
+            size,
+            modified: None,
+            is_symlink: false,
+            selected: false,
+            folder_icon: None,
+            folder_color: None,
+        };
+        let mut list = vec![
+            entry("b.txt", false, 5),
+            entry("Zeta", true, 0),
+            entry("a.txt", false, 9),
+            entry("alpha", true, 0),
+        ];
+        let names = |l: &[FileEntry]| l.iter().map(|e| e.name.clone()).collect::<Vec<_>>();
+        sort_entries(&mut list, SortBy::Name, SortDir::Asc);
+        assert_eq!(names(&list), ["alpha", "Zeta", "a.txt", "b.txt"]);
+        sort_entries(&mut list, SortBy::Size, SortDir::Desc);
+        assert_eq!(names(&list), ["alpha", "Zeta", "a.txt", "b.txt"]);
+        sort_entries(&mut list, SortBy::Name, SortDir::Desc);
+        assert_eq!(names(&list), ["Zeta", "alpha", "b.txt", "a.txt"]);
     }
 
     #[test]

@@ -98,31 +98,28 @@ pub(crate) struct State {
     pub(crate) cursor_shape_mgr: Option<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
     pub(crate) cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
     pub(crate) current_cursor_shape: Option<wp_cursor_shape_device_v1::Shape>,
-    // Keyboard
-    pub(crate) ctrl: bool,
-    pub(crate) shift: bool,
-    pub(crate) logo: bool,
-    pub(crate) key_pressed: Option<u32>,
-    // Key repeat
-    pub(crate) held_key: Option<u32>,
-    pub(crate) repeat_deadline: std::time::Instant,
-    pub(crate) repeat_started: bool,
+    pub(crate) keyboard: Option<wayland_client::protocol::wl_keyboard::WlKeyboard>,
+    /// Keymap, modifiers, the queue of presses and the held key.
+    pub(crate) kbd: crate::keyboard::Keyboard,
     // Popups
     pub(crate) popup_backend: Option<WaylandPopupBackend<State>>,
     pub(crate) popup_closed: bool,
     // DnD
     pub(crate) data_device_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
     pub(crate) data_device: Option<wl_data_device::WlDataDevice>,
+    /// A drag of ours is in the compositor's hands (dnd_out.rs).
     pub(crate) dnd_active: bool,
+    /// When the receiver of the drag handed out took the drop. It then
+    /// owes a "finished"; one that dies or hangs never sends it
+    /// (dnd_out.rs).
+    pub(crate) dnd_dropped_at: Option<std::time::Instant>,
     pub(crate) dnd_paths: Vec<std::path::PathBuf>,
     pub(crate) dnd_serial: u32,
-    pub(crate) dnd_over_self: bool,
-    /// Offer of the drag currently over our surface; destroyed when it leaves
-    /// or drops (Fox does not accept external drops yet).
-    pub(crate) dnd_offer: Option<wayland_client::protocol::wl_data_offer::WlDataOffer>,
-    pub(crate) dnd_drop_on_self: bool,
-    pub(crate) dnd_cursor_x: f64,
-    pub(crate) dnd_cursor_y: f64,
+    pub(crate) dnd_source: Option<wayland_client::protocol::wl_data_source::WlDataSource>,
+    /// Set while it is not yet known whether the compositor took the drag.
+    pub(crate) dnd_probe: Option<crate::dnd_out::ProbeSeen>,
+    /// Drags over, and drops onto, this window (dnd_in.rs).
+    pub(crate) drop_in: crate::dnd_in::DropIn,
 }
 
 impl State {
@@ -163,25 +160,19 @@ impl State {
             cursor_shape_mgr: None,
             cursor_shape_device: None,
             current_cursor_shape: None,
-            ctrl: false,
-            shift: false,
-            logo: false,
-            key_pressed: None,
-            held_key: None,
-            repeat_deadline: std::time::Instant::now(),
-            repeat_started: false,
+            keyboard: None,
+            kbd: crate::keyboard::Keyboard::new(),
             popup_backend: None,
             popup_closed: false,
             data_device_manager: None,
             data_device: None,
             dnd_active: false,
+            dnd_dropped_at: None,
             dnd_paths: Vec::new(),
             dnd_serial: 0,
-            dnd_over_self: false,
-            dnd_offer: None,
-            dnd_drop_on_self: false,
-            dnd_cursor_x: 0.0,
-            dnd_cursor_y: 0.0,
+            dnd_source: None,
+            dnd_probe: None,
+            drop_in: crate::dnd_in::DropIn::default(),
         }
     }
 
@@ -421,6 +412,9 @@ pub fn run(
     let mut open_with_apps: Vec<DesktopApp> = Vec::new();
 
     let mut app = App::new();
+    // Drives and phones arrive from their own thread a few milliseconds
+    // from now; nothing here waits for `lsblk`.
+    app.start_device_watch();
     app.icon_zoom = settings.icon_zoom;
     app.show_hidden = settings.show_hidden;
     app.sort_by = settings.sort_by_enum();
@@ -435,7 +429,9 @@ pub fn run(
     if pick.is_none() {
         app.view_mode = settings.view_mode_enum();
     }
-    app.init_cloud();
+    // A picker is gone in seconds: it opens ~/Cloud like any folder but
+    // must not start (and then abandon) the sync engine.
+    app.start_cloud(pick.is_none());
     if let Some(ref p) = pick {
         // Before the first listing, so the file-type filter applies to it.
         app.pick = Some(p.clone());
@@ -475,15 +471,21 @@ pub fn run(
         let mut pinned: Vec<crate::app::DirectoryTab> = Vec::new();
         for pinned_path in &settings.pinned_tabs {
             let path = std::path::PathBuf::from(pinned_path);
-            if path.is_dir() {
+            // A tab pinned on a phone or network folder is restored without
+            // being looked at: even "is it a folder?" is a trip to the
+            // device there, and the window is not up yet.
+            if crate::fs::is_slow_path(&path) || path.is_dir() {
                 let mut tab = crate::app::DirectoryTab::new(path.clone());
                 tab.pinned = true;
-                tab.pinned_path = Some(path.clone());
-                tab.entries =
-                    crate::fs::list_directory(&path, app.show_hidden, app.sort_by, app.sort_dir);
+                tab.pinned_path = Some(path);
                 pinned.push(tab);
+            } else {
+                // Its drive is unplugged. No tab for it this time, but the
+                // pin is written back instead of being forgotten.
+                app.keep_absent_pin(pinned_path.clone());
             }
         }
+        let restored = pinned.len();
         if !pinned.is_empty() {
             // Prepend pinned tabs before the home tab. The flat fields still
             // describe that home/start tab, which now sits at index `n` —
@@ -497,6 +499,14 @@ pub fn run(
             // open on the first pinned one.
             if start_dir.is_none() {
                 app.switch_tab(0);
+            }
+        }
+        // List them: at once on a local disk, through the off-thread loader
+        // on a slow mount.
+        for idx in 0..restored {
+            // The tab that is shown was listed when it was switched to.
+            if idx != app.current_tab {
+                app.reload_tab(idx);
             }
         }
         // Restore split view exactly as it was left.
@@ -520,7 +530,7 @@ pub fn run(
     let mut file_info = crate::file_info::FileInfoCache::new();
     let mut settings = settings;
 
-    crate::wayland_loop::run_loop(
+    let looped = crate::wayland_loop::run_loop(
         &conn,
         &mut event_queue,
         &mut state,
@@ -538,7 +548,16 @@ pub fn run(
         &mut icon_cache,
         &mut file_info,
         &mut settings,
-    )?;
+    );
+    // Before the error (a dead compositor) can end the process.
+    app.before_exit();
+    // Same for the settings (normal mode only): a compositor that went
+    // away must not take the pinned tabs and the zoom with it.
+    if pick.is_none() {
+        settings.store_session(&mut app);
+        settings.save();
+    }
+    looped?;
 
     eprintln!("[fox] exited main loop");
 
@@ -546,8 +565,10 @@ pub fn run(
     if pick.is_some() {
         match app.pick_result.take() {
             Some(PickResult::Selected(paths)) => {
-                for p in &paths {
-                    println!("{}", p.display());
+                // Exact bytes, in the framing the caller asked for.
+                let print0 = pick.as_ref().is_some_and(|p| p.print0);
+                if !crate::pick_output::print(&paths, print0) {
+                    std::process::exit(1);
                 }
                 return Ok(());
             }
@@ -557,46 +578,6 @@ pub fn run(
             }
         }
     }
-
-    // Save settings on exit (normal mode only)
-    // Focus the left pane first so the flat fields (zoom/sort/view) describe
-    // the primary pane, and the right pane's state parks where we can read it.
-    app.focus_pane(crate::app::PaneSide::Left);
-    settings.icon_zoom = app.icon_zoom;
-    settings.show_hidden = app.show_hidden;
-    settings.set_sort_by(app.sort_by);
-    settings.set_sort_dir(app.sort_dir);
-    settings.set_view_mode(app.view_mode);
-    settings.split_open = app.split.is_some();
-    settings.split_ratio = app.split_ratio;
-    if let Some(sp) = &app.split {
-        settings.split_right_path = sp.right_tab.path.to_string_lossy().to_string();
-        settings.split_right_view = match sp.parked_view.view_mode {
-            crate::app::ViewMode::Grid => "grid",
-            crate::app::ViewMode::List => "list",
-            crate::app::ViewMode::Tree => "tree",
-        }
-        .to_string();
-    }
-    // Intentionally do NOT persist the window size — Fox always opens at the
-    // default size (settings.rs) regardless of any in-session resize.
-    // Overwrite with defaults so stale values in the on-disk config get wiped.
-    let defaults = Settings::default();
-    settings.window_width = defaults.window_width;
-    settings.window_height = defaults.window_height;
-    settings.pinned_tabs = app
-        .tabs
-        .iter()
-        .filter(|t| t.pinned)
-        .map(|t| {
-            t.pinned_path
-                .as_ref()
-                .unwrap_or(&t.path)
-                .to_string_lossy()
-                .to_string()
-        })
-        .collect();
-    settings.save();
 
     Ok(())
 }

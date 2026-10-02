@@ -6,7 +6,6 @@ use lntrn_ui::gpu::{ContextMenu, InteractionContext, MenuEvent, MenuItem, Waylan
 use crate::app::{App, ContextTarget};
 use crate::desktop::{self, DesktopApp};
 use crate::fs::SortBy;
-use crate::layout::build_sidebar_layout;
 use crate::settings::Settings;
 use crate::wayland::State;
 use crate::{
@@ -17,8 +16,8 @@ use crate::{
     CTX_NEW_FOLDER_PLAIN, CTX_NEW_FOLDER_PURPLE, CTX_NEW_FOLDER_RED, CTX_NEW_FOLDER_YELLOW,
     CTX_NEXT_TAB, CTX_OPEN, CTX_OPEN_AS_ROOT, CTX_OPEN_LOCATION, CTX_OPEN_TERMINAL, CTX_OPEN_WITH,
     CTX_OPEN_WITH_BASE, CTX_PASTE, CTX_PREV_TAB, CTX_PROPERTIES, CTX_REMOVE_FAVORITE, CTX_RENAME,
-    CTX_SELECT_ALL, CTX_SHOW_HIDDEN, CTX_SORT_BY, CTX_SORT_DATE, CTX_SORT_NAME, CTX_SORT_SIZE,
-    CTX_SORT_TYPE, CTX_TRASH,
+    CTX_ROOT_MODE, CTX_SELECT_ALL, CTX_SHOW_HIDDEN, CTX_SORT_BY, CTX_SORT_DATE, CTX_SORT_NAME,
+    CTX_SORT_SIZE, CTX_SORT_TYPE, CTX_TRASH,
 };
 
 use super::{apply_sort_selection, sort_menu_items};
@@ -32,6 +31,7 @@ fn build_item_menu(
     is_image: bool,
     allow_rename: bool,
     in_trash: bool,
+    root_offered: bool,
     has_clipboard: bool,
     open_with_apps: &[DesktopApp],
     fav_state: FavoriteState,
@@ -45,29 +45,43 @@ fn build_item_menu(
             .collect();
         v.push(MenuItem::submenu(CTX_OPEN_WITH, "Open With", children));
     }
-    v.push(MenuItem::action(CTX_OPEN_AS_ROOT, "Open as Root"));
+    // A folder only: it is opened with root mode on for it. Fox cannot
+    // open a file as root, so a file's menu does not pretend to.
+    if is_dir && root_offered {
+        v.push(MenuItem::action(CTX_OPEN_AS_ROOT, "Open as Root"));
+    }
     v.push(MenuItem::separator());
     v.push(MenuItem::action_with(CTX_CUT, "Cut", "Ctrl+X"));
     v.push(MenuItem::action_with(CTX_COPY, "Copy", "Ctrl+C"));
     if has_clipboard {
         v.push(MenuItem::action_with(CTX_PASTE, "Paste", "Ctrl+V"));
     }
-    v.push(MenuItem::action(CTX_DUPLICATE, "Duplicate"));
+    // Nothing is made inside the Trash: a duplicate, an archive or an
+    // unpacked folder there would have no restore record.
+    if !in_trash {
+        v.push(MenuItem::action(CTX_DUPLICATE, "Duplicate"));
+    }
     v.push(MenuItem::separator());
     v.push(MenuItem::action(CTX_COPY_PATH, "Copy Path"));
     v.push(MenuItem::action(CTX_COPY_NAME, "Copy Name"));
     v.push(MenuItem::separator());
-    if is_archive {
+    let group_start = v.len();
+    if is_archive && !in_trash {
         v.push(MenuItem::action(CTX_EXTRACT, "Extract Here"));
     }
-    v.push(MenuItem::action(CTX_COMPRESS, "Compress"));
+    if !in_trash {
+        v.push(MenuItem::action(CTX_COMPRESS, "Compress"));
+    }
     if is_image {
         v.push(MenuItem::action(
             crate::CTX_SET_WALLPAPER,
             "Set as Wallpaper",
         ));
     }
-    v.push(MenuItem::separator());
+    // In the Trash this group can be empty: no second separator then.
+    if v.len() > group_start {
+        v.push(MenuItem::separator());
+    }
     if allow_rename {
         v.push(MenuItem::action(CTX_RENAME, "Rename"));
     }
@@ -94,6 +108,13 @@ fn build_item_menu(
     }
     v.push(MenuItem::action(CTX_PROPERTIES, "Properties"));
     v
+}
+
+/// Whether the menus offer root mode in the folder shown: not in a file
+/// chooser, not in the Trash, and not on a phone or a network folder, which
+/// root cannot see. (`App::enter_root_mode` refuses the same places.)
+fn root_offered(app: &App) -> bool {
+    app.pick.is_none() && !app.in_trash() && !crate::fs::is_slow_path(&app.current_dir)
 }
 
 /// Mini title bar at the top of the content-area context menu (terminal
@@ -137,23 +158,17 @@ pub(crate) fn handle_right_click(
     }
 
     // Rebuild the sidebar layout so hit-tests match what's currently on
-    // screen (collapsed sections, favorites count, etc.).
-    let sb = build_sidebar_layout(
-        s,
-        app.sidebar_places().len(),
-        app.sidebar_favorites().len(),
-        app.drives.len(),
-        app.phones.len(),
-        app.places_collapsed,
-        app.favorites_collapsed,
-        app.devices_collapsed,
-    );
+    // screen (collapsed sections, favorites count, how far it is scrolled).
+    // A row scrolled out of the sidebar's strip is not under the pointer,
+    // whatever its rect says: the pointer is then on the nav or status bar.
+    let sb = app.sidebar_layout(hf, s);
+    let in_sidebar = sb.viewport.contains(cx, cy);
 
     // ── Sidebar places: right-click → place-specific menu ───────────────
     // Currently only the Trash place gets a menu (Empty Trash). Other places
     // could grow their own actions later.
     for (i, r) in sb.place_items.iter().enumerate() {
-        if r.contains(cx, cy) {
+        if in_sidebar && r.contains(cx, cy) {
             let Some(place) = app.sidebar_places().get(i) else {
                 return;
             };
@@ -175,7 +190,7 @@ pub(crate) fn handle_right_click(
 
     // ── Sidebar favorites: right-click → remove ─────────────────────────
     for (i, r) in sb.favorite_items.iter().enumerate() {
-        if r.contains(cx, cy) {
+        if in_sidebar && r.contains(cx, cy) {
             app.context_target = Some(ContextTarget::Favorite(i));
             let items = vec![
                 MenuItem::action(CTX_OPEN, "Open"),
@@ -196,7 +211,7 @@ pub(crate) fn handle_right_click(
 
     // ── Sidebar drives: right-click → eject / format / properties ───────
     for (i, r) in sb.drive_items.iter().enumerate() {
-        if r.contains(cx, cy) {
+        if in_sidebar && r.contains(cx, cy) {
             let drive = app.drives[i].clone();
             let mut items = vec![
                 MenuItem::action(CTX_DRIVE_FORMAT, "Format to ext4…"),
@@ -253,9 +268,12 @@ pub(crate) fn handle_right_click(
     // Search mode: use list-based hit detection against search_results
     if app.searching && !app.search_buf.is_empty() {
         let row_h = crate::layout::search_list_row_h(s, app.icon_zoom);
-        let hdr_h = 32.0 * crate::layout::list_zoom_multiplier(app.icon_zoom) * s;
+        let hdr_h = crate::layout::list_header_h(s, app.icon_zoom);
         let base_y = cr.y - app.scroll_offset;
-        let clicked_idx = (0..app.search_results.len()).find(|&i| {
+        // Below the column header only: a row scrolled under it is not
+        // what the pointer is on.
+        let on_rows = crate::layout::list_rows_rect(cr, s, app.icon_zoom).contains(cx, cy);
+        let clicked_idx = (0..app.search_results.len()).filter(|_| on_rows).find(|&i| {
             let y = base_y + hdr_h + i as f32 * row_h;
             Rect::new(cr.x, y, cr.w, row_h).contains(cx, cy)
         });
@@ -395,6 +413,7 @@ pub(crate) fn handle_right_click(
                 is_image,
                 true,
                 app.in_trash(),
+                root_offered(app),
                 has_clipboard,
                 open_with_apps,
                 fav_state,
@@ -440,6 +459,7 @@ pub(crate) fn handle_right_click(
                 is_image,
                 false,
                 app.in_trash(),
+                root_offered(app),
                 has_clipboard,
                 open_with_apps,
                 fav_state,
@@ -486,6 +506,15 @@ pub(crate) fn handle_right_click(
             v.push(MenuItem::separator());
             v.push(MenuItem::action(CTX_SELECT_ALL, "Select All"));
             v.push(MenuItem::action(CTX_OPEN_TERMINAL, "Open Terminal Here"));
+            // Root mode for the folder shown, and the way back out of it
+            // (the ROOT badge in the nav bar is the other).
+            if app.root_mode() {
+                v.push(MenuItem::separator());
+                v.push(MenuItem::action(CTX_ROOT_MODE, "Leave Root Mode"));
+            } else if root_offered(app) {
+                v.push(MenuItem::separator());
+                v.push(MenuItem::action_danger(CTX_ROOT_MODE, "Root Mode Here"));
+            }
             v
         }
     };
@@ -567,15 +596,15 @@ pub(crate) fn handle_ctx_event(
                                 app.close_search();
                                 app.navigate_to(path);
                             } else {
-                                crate::desktop::xdg_open(path);
+                                app.open_file(path);
                             }
                         }
                     } else if let Some(ContextTarget::Path(path)) = app.context_target.clone() {
-                        // Nested tree row — open via xdg-open (dirs navigate, files launch)
-                        if path.is_dir() {
+                        // Nested tree row: dirs navigate, files launch.
+                        if app.is_folder(&path) {
                             app.navigate_to(path);
                         } else {
-                            crate::desktop::xdg_open(path);
+                            app.open_file(path);
                         }
                     } else {
                         app.open_selected();
@@ -600,13 +629,9 @@ pub(crate) fn handle_ctx_event(
                         app.start_rename(idx);
                     }
                 }
-                CTX_TRASH => {
-                    if app.in_trash() {
-                        app.delete_selected();
-                    } else {
-                        app.trash_selected();
-                    }
-                }
+                // Decides per item: a trashed item is deleted for good
+                // (after asking), anything else goes to the Trash.
+                CTX_TRASH => app.trash_selected(),
                 crate::CTX_RESTORE => app.restore_selected(),
                 CTX_COPY_PATH => {
                     let text = match &app.context_target {
@@ -666,6 +691,7 @@ pub(crate) fn handle_ctx_event(
                 CTX_COMPRESS => app.compress_selected(),
                 CTX_EXTRACT => app.extract_selected(),
                 CTX_OPEN_AS_ROOT => app.open_as_root(),
+                CTX_ROOT_MODE => app.toggle_root_mode(),
                 CTX_CHANGE_ICON => {
                     // Spawn a file picker to choose an icon image
                     let folder_path = match app.context_target.clone() {
@@ -674,28 +700,21 @@ pub(crate) fn handle_ctx_event(
                         {
                             Some(app.entries[idx].path.clone())
                         }
-                        Some(crate::app::ContextTarget::Path(path)) if path.is_dir() => Some(path),
+                        // A nested tree row: its entry says what it is,
+                        // without asking the disk.
+                        Some(crate::app::ContextTarget::Path(path)) if app.is_folder(&path) => {
+                            Some(path)
+                        }
                         _ => None,
                     };
                     if let Some(folder_path) = folder_path {
+                        let refresh = app.refresh_flag();
                         std::thread::spawn(move || {
-                            let output = std::process::Command::new("lntrn-file-manager")
-                                .args([
-                                    "--pick",
-                                    "--title",
-                                    "Choose Folder Icon",
-                                    "--filters",
-                                    "Images:*.png,*.svg,*.jpg,*.jpeg,*.webp,*.ico",
-                                ])
-                                .output();
-                            if let Ok(out) = output {
-                                if out.status.success() {
-                                    let chosen =
-                                        String::from_utf8_lossy(&out.stdout).trim().to_string();
-                                    if !chosen.is_empty() {
-                                        crate::icons::set_folder_icon(&folder_path, &chosen);
-                                    }
-                                }
+                            if crate::pick_output::choose_folder_icon(&folder_path) {
+                                // Listings carry the attribute: have them
+                                // read again.
+                                refresh.store(true, std::sync::atomic::Ordering::SeqCst);
+                                crate::bg::wake();
                             }
                         });
                     }
@@ -728,12 +747,7 @@ pub(crate) fn handle_ctx_event(
                             None
                         };
                         if let Some(path) = path {
-                            if let Some(mut props) =
-                                crate::properties::FileProperties::from_path(&path)
-                            {
-                                props.populate_media_info(file_info);
-                                app.properties = Some(props);
-                            }
+                            app.open_properties(&path, file_info);
                         }
                     }
                 }
@@ -784,8 +798,7 @@ pub(crate) fn handle_ctx_event(
                     let path = target_path_for_favorite(app);
                     if let Some(p) = path {
                         if app.add_favorite(p) {
-                            settings.favorites = app.favorites_paths();
-                            settings.save();
+                            app.persist_favorites(settings);
                         }
                     }
                 }
@@ -801,8 +814,7 @@ pub(crate) fn handle_ctx_event(
                         }
                     }
                     if changed {
-                        settings.favorites = app.favorites_paths();
-                        settings.save();
+                        app.persist_favorites(settings);
                     }
                 }
                 CTX_EMPTY_TRASH => app.empty_trash(),
@@ -814,16 +826,22 @@ pub(crate) fn handle_ctx_event(
                 CTX_SORT_TYPE => apply_sort_selection(app, settings, SortBy::Type),
                 id if id >= CTX_OPEN_WITH_BASE => {
                     let app_idx = (id - CTX_OPEN_WITH_BASE) as usize;
-                    if app_idx < open_with_apps.len() {
-                        if let Some(ContextTarget::SearchItem(idx)) = &app.context_target {
-                            if let Some(entry) = app.search_results.get(*idx) {
-                                desktop::launch_app(&open_with_apps[app_idx].exec, &entry.path);
-                            }
-                        } else {
+                    if let Some(chosen) = open_with_apps.get(app_idx) {
+                        let files = match &app.context_target {
+                            Some(ContextTarget::SearchItem(idx)) => app
+                                .search_results
+                                .get(*idx)
+                                .map(|entry| vec![entry.path.clone()])
+                                .unwrap_or_default(),
                             // Uses `selected_paths()` so the path override from a
                             // nested-tree-row right-click is honored too.
-                            for file_path in app.selected_paths() {
-                                desktop::launch_app(&open_with_apps[app_idx].exec, &file_path);
+                            _ => app.selected_paths(),
+                        };
+                        // All of them in one call: an app that takes a list
+                        // of files opens them in one window.
+                        if !files.is_empty() {
+                            if let Err(why) = desktop::launch_app(chosen, &files) {
+                                app.show_message("Could not open", why);
                             }
                         }
                     }
@@ -842,6 +860,9 @@ pub(crate) fn handle_ctx_event(
             if id == CTX_SHOW_HIDDEN {
                 app.show_hidden = checked;
                 settings.show_hidden = checked;
+                if app.pick.is_none() {
+                    settings.save();
+                }
                 app.reload();
                 // Menu stays open — it now shares a row group with the icon
                 // size slider, so the user can adjust both in one visit.
@@ -868,7 +889,7 @@ fn free_name(dir: &std::path::Path, base: &str) -> PathBuf {
 /// fallback: the file gets created later via sudo + a reload happens then,
 /// so we skip undo/rename (no path-of-clean-creation to track).
 fn new_folder_or_prompt(app: &mut App, target: PathBuf, color: Option<&'static str>) {
-    if app.root_mode {
+    if app.root_mode() {
         app.priv_run(crate::sudo::PendingPrivOp::NewFolder {
             path: target,
             color,
@@ -899,7 +920,7 @@ fn new_folder_or_prompt(app: &mut App, target: PathBuf, color: Option<&'static s
 }
 
 fn new_file_or_prompt(app: &mut App, target: PathBuf) {
-    if app.root_mode {
+    if app.root_mode() {
         app.priv_run(crate::sudo::PendingPrivOp::NewFile(target));
         return;
     }

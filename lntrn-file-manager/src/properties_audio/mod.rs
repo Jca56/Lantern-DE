@@ -4,8 +4,10 @@
 //! Decoding, picking and saving run off-thread; `poll` collects results
 //! once per frame.
 
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -17,7 +19,11 @@ use crate::{
     ZONE_PROPS_AUDIO_REVERT, ZONE_PROPS_AUDIO_SAVE,
 };
 
+mod activity;
 mod draw;
+
+pub use activity::save_in_flight;
+use activity::{PickWatch, Status};
 
 // evdev keycodes — same values wayland_actions/key.rs matches on.
 const KEY_ESC: u32 = 1;
@@ -31,8 +37,6 @@ const KEY_END: u32 = 107;
 const KEY_DELETE: u32 = 111;
 
 pub const FIELD_COUNT: usize = 8;
-/// Section body layout (art tile + six rows + facts line + action bar).
-const STATUS_TTL_SECS: f32 = 3.0;
 /// Preview texture edge — plenty for the tile at any scale.
 const PREVIEW_PX: u32 = 512;
 /// Chosen artwork above this size is re-encoded before embedding.
@@ -100,24 +104,23 @@ pub struct AudioEdit {
     decoding: bool,
     pick: Slot<Option<Artwork>>,
     picking: bool,
+    /// Set by the picker thread as soon as the picker process has exited.
+    pick_child_done: Arc<AtomicBool>,
+    watch: PickWatch,
     save: Slot<Result<AudioMeta, String>>,
     saving: bool,
-    status: Option<(String, bool, Instant)>,
+    status: Option<Status>,
+    /// The status was re-broken to fit while drawing: its height changed,
+    /// so one more frame is due.
+    relayout: Cell<bool>,
     /// Tile rect from the last draw — render.rs paints the texture here.
     pub art_rect: Option<Rect>,
 }
 
 impl AudioEdit {
-    /// None for unsupported extensions or unreadable files (logged).
-    pub fn load(path: &Path) -> Option<Self> {
-        audio_tags::container_for(path)?;
-        let meta = match audio_tags::read(path) {
-            Ok(m) => m,
-            Err(e) => {
-                eprintln!("[fox] audio tags: {}: {e}", path.display());
-                return None;
-            }
-        };
+    /// The editor for tags that were already read (props_load.rs reads them
+    /// on its worker; nothing here touches the file).
+    pub fn from_meta(path: &Path, meta: AudioMeta) -> Self {
         let mut this = Self {
             path: path.to_path_buf(),
             summary: meta.format.summary(),
@@ -133,16 +136,21 @@ impl AudioEdit {
             decoding: false,
             pick: Arc::new(Mutex::new(None)),
             picking: false,
+            pick_child_done: Arc::new(AtomicBool::new(false)),
+            watch: PickWatch::default(),
             save: Arc::new(Mutex::new(None)),
             saving: false,
             status: None,
+            relayout: Cell::new(false),
             art_rect: None,
         };
         this.sync_bufs();
+        // Say up front when a save would be refused, not after the typing.
+        this.reset_status();
         if let Some(art) = this.meta.tags.artwork.clone() {
             this.spawn_decode(art.data);
         }
-        Some(this)
+        this
     }
 
     fn sync_bufs(&mut self) {
@@ -164,7 +172,7 @@ impl AudioEdit {
 
     fn current_tags(&self) -> AudioTags {
         let b = &self.bufs;
-        let key = b[Field::Key as usize].trim();
+        let key = keys::to_store(&b[Field::Key as usize], &self.meta.tags.key);
         AudioTags {
             title: b[Field::Title as usize].trim().into(),
             artist: b[Field::Artist as usize].trim().into(),
@@ -173,10 +181,7 @@ impl AudioEdit {
             year: b[Field::Year as usize].trim().into(),
             track: b[Field::Track as usize].trim().into(),
             bpm: b[Field::Bpm as usize].trim().into(),
-            // Store the canonical musical spelling; the chip shows Camelot.
-            key: keys::normalize(key)
-                .map(|k| k.musical.to_string())
-                .unwrap_or_else(|| key.to_string()),
+            key,
             artwork: match &self.art_change {
                 None => self.meta.tags.artwork.clone(),
                 Some(change) => change.clone(),
@@ -202,15 +207,6 @@ impl AudioEdit {
                 .any(|(b, s)| b.trim() != s.trim())
     }
 
-    /// True while a background thread is working — keeps the loop awake.
-    pub fn busy(&self) -> bool {
-        self.decoding || self.picking || self.saving
-    }
-
-    fn set_status(&mut self, msg: &str, is_err: bool) {
-        self.status = Some((msg.to_string(), is_err, Instant::now()));
-    }
-
     // ── Actions ─────────────────────────────────────────────────────────
 
     pub fn save(&mut self) {
@@ -221,11 +217,18 @@ impl AudioEdit {
         self.focused = None;
         self.status = None;
         let tags = self.current_tags();
+        // What the dialog loaded: only what differs from this is written.
+        let shown = self.meta.tags.clone();
         let path = self.path.clone();
         let slot = self.save.clone();
+        let in_flight = activity::SaveInFlight::begin();
         std::thread::spawn(move || {
-            let res = audio_tags::write(&path, &tags).and_then(|_| audio_tags::read(&path));
+            // Dropped when the thread ends, however it ends.
+            let _in_flight = in_flight;
+            let res = audio_tags::write_from(&path, &shown, &tags)
+                .and_then(|_| audio_tags::read(&path));
             *slot.lock().unwrap() = Some(res);
+            crate::bg::wake();
         });
     }
 
@@ -233,7 +236,7 @@ impl AudioEdit {
         self.art_change = None;
         self.texture = self.saved_texture.clone();
         self.sync_bufs();
-        self.status = None;
+        self.reset_status();
     }
 
     pub fn pick_artwork(&mut self) {
@@ -241,26 +244,20 @@ impl AudioEdit {
             return;
         }
         self.picking = true;
+        // A flag of its own per pick: a thread from an earlier pick must
+        // not be able to raise this one's.
+        self.pick_child_done = Arc::new(AtomicBool::new(false));
+        let child_done = self.pick_child_done.clone();
         let slot = self.pick.clone();
         std::thread::spawn(move || {
-            let out = std::process::Command::new("lntrn-file-manager")
-                .args([
-                    "--pick",
-                    "--title",
-                    "Choose Artwork",
-                    "--filters",
-                    "Images:*.png,*.jpg,*.jpeg,*.webp,*.bmp,*.gif",
-                ])
-                .output();
-            let art = out.ok().filter(|o| o.status.success()).and_then(|o| {
-                let p = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                if p.is_empty() {
-                    None
-                } else {
-                    prepare_artwork(Path::new(&p))
-                }
-            });
+            let picked = crate::pick_output::choose_file(
+                "Choose Artwork",
+                "Images:*.png,*.jpg,*.jpeg,*.webp,*.bmp,*.gif",
+            );
+            child_done.store(true, Ordering::Relaxed);
+            let art = picked.and_then(|p| prepare_artwork(&p));
             *slot.lock().unwrap() = Some(art);
+            crate::bg::wake();
         });
     }
 
@@ -279,13 +276,22 @@ impl AudioEdit {
         let slot = self.decode.clone();
         std::thread::spawn(move || {
             let d = decode_preview(&data);
-            *slot.lock().unwrap() = Some((gen, d));
+            // A slower decode from an earlier pick must not land on top of
+            // a newer one's result: that one would then never be collected
+            // and `decoding` (and the 60 fps redraw with it) never end.
+            let mut held = slot.lock().unwrap();
+            if held.as_ref().is_none_or(|(have, _)| *have < gen) {
+                *held = Some((gen, d));
+            }
+            drop(held);
+            crate::bg::wake();
         });
     }
 
     /// Collect thread results + upload textures. Called early in
     /// render_frame, before any texture borrows are taken.
     pub fn poll(&mut self, gpu: &GpuContext, tex: &TexturePass) {
+        self.watch.frame_started(self.picking, Instant::now());
         // Not while a save is in flight: the save's result resets the art
         // state, and an artwork picked meanwhile would be shown as saved
         // without ever having been written. It is collected right after.
@@ -334,15 +340,13 @@ impl AudioEdit {
                         self.sync_bufs();
                         self.set_status("Saved", false);
                     }
+                    // A refusal already says that nothing was written.
+                    Err(e) if audio_tags::is_refusal(&e) => self.set_status(&e, true),
                     Err(e) => self.set_status(&format!("Save failed: {e}"), true),
                 }
             }
         }
-        if let Some((_, is_err, at)) = &self.status {
-            if !is_err && at.elapsed().as_secs_f32() > STATUS_TTL_SECS {
-                self.status = None;
-            }
-        }
+        self.expire_status();
     }
 
     // ── Input ───────────────────────────────────────────────────────────

@@ -3,12 +3,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use lntrn_ui::gpu::{
-    ContextMenu, FoxPalette, InteractionContext, MenuEvent, PopupSurface, ScrollArea, Scrollbar,
+    ContextMenu, FoxPalette, InteractionContext, MenuEvent, PopupSurface, ScrollArea,
 };
-use wayland_client::{
-    protocol::{wl_data_device_manager, wl_surface},
-    Connection, EventQueue, QueueHandle,
-};
+use wayland_client::{protocol::wl_surface, Connection, EventQueue, QueueHandle};
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1;
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::shell::client::xdg_toplevel;
@@ -23,7 +20,7 @@ use crate::settings::Settings;
 use crate::wayland::State;
 use crate::wayland_actions::{
     edge_resize, handle_click, handle_ctx_event, handle_drop, handle_key, handle_right_click,
-    resize_edge_to_cursor_shape, update_rubber_band,
+    resize_edge_to_cursor_shape, text_entry_active, update_rubber_band,
 };
 use crate::{
     ClickAction, Gpu, CTX_NEW_FOLDER_BLUE, CTX_NEW_FOLDER_GREEN, CTX_NEW_FOLDER_ORANGE,
@@ -33,7 +30,7 @@ use crate::{
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_loop(
-    _conn: &Connection,
+    conn: &Connection,
     event_queue: &mut EventQueue<State>,
     state: &mut State,
     qh: &QueueHandle<State>,
@@ -65,15 +62,9 @@ pub(crate) fn run_loop(
     let mut bg_opacity = lntrn_theme::background_opacity();
     *palette = FoxPalette::current();
     let mut last_theme_poll = Instant::now();
-    let mut last_cloud_status = app.cloud_sync.as_ref().map(|c| c.status());
-    let mut last_dir_check = Instant::now();
-    let mut last_dir_mtime: Option<std::time::SystemTime> = None;
-    let mut last_dir_path = app.current_dir.clone();
-    let mut dir_watcher = crate::dir_watch::DirWatcher::new();
-    let mut git = crate::git_status::GitStatus::new();
-    let mut git_dir = std::path::PathBuf::new();
-    let mut last_git_poll = Instant::now();
-    let mut last_devices_check = Instant::now();
+    // Watchers, git badges, and the results of off-thread work: everything
+    // that has to move on while no frame is drawn (housekeeping.rs).
+    let mut hk = crate::housekeeping::Housekeeping::new();
     let mut last_tab_click: Option<(usize, Instant)> = None;
     // Pinned tab drag reorder state
     let mut tab_drag: Option<usize> = None; // index of tab being dragged
@@ -83,6 +74,8 @@ pub(crate) fn run_loop(
     let mut fav_drag_press: Option<(usize, f32)> = None;
     // Scrollbar thumb drag: Some(grab_dy) = pointer offset from the thumb top.
     let mut scrollbar_drag: Option<f32> = None;
+    // The same for the sidebar's and the Properties dialog's scrollbars.
+    let mut aside_drag: Option<crate::scrollbar::AsideDrag> = None;
     // Smooth wheel scrolling: offset eases toward this target each frame.
     // `scroll_anim_last` detects external offset writes (navigation, zoom,
     // scrollbar drag) so the animation yields instead of yanking back.
@@ -94,13 +87,51 @@ pub(crate) fn run_loop(
         state.width, state.height
     );
 
-    while state.running {
-        // Event dispatch. Animating: short 16ms poll for ~60Hz redraws. Idle:
-        // poll up to 500ms so we still wake periodically to live-poll
-        // `[appearance].theme` from disk. Crucially we poll() on the wayland
-        // fd instead of thread::sleep so input events wake the loop
-        // immediately — sleeping made every click/scroll feel ~500ms laggy.
-        let timeout_ms: i32 = if needs_anim { 16 } else { 500 };
+    loop {
+        // Every close path (title bar, Super+Q, the menu, a picker's
+        // result) only clears `running`. While a copy or move is in flight
+        // the window must not vanish under it: exiting would kill the
+        // worker in the middle of a file. `intercept_close` asks the user
+        // instead, and `close_ready` lets go once the worker is idle.
+        if app.close_ready() {
+            break;
+        }
+        if !state.running {
+            if !app.intercept_close() {
+                break;
+            }
+            state.running = true;
+            // The question has to be drawn: the compositor hides a window
+            // it asked to close until the window commits a new frame.
+            state.frame_done = true;
+        }
+        // Event dispatch. A frame already owed: do not wait at all.
+        // Animating: short 16ms poll for ~60Hz redraws. Idle: poll up to
+        // 500ms so we still wake periodically to live-poll
+        // `[appearance].theme` from disk, and no longer than until the next
+        // thing scheduled (a debounced reload, a key repeat), which is
+        // looked at without drawing frames while it waits. Crucially we
+        // poll() on the wayland fd instead of thread::sleep so input events
+        // wake the loop immediately — sleeping made every click/scroll feel
+        // ~500ms laggy.
+        let timeout_ms: i32 = if state.frame_done {
+            0
+        } else if needs_anim {
+            16
+        } else {
+            // The zoom slider moves many times a second. Its value is
+            // written here, once things are quiet, instead of only at exit
+            // (which a session that is killed never reaches).
+            if app.pick.is_none() && settings.icon_zoom != app.icon_zoom {
+                settings.icon_zoom = app.icon_zoom;
+                settings.save();
+            }
+            let repeat = state.kbd.repeat_at().filter(|_| text_entry_active(app));
+            let wake_at = crate::housekeeping::sooner(hk.wake_at(), repeat);
+            // A changed file waiting for its second probe (file_info/cache.rs).
+            let wake_at = crate::housekeeping::sooner(wake_at, file_info.wake_at());
+            crate::housekeeping::poll_timeout_ms(Instant::now(), wake_at, 500)
+        };
         match event_queue.flush() {
             Ok(()) => {}
             // A full socket is not a dead connection: the rest goes out on a
@@ -114,21 +145,24 @@ pub(crate) fn run_loop(
         }
         if let Some(guard) = event_queue.prepare_read() {
             let fd = guard.connection_fd().as_raw_fd();
-            // Poll the watcher's eventfd alongside the wayland fd so a file
-            // landing in the current directory wakes the loop immediately.
+            // Poll the watchers' eventfds alongside the wayland fd so a file
+            // landing in a shown directory wakes the loop immediately, and
+            // the wake fd of the off-thread work (bg.rs) so its results do.
+            // (A negative fd is skipped by poll.)
+            let pollin = |fd| libc::pollfd {
+                fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            let [watch_fd, inactive_watch_fd] = hk.fds();
             let mut pfds = [
-                libc::pollfd {
-                    fd,
-                    events: libc::POLLIN,
-                    revents: 0,
-                },
-                libc::pollfd {
-                    fd: dir_watcher.fd(),
-                    events: libc::POLLIN,
-                    revents: 0,
-                },
+                pollin(fd),
+                pollin(watch_fd),
+                pollin(inactive_watch_fd),
+                pollin(crate::bg::wake_fd().unwrap_or(-1)),
             ];
-            let ret = unsafe { libc::poll(pfds.as_mut_ptr(), 2, timeout_ms) };
+            let nfds = pfds.len() as libc::nfds_t;
+            let ret = unsafe { libc::poll(pfds.as_mut_ptr(), nfds, timeout_ms) };
             // Any revents (POLLIN, but also POLLHUP/POLLERR on compositor
             // death) → read, so connection errors surface in dispatch and
             // the loop exits instead of busy-spinning on a dead fd.
@@ -137,29 +171,23 @@ pub(crate) fn run_loop(
             } else {
                 drop(guard);
             }
-            if ret > 0 && pfds[1].revents & libc::POLLIN != 0 {
-                dir_watcher.drain_fd();
+            // What woke us is collected below, frame or no frame.
+            if ret > 0 && (pfds[1].revents | pfds[2].revents) & libc::POLLIN != 0 {
+                hk.drain_fds();
+            }
+            if ret > 0 && pfds[3].revents & libc::POLLIN != 0 {
+                crate::bg::drain_wake();
             }
         }
         if let Err(e) = event_queue.dispatch_pending(state) {
             eprintln!("[fox] dispatch_pending error: {e}");
             break;
         }
-        // Cap rendering at ~60Hz. Pointer motion events fire at ~1000Hz on
-        // modern mice; without this cap each event triggered a render and
-        // melted the CPU. Sleeping the remaining frame budget lets queued
-        // events coalesce into one render per frame.
-        let since_last = last_frame.elapsed();
-        let frame_budget = Duration::from_millis(16);
-        if since_last < frame_budget {
-            std::thread::sleep(frame_budget - since_last);
-        }
         // Only force a render when something is actually animating. When idle
         // we leave `frame_done` to the event-driven dispatch handlers (pointer
-        // motion, keys, configure, etc.) so an untouched window renders ZERO
-        // frames instead of a constant 60fps GPU pass — that idle spin was
-        // melting the laptop. The 16ms cap above still coalesces high-rate
-        // pointer motion into one frame during interaction.
+        // motion, keys, configure, etc.) and to the housekeeping below, so an
+        // untouched window renders ZERO frames instead of a constant 60fps
+        // GPU pass — that idle spin was melting the laptop.
         if needs_anim {
             state.frame_done = true;
         }
@@ -176,18 +204,56 @@ pub(crate) fn run_loop(
                 bg_opacity = lntrn_theme::background_opacity();
                 state.frame_done = true; // force a render this iteration
             }
-            // The sync thread changes the cloud status pill on its own
-            // schedule; nothing else would redraw an idle window for it.
-            let cloud_status = app.cloud_sync.as_ref().map(|c| c.status());
-            if cloud_status != last_cloud_status {
-                last_cloud_status = cloud_status;
-                state.frame_done = true;
-            }
+        }
+        // A status note that ran out, an archive job that finished on its
+        // own thread: neither produces an event, so look on every wake-up.
+        if app.idle_tick() {
+            state.frame_done = true;
+        }
+        // Folder changes, git results, finished operations and probes: on
+        // every wake-up too, not only when a frame is drawn anyway. In an
+        // idle window a new file used to wait for the pointer to move.
+        if hk.tick(app, file_info) {
+            state.frame_done = true;
+        }
+        // The paths of a drop onto the window have been read.
+        if state.drop_in.poll(app) {
+            state.frame_done = true;
+        }
+        // The Audio section of Properties has a result to show (a save, a
+        // decoded cover, a picked image) or its "Saved" note has run out.
+        if app
+            .properties
+            .as_ref()
+            .and_then(|p| p.audio.as_ref())
+            .is_some_and(|a| a.frame_wanted())
+        {
+            state.frame_done = true;
+        }
+        // A held key is due to repeat into a text field.
+        if text_entry_active(app)
+            && state
+                .kbd
+                .repeat_at()
+                .is_some_and(|due| Instant::now() >= due)
+        {
+            state.frame_done = true;
         }
         if !state.frame_done {
             continue;
         }
         state.frame_done = false;
+
+        // Cap rendering at ~60Hz. Pointer motion events fire at ~1000Hz on
+        // modern mice; without this cap each event triggered a render and
+        // melted the CPU. Sleeping the remaining frame budget lets queued
+        // events coalesce into one render per frame. (Wake-ups that draw
+        // nothing do not sleep: they have no frame to pace.)
+        let since_last = last_frame.elapsed();
+        let frame_budget = Duration::from_millis(16);
+        if since_last < frame_budget {
+            std::thread::sleep(frame_budget - since_last);
+        }
 
         let scale_f = state.fractional_scale() as f32;
         let now = Instant::now();
@@ -329,10 +395,15 @@ pub(crate) fn run_loop(
         if let Some(grab_dy) = scrollbar_drag {
             let content = active_content_rect(app, wf, hf, s);
             let total_h = view_content_height(app, content.w, s);
-            let bar = Scrollbar::new(&content, total_h, app.scroll_offset);
+            let bar = crate::scrollbar::bar(&content, total_h, app.scroll_offset, s);
             app.scroll_offset =
                 bar.offset_for_thumb_y(cy - grab_dy + bar.thumb.h * 0.5, total_h, content.h);
         }
+        if let Some(drag) = &aside_drag {
+            drag.follow(app, cy, hf, s);
+        }
+        // The scrollbar of a cloud dialog's list keeps its own hold.
+        app.cloud_list_drag(cy, s);
 
         // ── Rubber band update + edge auto-scroll ────────────────────────
         if state.pointer_in_surface && app.rubber_band_start.is_some() {
@@ -383,13 +454,9 @@ pub(crate) fn run_loop(
             .as_ref()
             .map_or(false, |sp| sp.divider_drag.is_some())
         {
-            let x0 = crate::layout::sidebar_w(s);
-            let avail = wf - x0 - crate::layout::SPLIT_HANDLE_W * s;
-            if avail > 0.0 {
-                let ratio = ((cx - x0) / avail).clamp(
-                    crate::layout::SPLIT_RATIO_MIN,
-                    crate::layout::SPLIT_RATIO_MAX,
-                );
+            // Stops where the panes do (each keeps a minimum width in
+            // pixels, not just a share of the window).
+            if let Some(ratio) = crate::layout::split_ratio_at(cx, wf, s) {
                 if let Some(sp) = app.split.as_mut() {
                     sp.ratio = ratio;
                 }
@@ -399,7 +466,15 @@ pub(crate) fn run_loop(
 
         // ── Drag detection ──────────────────────────────────────────────
         if state.pointer_in_surface && app.drag_item.is_none() && app.drag_tree_item.is_none() {
-            if let (Some(idx), Some((px, py))) = (app.pending_open, app.press_pos) {
+            // While an earlier drag is still in the compositor's hands (its
+            // receiver may yet ask for the paths), a new one would swap the
+            // paths under it: the press stays a click. (Not for ever: a
+            // receiver that never finishes is given up on.)
+            state.expire_drag_out();
+            let may_drag = !state.dnd_active;
+            if let (Some(idx), Some((px, py))) =
+                (app.pending_open.filter(|_| may_drag), app.press_pos)
+            {
                 let dist = ((cx - px).powi(2) + (cy - py).powi(2)).sqrt();
                 if dist > 5.0 {
                     if app.press_shift {
@@ -446,7 +521,9 @@ pub(crate) fn run_loop(
             // Tree rows arm their own pending slot — indices point into
             // tree_entries, not entries (nested rows have no entries index).
             // Only plain presses arm it, so no shift/rubber-band sub-branch.
-            if let (Some(ti), Some((px, py))) = (app.pending_tree_open, app.press_pos) {
+            if let (Some(ti), Some((px, py))) =
+                (app.pending_tree_open.filter(|_| may_drag), app.press_pos)
+            {
                 let dist = ((cx - px).powi(2) + (cy - py).powi(2)).sqrt();
                 if dist > 5.0 && ti < app.tree_entries.len() {
                     app.drag_tree_item = Some(ti);
@@ -500,34 +577,20 @@ pub(crate) fn run_loop(
             let raw_cy = state.cursor_y as f32;
             let logical_w = state.width as f32;
             let logical_h = state.height as f32;
-            if raw_cx < 0.0 || raw_cy < 0.0 || raw_cx > logical_w || raw_cy > logical_h {
-                if let (Some(mgr), Some(dd), Some(surf)) = (
-                    &state.data_device_manager,
-                    &state.data_device,
-                    &state.surface,
-                ) {
-                    let source = mgr.create_data_source(qh, ());
-                    source.offer("text/uri-list".to_string());
-                    source.offer("text/plain".to_string());
-                    source.set_actions(
-                        wl_data_device_manager::DndAction::Copy
-                            | wl_data_device_manager::DndAction::Move,
-                    );
-                    dd.start_drag(Some(&source), surf, None, state.dnd_serial);
-                    state.dnd_active = true;
-                    // Clear internal drag — compositor owns the drag now
-                    app.drag_item = None;
-                    app.drag_tree_item = None;
-                    app.drag_pos = None;
-                    // …and its grab swallows the button release, so finish
-                    // the press here or the zone capture (and with it all
-                    // hover feedback) stays stuck until the next click.
-                    input.on_left_released();
-                    app.press_shift = false;
-                    app.press_ctrl = false;
-                    app.press_pos = None;
-                    app.suppress_rubber_band = false;
-                }
+            let outside = raw_cx < 0.0 || raw_cy < 0.0 || raw_cx > logical_w || raw_cy > logical_h;
+            if outside && state.hand_off_drag(conn, qh) {
+                // Clear internal drag — compositor owns the drag now
+                app.drag_item = None;
+                app.drag_tree_item = None;
+                app.drag_pos = None;
+                // …and its grab swallows the button release, so finish
+                // the press here or the zone capture (and with it all
+                // hover feedback) stays stuck until the next click.
+                input.on_left_released();
+                app.press_shift = false;
+                app.press_ctrl = false;
+                app.press_pos = None;
+                app.suppress_rubber_band = false;
             }
         }
 
@@ -542,6 +605,14 @@ pub(crate) fn run_loop(
             app.drag_pos = None;
         }
 
+        // ── A drag from outside over the window, or dropped on it ───────
+        let own_drag: &[std::path::PathBuf] = if state.dnd_active {
+            &state.dnd_paths
+        } else {
+            &[]
+        };
+        state.drop_in.frame(conn, app, input, own_drag, wf, hf, s);
+
         // A nested tree row's right-click overrides `selected_paths()` for
         // the menu's actions. Once the menu is gone — action taken, Esc,
         // click outside, compositor dismissal — the override is stale, and
@@ -551,13 +622,15 @@ pub(crate) fn run_loop(
         }
 
         // ── Keyboard ────────────────────────────────────────────────────
-        let key_handled = state.key_pressed.is_some();
-        if let Some(key) = state.key_pressed.take() {
+        // Every press since the last frame, in the order typed and each with
+        // the modifiers it was made with (keyboard.rs).
+        let mut key_handled = false;
+        while let Some(press) = state.kbd.pop() {
+            key_handled = true;
             // Super+F11: "rice mode" — hide/show the title bar (window mode
             // only). The compositor deliberately lets Super+F11 fall through;
             // plain F11 still toggles compositor fullscreen.
-            const KEY_F11: u32 = 87;
-            if state.logo && key == KEY_F11 && !state.desktop_mode {
+            if press.logo && press.key == crate::keyboard::code::F11 && !state.desktop_mode {
                 use std::sync::atomic::Ordering;
                 let hidden = !crate::layout::CHROME_HIDDEN.load(Ordering::Relaxed);
                 crate::layout::CHROME_HIDDEN.store(hidden, Ordering::Relaxed);
@@ -572,46 +645,27 @@ pub(crate) fn run_loop(
                     settings,
                     context_menu,
                     &mut state.popup_backend,
-                    key,
-                    state.ctrl,
-                    state.shift,
+                    press,
                     &mut state.running,
                 );
             }
         }
 
         // Key repeat (for text editing modes). Never in the frame that handled
-        // the press itself: a handler that blocked (cloud sign-in) would
-        // otherwise find the deadline already passed and fire a second time.
-        // And never for keys that commit or dismiss.
+        // the press itself: a handler that blocked would otherwise find the
+        // deadline already passed and fire a second time.
         if key_handled {
-            state.repeat_deadline = Instant::now() + Duration::from_millis(300);
-        }
-        const NO_REPEAT: [u32; 3] = [1, 15, 28]; // Esc, Tab, Enter
-        if let Some(key) = state.held_key.filter(|k| !key_handled && !NO_REPEAT.contains(k)) {
-            if (app.renaming.is_some()
-                || app.path_editing
-                || app.save_name_editing
-                || app.searching
-                || app.sudo_prompt.is_some()
-                || app.cloud_login.is_some())
-                && std::time::Instant::now() >= state.repeat_deadline
-            {
+            state.kbd.defer_repeat(Instant::now());
+        } else if text_entry_active(app) {
+            if let Some(press) = state.kbd.take_repeat(Instant::now()) {
                 handle_key(
                     app,
                     settings,
                     context_menu,
                     &mut state.popup_backend,
-                    key,
-                    state.ctrl,
-                    state.shift,
+                    press,
                     &mut state.running,
                 );
-                let interval = if state.repeat_started { 30 } else { 300 };
-                state.repeat_deadline =
-                    std::time::Instant::now() + std::time::Duration::from_millis(interval);
-                state.repeat_started = true;
-                state.frame_done = true;
             }
         }
 
@@ -631,7 +685,10 @@ pub(crate) fn run_loop(
             let over_inactive = app
                 .inactive_content_rect(wf, hf, s)
                 .filter(|r| r.contains(cx, cy));
-            if let Some(r) = over_inactive {
+            if crate::scrollbar::wheel_aside(app, scroll, cx, cy, hf, s) {
+                // The Properties dialog (open) or the sidebar (under the
+                // pointer) scrolled; the file list stays where it is.
+            } else if let Some(r) = over_inactive {
                 if let Some(total_h) = inactive_view_content_height(app, r.w, s) {
                     if let Some(off) = app.inactive_scroll_mut() {
                         ScrollArea::apply_scroll(off, scroll, total_h, r.h);
@@ -677,6 +734,7 @@ pub(crate) fn run_loop(
                 && app.conflict_dialog.is_none()
                 && app.cloud_login.is_none()
                 && app.drive_dialog.is_none()
+                && !app.op_dialog_open()
             {
                 // Drop confirmation modal — handle buttons (unless a modal
                 // raised later is drawn on top of it; that one gets the click)
@@ -689,6 +747,7 @@ pub(crate) fn run_loop(
                                     drop.sources,
                                     drop.dest_dir,
                                     drop.reload_tab,
+                                    drop.in_pane,
                                 );
                             }
                         }
@@ -699,6 +758,7 @@ pub(crate) fn run_loop(
                                     drop.sources,
                                     drop.dest_dir,
                                     drop.reload_tab,
+                                    drop.in_pane,
                                 );
                             }
                         }
@@ -713,6 +773,7 @@ pub(crate) fn run_loop(
                 && app.conflict_dialog.is_none()
                 && app.cloud_login.is_none()
                 && app.drive_dialog.is_none()
+                && !app.op_dialog_open()
             {
                 // Properties dialog is open (and nothing is stacked on top of
                 // it — a sudo prompt raised by a finishing copy is drawn over
@@ -737,12 +798,18 @@ pub(crate) fn run_loop(
                         {
                             audio.on_zone_pressed(zone);
                         }
+                    } else if zone == crate::ZONE_PROPS_SCROLLBAR {
+                        aside_drag = crate::scrollbar::press_properties(app, cy, s);
                     } else if zone == 802 {
                         // Panel body — keep the dialog open, drop field focus.
                         if let Some(audio) = app.properties.as_mut().and_then(|p| p.audio.as_mut())
                         {
                             audio.focused = None;
                         }
+                    } else {
+                        // The folder icon, the icon picker, the checksum
+                        // row: acted on here, on the press (props_click.rs).
+                        app.properties_pressed(zone);
                     }
                 } else {
                     // Click outside any zone — close
@@ -769,7 +836,7 @@ pub(crate) fn run_loop(
                     // (split pane / pick bar / preview aware).
                     let content = active_content_rect(app, wf, hf, s);
                     let total_h = view_content_height(app, content.w, s);
-                    let bar = Scrollbar::new(&content, total_h, app.scroll_offset);
+                    let bar = crate::scrollbar::bar(&content, total_h, app.scroll_offset, s);
                     let grab_dy = if cy >= bar.thumb.y && cy <= bar.thumb.y + bar.thumb.h {
                         cy - bar.thumb.y
                     } else {
@@ -781,6 +848,10 @@ pub(crate) fn run_loop(
                     scroll_anim = None;
                     // Take input capture so the thumb draws Pressed/Dragging
                     // and other zones stop hovering during the drag.
+                    input.on_left_pressed();
+                    handled_scrollbar = true;
+                } else if input.zone_at(cx, cy) == Some(crate::ZONE_SIDEBAR_SCROLLBAR) {
+                    aside_drag = crate::scrollbar::press_sidebar(app, cy, hf, s);
                     input.on_left_pressed();
                     handled_scrollbar = true;
                 }
@@ -806,6 +877,7 @@ pub(crate) fn run_loop(
                     let prev_favorites_collapsed = app.favorites_collapsed;
                     let prev_devices_collapsed = app.devices_collapsed;
                     let prev_favorites_len = app.sidebar_favorites().len();
+                    let prev_pins = app.pinned_tab_paths();
                     let action = handle_click(
                         input,
                         app,
@@ -819,8 +891,8 @@ pub(crate) fn run_loop(
                         s,
                         bg_opacity,
                         "",
-                        state.ctrl,
-                        state.shift,
+                        state.kbd.ctrl(),
+                        state.kbd.shift(),
                     );
                     let mut settings_dirty = false;
                     if app.preview_open != prev_preview_open {
@@ -839,8 +911,14 @@ pub(crate) fn run_loop(
                         settings.devices_collapsed = app.devices_collapsed;
                         settings_dirty = true;
                     }
-                    if app.sidebar_favorites().len() != prev_favorites_len {
-                        settings.favorites = app.favorites_paths();
+                    let favorites_changed = app.sidebar_favorites().len() != prev_favorites_len;
+                    // A pin is written when it is made, not only at exit: a
+                    // session that ends without a clean close keeps it.
+                    // (A picker restores no pinned tabs: its list is not
+                    // the one in the file.)
+                    let pins = app.pinned_tab_paths();
+                    if pins != prev_pins && app.pick.is_none() {
+                        settings.pinned_tabs = pins;
                         settings_dirty = true;
                     }
                     // Don't persist the forced Tree view from pick mode — it's
@@ -849,7 +927,10 @@ pub(crate) fn run_loop(
                         settings.set_view_mode(app.view_mode);
                         settings_dirty = true;
                     }
-                    if settings_dirty {
+                    if favorites_changed {
+                        // Saves the other changed keys along with the list.
+                        app.persist_favorites(settings);
+                    } else if settings_dirty {
                         settings.save();
                     }
                     match action {
@@ -869,8 +950,12 @@ pub(crate) fn run_loop(
                                     let cr = active_content_rect(app, wf, hf, s);
                                     if cr.contains(cx, cy) {
                                         app.clear_selection();
-                                        app.rubber_band_start = Some((cx, cy));
-                                        app.rubber_band_end = Some((cx, cy));
+                                        // (No band in a picker for one item:
+                                        // it would select several.)
+                                        if !app.single_select_only() {
+                                            app.rubber_band_start = Some((cx, cy));
+                                            app.rubber_band_end = Some((cx, cy));
+                                        }
                                     }
                                 }
                             } else if app.pending_open.is_none()
@@ -881,8 +966,10 @@ pub(crate) fn run_loop(
                                 let cr = active_content_rect(app, wf, hf, s);
                                 if cr.contains(cx, cy) {
                                     app.clear_selection();
-                                    app.rubber_band_start = Some((cx, cy));
-                                    app.rubber_band_end = Some((cx, cy));
+                                    if !app.single_select_only() {
+                                        app.rubber_band_start = Some((cx, cy));
+                                        app.rubber_band_end = Some((cx, cy));
+                                    }
                                 }
                             }
                         }
@@ -922,6 +1009,8 @@ pub(crate) fn run_loop(
                 }
             } else {
                 scrollbar_drag = None;
+                aside_drag = None;
+                app.cloud_list_release();
                 if app.rubber_band_start.is_some() {
                     app.rubber_band_start = None;
                     app.rubber_band_end = None;
@@ -941,28 +1030,23 @@ pub(crate) fn run_loop(
                 }
                 // Favorite drag release — reorder
                 if let Some(src_idx) = fav_drag.take() {
-                    let layout = crate::layout::build_sidebar_layout(
-                        s,
-                        app.sidebar_places().len(),
-                        app.sidebar_favorites().len(),
-                        app.drives.len(),
-                        app.phones.len(),
-                        app.places_collapsed,
-                        app.favorites_collapsed,
-                        app.devices_collapsed,
-                    );
+                    // The rows where they are now (the sidebar scrolls).
+                    let layout = app.sidebar_layout(hf, s);
                     if let Some((_, cy)) = input.cursor() {
                         // Target slot is whichever favorite row the cursor is
-                        // currently over. Off-row releases are a no-op.
+                        // currently over. Off-row releases are a no-op, and
+                        // so is one above or below the sidebar's strip: the
+                        // rows scrolled out there are not under the pointer.
+                        let v = layout.viewport;
                         let target = layout
                             .favorite_items
                             .iter()
-                            .position(|r| cy >= r.y && cy < r.y + r.h);
+                            .position(|r| cy >= r.y && cy < r.y + r.h)
+                            .filter(|_| cy >= v.y && cy <= v.y + v.h);
                         if let Some(target_idx) = target {
                             if target_idx != src_idx && src_idx < app.sidebar_favorites().len() {
                                 app.reorder_favorite(src_idx, target_idx);
-                                settings.favorites = app.favorites_paths();
-                                settings.save();
+                                app.persist_favorites(settings);
                             }
                         }
                     }
@@ -1019,8 +1103,7 @@ pub(crate) fn run_loop(
                         let prev_fav_len = app.sidebar_favorites().len();
                         handle_drop(app, input, wf, hf, s, sources);
                         if app.sidebar_favorites().len() != prev_fav_len {
-                            settings.favorites = app.favorites_paths();
-                            settings.save();
+                            app.persist_favorites(settings);
                         }
                     }
                     app.pending_open = None;
@@ -1029,25 +1112,10 @@ pub(crate) fn run_loop(
                     state.dnd_paths.clear();
                 } else if let Some(ti) = app.pending_tree_open.take() {
                     // Deferred tree-row action: the press armed a potential
-                    // drag instead of acting; no drag started, so act now.
-                    if ti < app.tree_entries.len() {
-                        let te = &app.tree_entries[ti];
-                        let path = te.entry.path.clone();
-                        if te.entry.is_dir {
-                            app.toggle_tree_expand(path);
-                        } else {
-                            let ext = path
-                                .extension()
-                                .and_then(|e| e.to_str())
-                                .map(|s| s.to_lowercase())
-                                .unwrap_or_default();
-                            if let Some(a) = crate::desktop::default_app_for_extension(&ext) {
-                                crate::desktop::launch_app(&a.exec, &path);
-                            } else {
-                                crate::desktop::xdg_open(path);
-                            }
-                        }
-                    }
+                    // drag instead of acting; no drag started, so act now
+                    // (expand or launch, or select first when the setting
+                    // asks for a double click).
+                    app.on_tree_row_click(ti);
                 } else if let Some(idx) = app.pending_open.take() {
                     if app.press_ctrl {
                         // Ctrl+Click toggle already applied at press time —
@@ -1081,6 +1149,7 @@ pub(crate) fn run_loop(
 
         // ── Right click ─────────────────────────────────────────────────
         let modal_open = app.quick_look.is_some()
+            || app.op_dialog_open()
             || app.conflict_dialog.is_some()
             || app.sudo_prompt.is_some()
             || app.cloud_login.is_some()
@@ -1151,13 +1220,16 @@ pub(crate) fn run_loop(
         };
         // `palette` is kept current by the theme poll at the top of the loop.
         let render_palette = palette.with_bg_opacity(opacity);
+        // The input above may have gone to another folder: its frame must
+        // not show the branch chip of the one just left.
+        hk.git_follow(app);
         let inline_evt = crate::render::render_frame(
             gpu,
             app,
             input,
             icon_cache,
             file_info,
-            &git,
+            &hk.git,
             &render_palette,
             s,
             state.maximized,
@@ -1207,6 +1279,12 @@ pub(crate) fn run_loop(
                     if id == VIEW_SHOW_HIDDEN_ID {
                         app.show_hidden = checked;
                         settings.show_hidden = checked;
+                        // Written now, not only at exit (which a session
+                        // that is killed never reaches). Not from a file
+                        // picker: what it shows is its own business.
+                        if app.pick.is_none() {
+                            settings.save();
+                        }
                         app.reload();
                     } else if id == crate::VIEW_SHOW_TITLEBAR_ID {
                         // Live toggle + persisted as the open-time default.
@@ -1342,124 +1420,57 @@ pub(crate) fn run_loop(
         }
         surface.commit();
 
-        // Poll search results from background thread
-        app.poll_search();
-        app.poll_op_progress();
-        // Slow-mount listings and media probes land off-thread; a result
-        // needs one more frame to show.
-        if app.poll_dir_loads() {
-            state.frame_done = true;
-        }
-        if file_info.poll() {
-            state.frame_done = true;
-        }
         // Drain deferred icon-cache invalidations queued by the Properties
         // icon picker. We can't mutate icon_cache during render_frame
         // (tex_draws still borrows it), so we apply changes between frames.
         if !app.pending_icon_apply.is_empty() {
             let pending = std::mem::take(&mut app.pending_icon_apply);
             for (folder, icon) in pending {
-                match icon {
-                    Some(path) => crate::icons::set_folder_icon(&folder, &path),
-                    None => crate::icons::clear_folder_icon(&folder),
-                }
                 icon_cache.invalidate(&folder);
+                // Written and read back on a worker; the entries that show
+                // the folder are updated when that lands.
+                app.apply_folder_icon(folder, icon);
             }
         }
         // Pre-warm SVG thumbnails for the icon picker, if open. Picker
         // cell rects come from the previous frame's render — so the very
         // first frame after opening shows empty cells, then thumbnails
-        // populate on the next frame (~16ms).
+        // populate on the next frame (~16ms). That next frame is asked for
+        // here: rows scrolled into view stayed blank until the pointer
+        // happened to move.
         if let Some(ref props) = app.properties {
             for (path, _, _, _, _) in &props.picker_cell_rects {
-                icon_cache.ensure_svg_path(path, &gpu.ctx, &gpu.tex_pass);
+                if icon_cache.ensure_svg_path(path, &gpu.ctx, &gpu.tex_pass) {
+                    state.frame_done = true;
+                }
             }
         }
 
-        // ── Auto-refresh ─────────────────────────────────────────────
-        // On a slow mount (MTP phone, sshfs) every stat below is a device
-        // round-trip that can block for minutes behind a jmtpfs download,
-        // so the watcher, the mtime poll and git all stand down there.
-        let slow_dir = crate::fs::is_slow_path(&app.current_dir);
-        // Primary: inotify on the current dir → debounced instant reload.
-        if slow_dir {
-            dir_watcher.unwatch();
-        } else {
-            dir_watcher.watch(&app.current_dir);
+        // What this frame's input set in motion (a navigation, a pane swap,
+        // an operation) is picked up right away; if that changes what is
+        // shown, the next iteration draws it without waiting.
+        if hk.tick(app, file_info) {
+            state.frame_done = true;
         }
-        if dir_watcher.take_due_reload() {
-            app.reload();
-            // Keep the mtime tracker in sync so the fallback poll below
-            // doesn't schedule a redundant second reload.
-            last_dir_mtime = std::fs::metadata(&app.current_dir)
-                .and_then(|m| m.modified())
-                .ok();
-            git.refresh(&app.current_dir);
-        }
-
-        // ── Git badges/branch ────────────────────────────────────────
-        git.poll();
-        if app.current_dir != git_dir {
-            git_dir = app.current_dir.clone();
-            last_git_poll = Instant::now();
-            if slow_dir {
-                git.clear();
-            } else {
-                git.refresh(&app.current_dir);
-            }
-        } else if git.in_repo() && last_git_poll.elapsed() >= Duration::from_secs(5) {
-            // Commits/stages from a terminal change git state without any
-            // fs event in the viewed dir — cheap periodic re-scan, repos only.
-            last_git_poll = Instant::now();
-            git.refresh(&app.current_dir);
-        }
-        // Fallback: dir-mtime poll every 3s, for filesystems without
-        // inotify delivery (sshfs and friends).
-        if app.current_dir != last_dir_path {
-            // Directory changed (navigation) — reset tracker, don't reload
-            last_dir_path = app.current_dir.clone();
-            last_dir_mtime = if slow_dir {
-                None
-            } else {
-                std::fs::metadata(&app.current_dir)
-                    .and_then(|m| m.modified())
-                    .ok()
-            };
-            last_dir_check = Instant::now();
-        } else if !slow_dir && last_dir_check.elapsed() >= Duration::from_secs(3) {
-            last_dir_check = Instant::now();
-            let current_mtime = std::fs::metadata(&app.current_dir)
-                .and_then(|m| m.modified())
-                .ok();
-            if current_mtime != last_dir_mtime {
-                last_dir_mtime = current_mtime;
-                app.reload();
-            }
-        }
-
-        // ── Devices: poll for hot-plugged USB drives + phones every 2s ──
-        if last_devices_check.elapsed() >= Duration::from_secs(2) {
-            last_devices_check = Instant::now();
-            app.refresh_drives();
-            app.refresh_phones();
-        }
+        hk.frame_drawn(app);
 
         needs_anim = view_menu.is_open()
             || context_menu.is_open()
             || scroll_anim.is_some()
             || scrollbar_drag.is_some()
+            || aside_drag.is_some()
+            || app.cloud_list_dragging()
             || app.drag_item.is_some()
             || app.drag_tree_item.is_some()
             || app.rubber_band_start.is_some()
-            || state.held_key.is_some()
             || app.search_rx.is_some()
             || tab_drag.is_some()
             || fav_drag.is_some()
             || app.preview_drag.is_some()
-            || app.op_progress.is_some()
-            || state.dnd_active
+            || app.ops.is_busy()
+            // Polled for its result, and its dialog shows it is alive.
+            || app.priv_busy()
             || icon_cache.has_pending()
-            || dir_watcher.reload_pending()
             || app.dir_loading()
             || file_info.probing()
             || app.quick_look.as_ref().is_some_and(|ql| ql.loading())

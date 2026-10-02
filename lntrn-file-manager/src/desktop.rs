@@ -3,12 +3,90 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+mod exec;
+mod launch;
+
+pub use launch::launch_app;
+
 /// An installed application that can open files.
 #[derive(Clone, Debug)]
 pub struct DesktopApp {
     pub name: String,
+    /// The `Exec` line as the desktop file has it. It is read by the rules
+    /// of the Desktop Entry specification when the app is launched
+    /// (desktop/exec.rs), not chopped up here.
     pub exec: String,
     pub desktop_id: String,
+    /// `Terminal=true`: the program needs a terminal to run in.
+    pub terminal: bool,
+    /// `Icon`, for the `%i` field code.
+    pub icon: Option<String>,
+    /// `Path`: the working directory the entry asks for.
+    pub work_dir: Option<String>,
+    /// The desktop file itself, for the `%k` field code.
+    pub file: PathBuf,
+}
+
+/// The keys of a desktop file's `[Desktop Entry]` group that Fox reads.
+#[derive(Default)]
+struct EntryKeys {
+    name: Option<String>,
+    exec: Option<String>,
+    mime_types: String,
+    no_display: bool,
+    hidden: bool,
+    terminal: bool,
+    icon: Option<String>,
+    work_dir: Option<String>,
+}
+
+impl EntryKeys {
+    fn read(content: &str) -> Self {
+        let mut keys = Self::default();
+        let mut in_desktop_entry = false;
+        for line in content.lines() {
+            let line = line.trim();
+            if line.starts_with('[') {
+                in_desktop_entry = line == "[Desktop Entry]";
+                continue;
+            }
+            if !in_desktop_entry || line.starts_with('#') {
+                continue;
+            }
+            // "Space before and after the equals sign should be ignored."
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            let (key, value) = (key.trim_end(), value.trim_start());
+            let is_true = value == "true";
+            match key {
+                // The plain key only: `Name[de]` is another key, so the
+                // unlocalised name wins.
+                "Name" if keys.name.is_none() => keys.name = Some(value.to_string()),
+                "Exec" => keys.exec = Some(value.to_string()),
+                "MimeType" => keys.mime_types = value.to_string(),
+                "NoDisplay" => keys.no_display = is_true,
+                "Hidden" => keys.hidden = is_true,
+                "Terminal" => keys.terminal = is_true,
+                "Icon" if !value.is_empty() => keys.icon = Some(value.to_string()),
+                "Path" if !value.is_empty() => keys.work_dir = Some(value.to_string()),
+                _ => {}
+            }
+        }
+        keys
+    }
+
+    fn into_app(self, path: &Path) -> Option<DesktopApp> {
+        Some(DesktopApp {
+            name: self.name?,
+            exec: self.exec?,
+            desktop_id: path.file_stem()?.to_string_lossy().to_string(),
+            terminal: self.terminal,
+            icon: self.icon,
+            work_dir: self.work_dir,
+            file: path.to_path_buf(),
+        })
+    }
 }
 
 /// Resolve the user's preferred app for a given file extension by mapping
@@ -42,32 +120,7 @@ pub fn default_app_for_extension(ext: &str) -> Option<DesktopApp> {
 /// Parse a `.desktop` file unconditionally (no MIME-type filtering). Used by
 /// `default_app_for_extension` once we already know the desktop file we want.
 fn parse_desktop_unfiltered(path: &Path, content: &str) -> Option<DesktopApp> {
-    let mut name = None;
-    let mut exec = None;
-    let mut in_desktop_entry = false;
-    for line in content.lines() {
-        let line = line.trim();
-        if line.starts_with('[') {
-            in_desktop_entry = line == "[Desktop Entry]";
-            continue;
-        }
-        if !in_desktop_entry {
-            continue;
-        }
-        if let Some(val) = line.strip_prefix("Name=") {
-            if name.is_none() {
-                name = Some(val.to_string());
-            }
-        } else if let Some(val) = line.strip_prefix("Exec=") {
-            exec = Some(val.to_string());
-        }
-    }
-    let exec_raw = exec?;
-    Some(DesktopApp {
-        name: name?,
-        exec: clean_exec(&exec_raw),
-        desktop_id: path.file_stem()?.to_string_lossy().to_string(),
-    })
+    EntryKeys::read(content).into_app(path)
 }
 
 /// Extra apps to always offer for a dual-natured extension, by desktop id.
@@ -152,143 +205,19 @@ fn apps_for_mime(mime: &str) -> Vec<DesktopApp> {
 /// Parse a single .desktop file. Returns Some if it supports the given MIME type.
 fn parse_desktop_file(path: &Path, mime: &str) -> Option<DesktopApp> {
     let content = std::fs::read_to_string(path).ok()?;
-
-    let mut name = None;
-    let mut exec = None;
-    let mut mime_types = String::new();
-    let mut no_display = false;
-    let mut hidden = false;
-    let mut in_desktop_entry = false;
-
-    for line in content.lines() {
-        let line = line.trim();
-        if line.starts_with('[') {
-            in_desktop_entry = line == "[Desktop Entry]";
-            continue;
-        }
-        if !in_desktop_entry {
-            continue;
-        }
-
-        if let Some(val) = line.strip_prefix("Name=") {
-            if name.is_none() {
-                // first Name= wins (avoid locale overrides)
-                name = Some(val.to_string());
-            }
-        } else if let Some(val) = line.strip_prefix("Exec=") {
-            exec = Some(val.to_string());
-        } else if let Some(val) = line.strip_prefix("MimeType=") {
-            mime_types = val.to_string();
-        } else if line == "NoDisplay=true" {
-            no_display = true;
-        } else if line == "Hidden=true" {
-            hidden = true;
-        }
-    }
-
-    if no_display || hidden {
+    let keys = EntryKeys::read(&content);
+    if keys.no_display || keys.hidden {
         return None;
     }
-    let name = name?;
-    let exec_raw = exec?;
-    if mime_types.is_empty() {
-        return None;
-    }
-
-    // Check if any of the MIME types match
-    let matches = mime_types
+    let matches = keys
+        .mime_types
         .split(';')
         .any(|m| m.trim().eq_ignore_ascii_case(mime));
     if !matches {
         return None;
     }
-
-    // Clean up Exec: strip field codes (%f, %F, %u, %U, etc.)
-    let exec_clean = clean_exec(&exec_raw);
-
-    let desktop_id = path
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_default();
-
-    Some(DesktopApp {
-        name,
-        exec: exec_clean,
-        desktop_id,
-    })
+    keys.into_app(path)
 }
-
-/// Strip desktop entry field codes from an Exec line.
-fn clean_exec(exec: &str) -> String {
-    let mut parts = Vec::new();
-    for token in exec.split_whitespace() {
-        if token.starts_with('%') && token.len() <= 2 {
-            continue; // skip %f, %F, %u, %U, etc.
-        }
-        // Also strip surrounding quotes from the binary path
-        let t = token.trim_matches('"');
-        parts.push(t.to_string());
-    }
-    // Return just the binary name/path (first part)
-    // We'll use it to launch: exec arg1 arg2 ... file_path
-    parts.join(" ")
-}
-
-/// Launch an app by its exec string, passing the file path as an argument.
-/// Detaches stdin/stdout but routes the child's stderr into
-/// `~/.lantern/log/fox-launch.log` so silent-spawn failures or child panics
-/// surface somewhere we can find them.
-pub fn launch_app(exec: &str, file_path: &Path) {
-    use std::process::Stdio;
-    let path = file_path.to_path_buf();
-    let exec = exec.to_string();
-    std::thread::spawn(move || {
-        let mut parts = exec.split_whitespace();
-        let Some(bin) = parts.next() else {
-            eprintln!("[fox] launch_app: empty exec string");
-            return;
-        };
-        let log_path = std::env::var("HOME")
-            .map(|h| std::path::PathBuf::from(h).join(".lantern/log/fox-launch.log"))
-            .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/fox-launch.log"));
-        if let Some(parent) = log_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        // Every launched app's stderr lands here; keep one old generation.
-        if std::fs::metadata(&log_path).is_ok_and(|m| m.len() > LAUNCH_LOG_MAX) {
-            let _ = std::fs::rename(&log_path, log_path.with_extension("log.1"));
-        }
-        let stderr_dest = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)
-            .map(Stdio::from)
-            .unwrap_or_else(|_| Stdio::null());
-        let mut cmd = std::process::Command::new(bin);
-        for arg in parts {
-            cmd.arg(arg);
-        }
-        cmd.arg(&path);
-        cmd.stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(stderr_dest);
-        // Detach process group so the child outlives the parent and doesn't
-        // receive the parent's signals (SIGHUP on close, etc.).
-        use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
-        match cmd.spawn() {
-            // Reap the child from this thread (it's already dedicated to the
-            // launch): without a wait() every closed or killed app lingers as
-            // a <defunct> row under Fox until Fox itself exits.
-            Ok(mut child) => {
-                let _ = child.wait();
-            }
-            Err(e) => eprintln!("[fox] launch_app: failed to spawn {bin:?}: {e}"),
-        }
-    });
-}
-
-const LAUNCH_LOG_MAX: u64 = 4 * 1024 * 1024;
 
 /// Spawn `cmd` detached from Fox's stdio and reap it when it exits. A child
 /// that is spawned and dropped stays a `<defunct>` row under Fox for as long
@@ -427,3 +356,6 @@ fn mime_from_extension(ext: &str) -> String {
     };
     mime.to_string()
 }
+
+#[cfg(test)]
+mod tests;

@@ -19,6 +19,7 @@ pub struct LocalTime {
     /// 0..=23
     pub hour: u32,
     pub minute: u32,
+    pub second: u32,
 }
 
 impl LocalTime {
@@ -59,6 +60,8 @@ pub fn local(t: SystemTime) -> Option<LocalTime> {
         day: tm.tm_mday as u32,
         hour: tm.tm_hour as u32,
         minute: tm.tm_min as u32,
+        // 60 is a leap second; a stamp must stay parseable.
+        second: (tm.tm_sec as u32).min(59),
     })
 }
 
@@ -85,6 +88,7 @@ mod tests {
             day: 2,
             hour,
             minute: 0,
+            second: 0,
         };
         assert_eq!(at(0).hour12(), (12, "AM"));
         assert_eq!(at(11).hour12(), (11, "AM"));

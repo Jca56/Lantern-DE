@@ -27,6 +27,11 @@ pub enum ConflictAction {
 }
 
 /// In-progress paste state. Stays on App while a conflict dialog is open.
+///
+/// Resolving conflicts changes nothing on disk: each source only gets its
+/// final target and whether it replaces what is there. The work happens
+/// afterwards, on the ops worker (or through sudo), so cancelling the paste
+/// at any dialog leaves everything as it was.
 #[derive(Clone, Debug)]
 pub struct PendingPaste {
     pub mode: PasteMode,
@@ -36,23 +41,15 @@ pub struct PendingPaste {
     /// If set, all remaining conflicts are auto-resolved with this action.
     pub apply_to_all: Option<ConflictAction>,
     /// Original full source list — kept so the clipboard can be re-armed
-    /// on Copy mode after the paste completes.
+    /// after the paste completes or is cancelled.
     pub originals: Vec<PathBuf>,
     /// True when this paste took the clipboard (Ctrl+V), false for a
     /// drag-drop. Only a clipboard paste hands the clipboard back afterwards.
     pub from_clipboard: bool,
-    /// Successful (src, dst) pairs (for Cut undo). Cut runs inline since
-    /// fs::rename is atomic; no worker needed.
-    pub moves: Vec<(PathBuf, PathBuf)>,
-    /// Sources that hit PermissionDenied — sent to the sudo flow at the end.
-    pub perm_fails: Vec<PathBuf>,
-    /// Cut sources on a different filesystem than `dest` (rename → EXDEV:
-    /// phone → disk, USB stick → home). Handed to the ops worker as a
-    /// copy-then-delete at the end.
-    pub xdev_pairs: Vec<(PathBuf, PathBuf)>,
-    /// Resolved (src, target) pairs ready for the copy worker. Only used
-    /// in Copy mode — Cut applies inline.
-    pub resolved_pairs: Vec<(PathBuf, PathBuf)>,
+    /// Sources with their conflicts resolved, ready to run.
+    pub resolved: Vec<crate::ops::OpItem>,
+    /// Root mode: the resolved items run through sudo instead of the worker.
+    pub privileged: bool,
     /// If the paste originated from a drag-drop onto a non-current tab,
     /// reload that tab too after the operation completes.
     pub reload_tab: Option<usize>,
@@ -67,27 +64,17 @@ impl PendingPaste {
             apply_to_all: None,
             originals: sources,
             from_clipboard: false,
-            moves: Vec::new(),
-            perm_fails: Vec::new(),
-            xdev_pairs: Vec::new(),
-            resolved_pairs: Vec::new(),
+            resolved: Vec::new(),
+            privileged: false,
             reload_tab: None,
         }
     }
 
-    /// True if an earlier item of this paste was already assigned `target`
-    /// and its copy is still deferred to the worker — the name is taken even
-    /// though nothing exists on disk yet.
+    /// True if an earlier item of this paste was already assigned `target`.
+    /// Its copy has not run yet, so the name is taken even though nothing
+    /// exists on disk.
     pub fn is_reserved(&self, target: &Path) -> bool {
-        self.resolved_pairs
-            .iter()
-            .chain(&self.xdev_pairs)
-            .any(|(_, t)| t == target)
-    }
-
-    /// "Keep Both" name that is free on disk and not claimed by this paste.
-    pub fn keep_both_path(&self, target: &Path) -> PathBuf {
-        unique_keep_both_path(target, |p| self.is_reserved(p))
+        self.resolved.iter().any(|item| item.target == target)
     }
 }
 
@@ -106,6 +93,26 @@ pub struct ConflictDialog {
     pub target_meta: ConflictMeta,
     pub apply_to_all: bool,
     pub remaining_count: usize,
+    /// The existing item sits where there is no Trash (a phone, a network
+    /// folder). Replace would have to delete it, so it is not offered.
+    pub no_trash: bool,
+}
+
+impl ConflictDialog {
+    pub fn new(src: &Path, target: &Path, remaining_count: usize) -> Self {
+        Self {
+            target: target.to_path_buf(),
+            source_meta: ConflictMeta::read(src),
+            target_meta: ConflictMeta::read(target),
+            apply_to_all: false,
+            remaining_count,
+            no_trash: crate::fs::is_slow_path(target),
+        }
+    }
+
+    pub fn replace_allowed(&self) -> bool {
+        !self.no_trash
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -113,15 +120,31 @@ pub struct ConflictMeta {
     pub size: u64,
     pub mtime: Option<SystemTime>,
     pub is_dir: bool,
+    /// For a folder: how many entries it holds directly. `None` when that
+    /// was not counted (a slow mount, an unreadable folder).
+    pub items: Option<usize>,
 }
+
+/// Counting stops here; the dialog then says "N+".
+pub const ITEM_COUNT_CAP: usize = 10_000;
 
 impl ConflictMeta {
     pub fn read(path: &Path) -> Self {
-        let m = std::fs::metadata(path).ok();
+        // lstat: a link is described as itself. Replace acts on the link.
+        let m = std::fs::symlink_metadata(path).ok();
+        let is_dir = m.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+        let items = if is_dir && !crate::fs::is_slow_path(path) {
+            std::fs::read_dir(path)
+                .ok()
+                .map(|rd| rd.take(ITEM_COUNT_CAP).count())
+        } else {
+            None
+        };
         Self {
             size: m.as_ref().map(|m| m.len()).unwrap_or(0),
             mtime: m.as_ref().and_then(|m| m.modified().ok()),
-            is_dir: m.as_ref().map(|m| m.is_dir()).unwrap_or(false),
+            is_dir,
+            items,
         }
     }
 }
@@ -130,7 +153,8 @@ impl ConflictMeta {
 /// Counts up until a free slot is found, capped at 1000 to avoid loops.
 /// `reserved` reports names that are spoken for but not on disk yet.
 pub fn unique_keep_both_path(target: &Path, reserved: impl Fn(&Path) -> bool) -> PathBuf {
-    let taken = |p: &Path| p.exists() || reserved(p);
+    // lstat: a dangling link holds its name too.
+    let taken = |p: &Path| std::fs::symlink_metadata(p).is_ok() || reserved(p);
     if !taken(target) {
         return target.to_path_buf();
     }

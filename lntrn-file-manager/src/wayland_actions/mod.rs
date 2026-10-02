@@ -16,8 +16,10 @@ mod key;
 
 pub(crate) use click::handle_click;
 pub(crate) use context_menu::{handle_ctx_event, handle_right_click};
-pub(crate) use drag_drop::handle_drop;
-pub(crate) use key::handle_key;
+pub(crate) use drag_drop::{
+    apply_drop, drop_allowed, drop_target_at, handle_drop, DropTarget,
+};
+pub(crate) use key::{handle_key, text_entry_active};
 
 // ── Sort helpers ────────────────────────────────────────────────────────────
 

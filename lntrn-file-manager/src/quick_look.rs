@@ -3,6 +3,9 @@
 //! Space opens/closes, Esc closes, ←/→ move to the previous/next file
 //! (key handling lives in wayland_actions/key.rs). Content loads on a
 //! background thread; the render thread polls and uploads the texture.
+//! Nothing here touches the file on the render thread, and on a slow mount
+//! (phone, network share) the file is not read at all: there the first read
+//! downloads the whole file under the device's one lock.
 //!
 //! v1 surfaces: full-res images (incl. SVG), text files, and a full-res
 //! still frame for videos. Video *playback* (ffmpeg frame streaming +
@@ -10,6 +13,7 @@
 //! everything else (overlay, keys, loader plumbing) stays as is.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use lntrn_render::{
@@ -40,8 +44,24 @@ enum Loaded {
     Failed(String),
 }
 
+/// Counts the previews opened. A loader only starts its work while it is
+/// still the newest one.
+static NEWEST: AtomicU64 = AtomicU64::new(0);
+/// One loader works at a time. Stepping through a folder with the arrow
+/// keys used to start a thread (and an ffmpeg) per key press, all of which
+/// ran to the end even though only the last one was looked at.
+static TURN: Mutex<()> = Mutex::new(());
+
+const SLOW_MOUNT_NOTE: &str =
+    "No full preview on phones and network folders: showing one would download the whole file.";
+
 pub struct QuickLook {
     pub path: PathBuf,
+    /// The listing entry, for the thumbnail the view may already have.
+    entry: crate::fs::FileEntry,
+    /// Nothing is loaded for this file (slow mount): the listing's
+    /// thumbnail stands in, if there is one.
+    thumb_only: bool,
     file_size: u64,
     is_video: bool,
     pending: Arc<Mutex<Option<Loaded>>>,
@@ -55,30 +75,59 @@ pub struct QuickLook {
 }
 
 impl QuickLook {
-    pub fn open(path: &Path) -> Self {
+    /// `entry` comes from the listing, which already knows the size: no
+    /// stat here (on a phone it would wait behind a running download).
+    pub fn open(entry: &crate::fs::FileEntry) -> Self {
+        let path = entry.path.as_path();
         let pending = Arc::new(Mutex::new(None));
-        let slot = Arc::clone(&pending);
-        let bg_path = path.to_path_buf();
-        std::thread::spawn(move || {
-            // Always deliver something: a panicking decoder would otherwise
-            // leave the overlay on "Loading…" (and the loop at 60 fps).
-            let loaded = std::panic::catch_unwind(|| load(&bg_path))
-                .unwrap_or_else(|_| Loaded::Failed("Could not load this file".into()));
-            *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(loaded);
-        });
+        let thumb_only = crate::fs::is_slow_path(path);
+        let generation = NEWEST.fetch_add(1, Ordering::SeqCst) + 1;
+        if !thumb_only {
+            let slot = Arc::clone(&pending);
+            let bg_path = path.to_path_buf();
+            std::thread::spawn(move || {
+                let _turn = TURN.lock().unwrap_or_else(|e| e.into_inner());
+                if NEWEST.load(Ordering::SeqCst) != generation {
+                    // Another file was opened while this one waited its
+                    // turn; nobody will look at the result.
+                    return;
+                }
+                // Always deliver something: a panicking decoder would
+                // otherwise leave the overlay on "Loading…" (and the loop
+                // at 60 fps).
+                // Regular files only: opening a FIFO (or a tty) waits for a
+                // writer that never comes, and this loader holds the one
+                // turn there is; every later preview would wait behind it.
+                // (A stat is fine here: slow mounts never get this far.)
+                let regular = std::fs::metadata(&bg_path).is_ok_and(|m| m.is_file());
+                let loaded = if regular {
+                    std::panic::catch_unwind(|| load(&bg_path))
+                        .unwrap_or_else(|_| Loaded::Failed("Could not load this file".into()))
+                } else {
+                    Loaded::Failed("No preview available for this kind of file".into())
+                };
+                *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(loaded);
+            });
+        }
         Self {
             path: path.to_path_buf(),
-            file_size: std::fs::metadata(path).map(|m| m.len()).unwrap_or(0),
-            is_video: crate::icons::is_video_file(
-                path.file_name().and_then(|n| n.to_str()).unwrap_or(""),
-            ),
+            entry: entry.clone(),
+            thumb_only,
+            file_size: entry.size,
+            is_video: crate::icons::is_video_file(&entry.name),
             pending,
             texture: None,
             source_dims: None,
             text_lines: None,
             text_truncated: false,
-            error: None,
+            error: thumb_only.then(|| SLOW_MOUNT_NOTE.to_string()),
         }
+    }
+
+    /// The entry whose listing thumbnail may stand in for the preview
+    /// (only when nothing is loaded for this file).
+    pub fn thumbnail_entry(&self) -> Option<&crate::fs::FileEntry> {
+        self.thumb_only.then_some(&self.entry)
     }
 
     /// Still waiting on the loader thread — the event loop polls fast.
@@ -270,6 +319,7 @@ fn load_text(path: &Path) -> Loaded {
 #[allow(clippy::too_many_arguments)]
 pub fn draw_quick_look<'a>(
     ql: &'a QuickLook,
+    thumbnail: Option<&'a GpuTexture>,
     painter: &mut Painter,
     text: &mut TextRenderer,
     palette: &FoxPalette,
@@ -302,7 +352,7 @@ pub fn draw_quick_look<'a>(
         let (dw, dh) = ql.source_dims.unwrap_or((tex.width, tex.height));
         meta = format!("{dw} × {dh}  •  {meta}");
     }
-    if ql.is_video {
+    if ql.is_video && !ql.thumb_only {
         meta = format!("Video (still frame)  •  {meta}");
     }
     let est_w = meta.chars().count() as f32 * meta_font * 0.52;
@@ -385,16 +435,41 @@ pub fn draw_quick_look<'a>(
     // Loading / error state — centered message.
     let msg = ql.error.as_deref().unwrap_or("Loading…");
     let msg_font = 20.0 * s;
-    let est_w = msg.chars().count() as f32 * msg_font * 0.52;
-    TextLabel::new(msg, (screen_w - est_w) * 0.5, screen_h * 0.5 - msg_font)
-        .size(FontSize::Custom(msg_font))
-        .color(if ql.error.is_some() {
-            palette.text_secondary
-        } else {
-            palette.muted
-        })
-        .draw(text, sw, sh);
-    None
+    let lines = crate::dialogs::wrap_lines(text, msg, msg_font, screen_w - margin * 2.0);
+    let line_h = msg_font * 1.4;
+    let block_h = line_h * lines.len() as f32;
+    // The listing's thumbnail, when nothing is loaded for this file: shown
+    // above the note at twice its size at most (it is small, and blowing
+    // it up to the window would only show its pixels).
+    let mut msg_y = screen_h * 0.5 - msg_font;
+    let mut stand_in = None;
+    if let Some(tex) = thumbnail.filter(|_| ql.thumb_only) {
+        let gap = msg_font;
+        let side = (tex.width.max(tex.height) as f32 * 2.0).min(content.h - block_h - gap);
+        if side > 0.0 {
+            let top = content.y + (content.h - side - gap - block_h) * 0.5;
+            let (x, y, w, h) =
+                crate::icons::fit_in_box(tex, (screen_w - side) * 0.5, top, side, side);
+            stand_in = Some(TextureDraw::new(tex, x, y, w, h));
+            msg_y = top + side + gap;
+        }
+    }
+    let color = if ql.error.is_some() {
+        palette.text_secondary
+    } else {
+        palette.muted
+    };
+    for line in &lines {
+        let line_w = text.measure_width(line, msg_font);
+        TextLabel::new(line, (screen_w - line_w) * 0.5, msg_y)
+            .size(FontSize::Custom(msg_font))
+            .color(color)
+            // Slack so the measured last glyph isn't clipped by the bound.
+            .max_width(line_w + 8.0 * s)
+            .draw(text, sw, sh);
+        msg_y += line_h;
+    }
+    stand_in
 }
 
 fn format_bytes(size: u64) -> String {

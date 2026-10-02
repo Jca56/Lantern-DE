@@ -1,4 +1,5 @@
-//! Sidebar places, drives, phones — refresh + click handlers.
+//! Sidebar places and favourites, and the drive dialogs. (Mounting,
+//! ejecting and formatting run off-thread: app/device_ops.rs.)
 
 use std::path::{Path, PathBuf};
 
@@ -15,13 +16,46 @@ impl App {
         &self.favorites
     }
 
-    /// Load favorites from persisted string paths. Drops any that no longer
-    /// exist so the sidebar doesn't accumulate dead links.
+    /// The sidebar's headers and rows where they are right now: scrolled,
+    /// inside the strip between the nav bar and the status (or pick) bar.
+    /// Drawing, zones, the right-click hit-test and the favourite drag all
+    /// ask here, so they agree on where a row is.
+    pub fn sidebar_layout(&self, hf: f32, s: f32) -> crate::layout::SidebarLayout {
+        use crate::layout;
+        let top = layout::nav_bar_y(s);
+        let bottom = if self.pick.is_some() {
+            hf - crate::pick_bar::PICK_BAR_H * s
+        } else {
+            layout::content_bottom(hf, s)
+        };
+        let viewport =
+            lntrn_render::Rect::new(0.0, top, layout::sidebar_w(s), (bottom - top).max(0.0));
+        let spec = layout::SidebarSpec {
+            places: self.places.len(),
+            favorites: self.favorites.len(),
+            drives: self.drives.len(),
+            phones: self.phones.len(),
+            places_collapsed: self.places_collapsed,
+            favorites_collapsed: self.favorites_collapsed,
+            devices_collapsed: self.devices_collapsed,
+        };
+        layout::build_sidebar_layout(
+            s,
+            &spec,
+            viewport,
+            self.sidebar_scroll,
+            crate::scrollbar::sidebar_gutter(s),
+        )
+    }
+
+    /// Load favorites from persisted string paths. One whose folder is not
+    /// there right now (its drive is unplugged, the share not mounted) is
+    /// kept and shown as unavailable: dropping it here used to erase it
+    /// from the settings for good at the next favourites save.
     pub fn load_favorites_from(&mut self, paths: &[String]) {
         self.favorites = paths
             .iter()
             .map(PathBuf::from)
-            .filter(|p| p.exists())
             .map(|p| {
                 let name = p
                     .file_name()
@@ -30,6 +64,43 @@ impl App {
                 Place { name, path: p }
             })
             .collect();
+        self.refresh_favorite_availability();
+    }
+
+    /// Look again which favourites' folders exist. Called when the list is
+    /// loaded and whenever the drives change. True when one came or went.
+    pub fn refresh_favorite_availability(&mut self) -> bool {
+        // Automount points: a stat below one that is not mounted makes the
+        // kernel mount it, and waits for that (for the mount's timeout when
+        // its server is not there).
+        let automounts: Vec<PathBuf> = fs::mounts()
+            .into_iter()
+            .filter(|(_, fstype)| fstype == "autofs")
+            .map(|(mount, _)| mount)
+            .collect();
+        let offline: std::collections::HashSet<PathBuf> = self
+            .favorites
+            .iter()
+            .map(|fav| &fav.path)
+            // A favourite on a phone, a network share or an automount is
+            // taken at its word: asking is a round trip, on this thread.
+            .filter(|path| {
+                !fs::is_slow_path(path)
+                    && !automounts.iter().any(|mount| path.starts_with(mount))
+                    && !path.exists()
+            })
+            .cloned()
+            .collect();
+        let changed = offline != self.favorites_offline;
+        self.favorites_offline = offline;
+        changed
+    }
+
+    /// False for a favourite whose folder is not there right now.
+    pub fn favorite_available(&self, index: usize) -> bool {
+        self.favorites
+            .get(index)
+            .is_some_and(|fav| !self.favorites_offline.contains(&fav.path))
     }
 
     pub fn favorites_paths(&self) -> Vec<String> {
@@ -39,13 +110,30 @@ impl App {
             .collect()
     }
 
+    /// Write the favourites to the settings file and take back what the
+    /// file then holds: a favourite added in another window since this one
+    /// last looked is merged in, not lost (settings/store.rs).
+    pub fn persist_favorites(&mut self, settings: &mut crate::settings::Settings) {
+        let mine = self.favorites_paths();
+        settings.favorites = mine.clone();
+        settings.save();
+        if settings.favorites != mine {
+            let merged = settings.favorites.clone();
+            self.load_favorites_from(&merged);
+        }
+    }
+
     pub fn is_favorite(&self, path: &Path) -> bool {
         self.favorites.iter().any(|p| p.path == path)
     }
 
     /// Pin a path. No-op if it's already a favorite or not a directory.
     pub fn add_favorite(&mut self, path: PathBuf) -> bool {
-        if !path.is_dir() || self.is_favorite(&path) {
+        // The folder shown itself has no listing entry; on a slow mount it
+        // is taken at its word instead of asking the device from here.
+        let is_folder = self.is_folder(&path)
+            || (path == self.current_dir && fs::is_slow_path(&path));
+        if !is_folder || self.is_favorite(&path) {
             return false;
         }
         let name = path
@@ -81,40 +169,29 @@ impl App {
         // Sidebar navigation always drives the LEFT pane in split view.
         self.focus_pane(super::PaneSide::Left);
 
-        if let Some(fav) = self.favorites.get(index) {
-            let path = fav.path.clone();
-            self.navigate_to(path);
+        let Some(fav) = self.favorites.get(index) else {
+            return;
+        };
+        let (name, path) = (fav.name.clone(), fav.path.clone());
+        // The drive may have been plugged in (or pulled) a moment ago.
+        self.refresh_favorite_availability();
+        if self.favorites_offline.contains(&path) {
+            self.show_message(
+                "Folder not available",
+                format!(
+                    "\u{201c}{name}\u{201d} is not there right now:\n{}\n\nIf it is on a drive, plug the drive in and open it. The favourite is kept.",
+                    path.display()
+                ),
+            );
+            return;
         }
+        self.navigate_to(path);
     }
 
     pub fn is_active_favorite(&self, index: usize) -> bool {
         self.favorites
             .get(index)
             .map_or(false, |p| p.path == self.current_dir)
-    }
-
-    pub fn refresh_drives(&mut self) {
-        self.drives = fs::detect_drives();
-    }
-
-    pub fn on_drive_click(&mut self, index: usize) {
-        // Sidebar navigation always drives the LEFT pane in split view.
-        self.focus_pane(super::PaneSide::Left);
-
-        let Some(drive) = self.drives.get(index).cloned() else {
-            return;
-        };
-        if drive.mounted {
-            self.navigate_to(drive.mount_point);
-            return;
-        }
-        match fs::mount_drive(&drive) {
-            Ok(mount) => {
-                self.refresh_drives();
-                self.navigate_to(mount);
-            }
-            Err(msg) => self.show_message(format!("Couldn\u{2019}t mount {}", drive.name), msg),
-        }
     }
 
     /// Show a modal notice (used to surface mount/eject errors instead of
@@ -126,35 +203,9 @@ impl App {
         });
     }
 
-    pub fn refresh_phones(&mut self) {
-        self.phones = fs::detect_phones();
-    }
-
     /// The drive currently at `device`, if it is still plugged in.
-    fn drive_by_device(&self, device: &str) -> Option<fs::Drive> {
+    pub(super) fn drive_by_device(&self, device: &str) -> Option<fs::Drive> {
         self.drives.iter().find(|d| d.device == device).cloned()
-    }
-
-    pub fn eject_drive(&mut self, device: &str) {
-        let Some(drive) = self.drive_by_device(device) else {
-            return;
-        };
-        // Eject unmounts every partition of the disk and reports the first
-        // failure, so "Err" no longer means "nothing was unmounted": tidy up
-        // first, report after.
-        let result = fs::unmount_drive(&drive);
-        // If the folder being viewed went away with it, navigate home.
-        let gone = !fs::is_slow_path(&self.current_dir)
-            && (!self.current_dir.exists()
-                || (self.current_dir.starts_with(&drive.mount_point)
-                    && !fs::is_path_mounted(&drive.mount_point)));
-        if gone {
-            self.navigate_to_home();
-        }
-        self.refresh_drives();
-        if let Err(msg) = result {
-            self.show_message(format!("Couldn\u{2019}t eject {}", drive.name), msg);
-        }
     }
 
     pub fn open_drive_format_dialog(&mut self, device: &str) {
@@ -164,11 +215,18 @@ impl App {
         if !drive.removable {
             return;
         }
+        // A format already running on it: bring its dialog back. Any other
+        // job on the drive (mount, eject) has to finish first.
+        let formatting = self.is_formatting(&drive);
+        if !formatting && self.drive_busy(&drive).is_some() {
+            return;
+        }
         let disk_size = fs::drive_disk_size(&drive);
         self.drive_dialog = Some(crate::dialogs::DriveDialog::ConfirmFormat {
             drive,
             disk_size,
             error: None,
+            working: formatting,
         });
     }
 
@@ -177,72 +235,6 @@ impl App {
             return;
         };
         self.drive_dialog = Some(crate::dialogs::DriveDialog::Properties { drive });
-    }
-
-    pub fn dismiss_drive_dialog(&mut self) {
-        self.drive_dialog = None;
-    }
-
-    /// Confirm the active Format dialog. Runs the format and either dismisses
-    /// the dialog on success, or stores the error message into the dialog.
-    pub fn confirm_drive_format(&mut self) {
-        let Some(crate::dialogs::DriveDialog::ConfirmFormat {
-            drive, disk_size, ..
-        }) = self.drive_dialog.clone()
-        else {
-            return;
-        };
-        // The dialog holds a snapshot from when it opened. Before wiping
-        // anything, check that the same disk is still behind that device
-        // name: a stick swapped while the dialog sat open reuses /dev/sdX.
-        let still_there = fs::detect_drives().into_iter().any(|d| {
-            d.device == drive.device
-                && d.parent_disk == drive.parent_disk
-                && d.removable
-                && d.name == drive.name
-                && fs::drive_disk_size(&d) == disk_size
-        });
-        if !still_there {
-            if let Some(crate::dialogs::DriveDialog::ConfirmFormat { error, .. }) =
-                self.drive_dialog.as_mut()
-            {
-                *error = Some(
-                    "This drive changed or was unplugged. Close this and try again.".to_string(),
-                );
-            }
-            return;
-        }
-        match fs::format_drive_ext4(&drive, "") {
-            Ok(()) => {
-                self.drive_dialog = None;
-                self.refresh_drives();
-            }
-            Err(msg) => {
-                if let Some(crate::dialogs::DriveDialog::ConfirmFormat { error, .. }) =
-                    self.drive_dialog.as_mut()
-                {
-                    *error = Some(msg);
-                }
-            }
-        }
-    }
-
-    pub fn on_phone_click(&mut self, index: usize) {
-        // Sidebar navigation always drives the LEFT pane in split view.
-        self.focus_pane(super::PaneSide::Left);
-
-        let Some(phone) = self.phones.get(index).cloned() else {
-            return;
-        };
-        match fs::mount_phone(&phone) {
-            Ok(()) => {
-                // So the sidebar row says "Connected" now, not at the next
-                // two-second device poll.
-                self.refresh_phones();
-                self.navigate_to(phone.mount_point)
-            }
-            Err(msg) => self.show_message(format!("Couldn\u{2019}t open {}", phone.name), msg),
-        }
     }
 
     pub fn is_active_place(&self, index: usize) -> bool {
@@ -265,5 +257,54 @@ impl App {
             let path = place.path.clone();
             self.navigate_to(path);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_favourite_whose_drive_is_unplugged_is_kept_and_marked() {
+        let mut app = App::new();
+        let here = std::env::temp_dir().to_string_lossy().into_owned();
+        let gone = "/nonexistent-fox-test/usb-stick/Music".to_string();
+        app.load_favorites_from(&[here.clone(), gone.clone()]);
+
+        // Both are still there, in order: this list is what gets saved.
+        assert_eq!(app.favorites_paths(), [here, gone]);
+        assert!(app.favorite_available(0));
+        assert!(!app.favorite_available(1));
+        assert_eq!(app.sidebar_favorites()[1].name, "Music");
+
+        // Clicking it explains instead of going nowhere.
+        let before = app.current_dir.clone();
+        app.on_favorite_click(1);
+        assert_eq!(app.current_dir, before);
+        assert!(matches!(
+            app.drive_dialog,
+            Some(crate::dialogs::DriveDialog::Message { .. })
+        ));
+
+        // It can still be removed on purpose, and only then is it gone.
+        app.remove_favorite(1);
+        assert_eq!(app.favorites_paths().len(), 1);
+    }
+
+    #[test]
+    fn availability_follows_the_folder_coming_and_going() {
+        let dir = std::env::temp_dir().join(format!("fox-fav-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = App::new();
+        app.load_favorites_from(&[dir.to_string_lossy().into_owned()]);
+        assert!(!app.favorite_available(0));
+        // "Plugged in".
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(app.refresh_favorite_availability(), "something changed");
+        assert!(app.favorite_available(0));
+        assert!(!app.refresh_favorite_availability());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(app.refresh_favorite_availability());
+        assert!(!app.favorite_available(0));
     }
 }

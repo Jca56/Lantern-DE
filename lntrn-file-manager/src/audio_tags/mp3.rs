@@ -8,7 +8,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::FileExt;
 use std::path::Path;
 
-use super::{id3, id3v1, io_err, AudioFormat, AudioMeta, AudioTags, Container};
+use super::{id3, id3v1, io_err, refusal, AudioFormat, AudioMeta, AudioTags, Container};
 
 /// Bytes read past the ID3 tag when hunting for the first frame.
 const PROBE_LEN: usize = 128 * 1024;
@@ -18,29 +18,81 @@ const PROBE_LEN: usize = 128 * 1024;
 /// MP3 in a folder being browsed. Real tags with artwork are a few MiB.
 const MAX_TAG_LEN: usize = 64 * 1024 * 1024;
 
+/// Everything read and write need from a file, gathered once so that both
+/// see the same thing (and the editor can say up front what a save would
+/// say).
+struct Loaded {
+    len: u64,
+    /// The ID3v2 tag plus a probe window of audio.
+    head: Vec<u8>,
+    tag: Option<id3::Id3Tag>,
+    v1: Option<[u8; id3v1::LEN]>,
+    /// Why this file's tag cannot be rewritten without losing something.
+    problem: Option<String>,
+}
+
+fn load(f: &mut File) -> Result<Loaded, String> {
+    let len = f.metadata().map_err(io_err)?.len();
+    let head = read_head(f, len)?;
+    let tag = id3::parse(&head);
+    let problem = match &tag {
+        // "ID3" with a version or size field this code does not know. A
+        // fresh tag in front of it would leave the old one stranded
+        // between the new tag and the audio.
+        None if head.starts_with(b"ID3") => {
+            Some("This file starts with an ID3 tag of a kind Fox does not know".to_string())
+        }
+        None => None,
+        // The header's size field is not checked against the file by the
+        // parser. A tag claiming more than the file holds would, clamped to
+        // the file length, make the in-place path overwrite ALL of the
+        // audio with tag padding.
+        Some(t) if t.total_len as u64 > len => Some(
+            "This file's ID3 tag is damaged (it claims more bytes than the file holds)".to_string(),
+        ),
+        Some(t) => t.blocker.as_deref().map(id3::blocked),
+    };
+    let v1 = read_v1(f, len);
+    Ok(Loaded {
+        len,
+        head,
+        tag,
+        v1,
+        problem,
+    })
+}
+
+impl Loaded {
+    /// The tags as the editor shows them: ID3v2, with the ID3v1 trailer
+    /// filling what it lacks.
+    fn view(&self) -> AudioTags {
+        let mut tags = self.tag.as_ref().map(|t| t.to_tags()).unwrap_or_default();
+        if let Some(v1_tags) = self.v1.as_ref().and_then(|b| id3v1::parse(b)) {
+            fill_missing(&mut tags, &v1_tags);
+        }
+        tags
+    }
+}
+
 pub fn read(path: &Path) -> Result<AudioMeta, String> {
     let mut f = File::open(path).map_err(io_err)?;
-    let len = f.metadata().map_err(io_err)?.len();
-    let head = read_head(&mut f, len)?;
-    let tag = id3::parse(&head);
-    let audio_start = tag
+    let st = load(&mut f)?;
+    let audio_start = st
+        .tag
         .as_ref()
         .map(|t| t.total_len)
         .unwrap_or(0)
-        .min(head.len());
-    let mut tags = tag.as_ref().map(|t| t.to_tags()).unwrap_or_default();
-    let v1 = read_v1(&f, len);
-    if let Some(v1_tags) = v1.as_ref().and_then(|b| id3v1::parse(b)) {
-        fill_missing(&mut tags, &v1_tags);
-    }
-    let audio_len = len
+        .min(st.head.len());
+    let audio_len = st
+        .len
         .saturating_sub(audio_start as u64)
-        .saturating_sub(if v1.is_some() { id3v1::LEN as u64 } else { 0 });
-    let format = probe(&head[audio_start..], audio_len);
+        .saturating_sub(if st.v1.is_some() { id3v1::LEN as u64 } else { 0 });
+    let format = probe(&st.head[audio_start..], audio_len);
     Ok(AudioMeta {
         container: Container::Mp3,
-        tags,
+        tags: st.view(),
         format,
+        write_blocker: st.problem,
     })
 }
 
@@ -278,28 +330,50 @@ fn probe(buf: &[u8], audio_len: u64) -> AudioFormat {
 
 // ── Writing ─────────────────────────────────────────────────────────────────
 
+#[cfg(test)]
 pub fn write(path: &Path, tags: &AudioTags) -> Result<(), String> {
+    write_from(path, None, tags)
+}
+
+/// `shown`: what the editor loaded and showed (see `audio_tags::write_from`).
+/// `None`: the file's tags as they are now, so every field of `tags` that
+/// differs from the file is written.
+pub fn write_from(path: &Path, shown: Option<&AudioTags>, tags: &AudioTags) -> Result<(), String> {
     // A file we may not write is refused up front. (The temp-file path could
     // otherwise replace a read-only file in a writable folder and then fail
     // on the ID3v1 step, reporting "failed" for a save that had happened.)
     OpenOptions::new().write(true).open(path).map_err(io_err)?;
     let mut f = File::open(path).map_err(io_err)?;
-    let len = f.metadata().map_err(io_err)?.len();
-    let head = read_head(&mut f, len)?;
-    drop(f);
-    let mut tag = id3::parse(&head).unwrap_or_else(id3::Id3Tag::new);
-    // The header's size field is not checked against the file by the
-    // parser. A tag claiming more than the file holds would, clamped to the
-    // file length, make the in-place path below overwrite ALL of the audio
-    // with tag padding.
-    if tag.total_len as u64 > len {
-        return Err("ID3 tag is damaged (it claims more bytes than the file holds)".into());
+    let mut st = load(&mut f)?;
+    let seen = super::Seen::of(&f).map_err(io_err)?;
+    let current = st.view();
+    // What counts as edited is measured against what the user was shown.
+    // Measured against the file, every tag another program changed since
+    // the dialog opened would be "edited" back to its old value.
+    let old = shown.unwrap_or(&current);
+    if old.same_as(tags) || current.same_as(tags) {
+        return Ok(());
     }
+    if let Some(why) = &st.problem {
+        return Err(refusal(why));
+    }
+    // Not while a copy or a download of it is still being written.
+    super::writer_check(path, &f)?;
+    drop(f);
+    let mut tag = st.tag.take().unwrap_or_else(id3::Id3Tag::new);
     let old_total = tag.total_len;
-    tag.apply(tags);
-    let new = tag.build(old_total);
+    // Only what the user changed; every other frame goes back as it was.
+    tag.apply_changes(old, tags)?;
+    let new = tag.build(old_total)?;
     if old_total > 0 && new.len() == old_total {
-        let f = OpenOptions::new().write(true).open(path).map_err(io_err)?;
+        let f = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .map_err(io_err)?;
+        if super::Seen::of(&f).map_err(io_err)? != seen {
+            return Err(refusal(super::CHANGED_MEANWHILE));
+        }
         f.write_all_at(&new, 0).map_err(io_err)?;
         f.sync_all().map_err(io_err)?;
     } else {
@@ -312,14 +386,15 @@ pub fn write(path: &Path, tags: &AudioTags) -> Result<(), String> {
     }
     // The v2 tag is committed. A failure keeping the old v1 trailer in step
     // must not turn a save that happened into "Save failed".
-    if let Err(e) = sync_v1(path, tags) {
+    if let Err(e) = sync_v1(path, old, tags) {
         eprintln!("[fox] ID3v1 trailer not updated for {}: {e}", path.display());
     }
     Ok(())
 }
 
-/// If the file carries an ID3v1 trailer, keep it agreeing with the v2 tag.
-fn sync_v1(path: &Path, tags: &AudioTags) -> Result<(), String> {
+/// If the file carries an ID3v1 trailer, carry the edit into it as well: an
+/// old value left there would fill the field again on the next read.
+fn sync_v1(path: &Path, old: &AudioTags, new: &AudioTags) -> Result<(), String> {
     let f = OpenOptions::new()
         .read(true)
         .write(true)
@@ -329,8 +404,11 @@ fn sync_v1(path: &Path, tags: &AudioTags) -> Result<(), String> {
     let Some(existing) = read_v1(&f, len) else {
         return Ok(());
     };
-    let new = id3v1::build(tags, Some(&existing));
-    f.write_all_at(&new, len - id3v1::LEN as u64)
+    let updated = id3v1::update(&existing, old, new);
+    if updated == existing {
+        return Ok(());
+    }
+    f.write_all_at(&updated, len - id3v1::LEN as u64)
         .map_err(io_err)?;
     f.sync_all().map_err(io_err)
 }

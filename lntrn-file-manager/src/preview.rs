@@ -107,11 +107,14 @@ pub fn draw_preview_pane(
     cy += 10.0 * s;
 
     // Metadata rows
-    let info = file_info.get(&entry.path).clone();
-    let kind = if entry.is_dir {
-        "Folder".to_string()
-    } else {
-        info.type_name.clone()
+    let info = file_info
+        .get(&entry.path, (entry.size, entry.modified))
+        .clone();
+    let kind = match (entry.is_symlink, entry.is_dir) {
+        (false, true) => "Folder".to_string(),
+        (false, false) => info.type_name.clone(),
+        (true, true) => "Link to folder".to_string(),
+        (true, false) => format!("Link to {}", info.type_name),
     };
     let size = if entry.is_dir {
         "—".to_string()

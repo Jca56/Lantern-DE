@@ -3,20 +3,25 @@ use crate::{PickConfig, PickResult};
 use std::path::PathBuf;
 use std::time::Instant;
 
+mod background;
+mod device_ops;
 mod dir_load;
 mod edit;
 mod nav;
+mod notify;
+mod pick_confirm;
 mod places;
+mod root;
 mod search;
 mod select;
 mod split;
 mod tabs;
+mod tree;
 
-pub use dir_load::DirLoadTarget;
-pub(crate) use split::remap_parked;
 pub(crate) use edit::{
     floor_boundary, is_plain_file_name, is_same_entry, next_boundary, prev_boundary,
 };
+pub use pick_confirm::PickDialog;
 pub use split::{PaneView, SplitState};
 
 /// Which pane of the split view. `Left` is the primary pane (tabs, sidebar
@@ -127,6 +132,9 @@ pub struct DirectoryTab {
     pub pinned: bool,
     /// The directory this tab was pinned to. Always restored on startup.
     pub pinned_path: Option<PathBuf>,
+    /// The folder root mode was switched on for in this tab. Root mode is
+    /// on only while the tab shows exactly that folder (app/root.rs).
+    pub root_dir: Option<PathBuf>,
 }
 
 impl DirectoryTab {
@@ -139,6 +147,7 @@ impl DirectoryTab {
             history_forward: Vec::new(),
             pinned: false,
             pinned_path: None,
+            root_dir: None,
         }
     }
 
@@ -158,12 +167,16 @@ pub struct PendingDrop {
     pub dest_dir: PathBuf,
     /// Which tab to reload after the operation (if dropped on a tab).
     pub reload_tab: Option<usize>,
+    /// Dropped in the focused pane's own list (see `DropTarget::Folder`).
+    pub in_pane: bool,
 }
 
 pub struct App {
     // Tab state
     pub tabs: Vec<DirectoryTab>,
     pub current_tab: usize,
+    /// Pinned tabs that could not be restored this time (app/tabs.rs).
+    pub(super) absent_pins: Vec<String>,
 
     // Split view (None = single pane). See app/split.rs for the model.
     pub split: Option<SplitState>,
@@ -209,6 +222,8 @@ pub struct App {
     pub(super) places: Vec<Place>,
     /// User-pinned folder shortcuts. Same shape as `places` — name + path.
     pub(super) favorites: Vec<Place>,
+    /// Favourites whose folder is not there right now (app/places.rs).
+    pub(super) favorites_offline: std::collections::HashSet<PathBuf>,
     pub drives: Vec<fs::Drive>,
     pub phones: Vec<fs::Phone>,
 
@@ -217,6 +232,8 @@ pub struct App {
     pub places_collapsed: bool,
     pub favorites_collapsed: bool,
     pub devices_collapsed: bool,
+    /// How far the sidebar's rows are scrolled (layout/sidebar.rs).
+    pub sidebar_scroll: f32,
 
     // Rubber band selection
     pub rubber_band_start: Option<(f32, f32)>,
@@ -289,6 +306,9 @@ pub struct App {
     /// Selection range (byte offsets) in `save_name_buf`. Used to pre-highlight
     /// the basename of an auto-suggested "Untitled.ext" so typing replaces it.
     pub save_name_selection: Option<(usize, usize)>,
+    /// A Save picker asking a slow device whether the typed name is taken
+    /// (app/pick_confirm.rs): the path asked about, and the answer on its way.
+    pub(super) save_check: Option<(PathBuf, crate::bg::Task<pick_confirm::SaveTarget>)>,
 
     // Properties dialog
     pub properties: Option<crate::properties::FileProperties>,
@@ -298,9 +318,21 @@ pub struct App {
 
     // Drop confirmation modal
     pub pending_drop: Option<PendingDrop>,
+    /// Where a drag from outside the window would land, in words, while it
+    /// hovers (dnd_in.rs).
+    pub drop_hint: Option<String>,
 
-    // Sudo password prompt (None = no modal open).
-    pub sudo_prompt: Option<crate::dialogs::SudoPrompt>,
+    // The privileged operation in hand: its delete question, password
+    // field or "working" state (None = no modal open), and the operations
+    // waiting behind it. See priv_ops.rs.
+    pub sudo_prompt: Option<crate::priv_ops::SudoPrompt>,
+    pub(crate) priv_queue: std::collections::VecDeque<crate::sudo::PendingPrivOp>,
+    /// Unfinished copies the user has been asked about in this window
+    /// (op_dialogs.rs): once is enough.
+    pub(crate) leftovers_asked: std::collections::HashSet<PathBuf>,
+    /// Root mode has been on since the sudo ticket was last dropped
+    /// (app/root.rs: the ticket ends when root mode does).
+    pub(crate) root_ticket: bool,
 
     // Conflict dialog (Replace/Keep Both/Skip) + in-progress paste state.
     pub conflict_dialog: Option<crate::conflict::ConflictDialog>,
@@ -310,21 +342,47 @@ pub struct App {
     /// can be in flight at a time.
     pub pending_rename: Option<crate::conflict::PendingRename>,
 
-    // Background copy worker (None = nothing running).
-    pub op_progress: Option<crate::ops::OpHandle>,
+    // Background copy / move / delete operations: the running one and the
+    // ones queued behind it.
+    pub ops: crate::ops::OpQueue,
+    /// Notices and questions around those operations (failure reports,
+    /// "delete permanently?", "close while busy?"). The front one is shown.
+    pub op_dialogs: std::collections::VecDeque<crate::op_dialogs::OpDialog>,
+    /// A close was accepted while an operation was still running: the main
+    /// loop exits as soon as the worker is idle.
+    pub closing: bool,
+    /// One line shown in the status bar until the given moment (the result
+    /// of an undo or redo). See app/notify.rs.
+    pub(super) status_note: Option<(String, Instant)>,
+    /// Set by a background thread that changed a listed folder.
+    pub(super) refresh_wanted: std::sync::Arc<std::sync::atomic::AtomicBool>,
 
     /// Directory listings in flight on worker threads — slow mounts only,
     /// see app/dir_load.rs. Local folders still list synchronously.
-    pub(super) dir_loads: Vec<dir_load::DirLoad>,
+    pub(super) dir_loads: dir_load::DirLoads,
+    /// Listings of slow-mount folders that a tree view shows expanded (or
+    /// as its fixed root), filled by the loader. See app/tree.rs.
+    pub(super) tree_cache: std::collections::HashMap<PathBuf, Vec<FileEntry>>,
+    /// The focused pane changed: reload once the click is done with.
+    pub(super) focus_refresh: bool,
+
+    /// Drive and phone detection on its own thread (devices.rs). `None`
+    /// until the window is up (and in unit tests).
+    pub(super) device_watch: Option<crate::devices::DeviceWatcher>,
+    /// Mount / eject / format / open-phone jobs in flight (device_ops.rs).
+    pub(super) device_jobs: Vec<device_ops::DeviceJob>,
+    /// The cloud sign-in request, while it is out (background.rs).
+    pub(super) signin: Option<crate::bg::Task<Result<(), String>>>,
+    /// Folder icon changes being written and read back (background.rs).
+    pub(super) look_jobs: Vec<crate::bg::Task<background::FolderLook>>,
+    /// When a visible "working…" state was last redrawn.
+    pub(super) last_pulse: Instant,
 
     /// Deferred icon-cache invalidations + xattr writes triggered from the
     /// Properties icon picker. We can't mutate icon_cache during the render
     /// frame (it's immutably borrowed by tex_draws), so render_frame stashes
     /// pending changes here and the wayland_loop applies them between frames.
     pub pending_icon_apply: Vec<(std::path::PathBuf, Option<String>)>,
-
-    // Root mode — file operations use pkexec for elevated privileges
-    pub root_mode: bool,
 
     // Native Wayland clipboard
     pub wayland_clipboard: Option<crate::clipboard::Clipboard>,
@@ -339,6 +397,9 @@ pub struct App {
     pub cloud: Option<crate::cloud::CloudState>,
     pub cloud_sync: Option<crate::cloud::sync::SyncHandle>,
     pub cloud_login: Option<crate::dialogs::CloudLoginDialog>,
+    /// What the window shows about sync: the pill, the held-deletions
+    /// question, the sign-in state (cloud_ui.rs).
+    pub cloud_ui: crate::cloud_ui::CloudUi,
 
     // Search
     pub searching: bool,
@@ -352,9 +413,22 @@ pub struct App {
 impl App {
     pub fn new() -> Self {
         let home = dirs_home();
-        let trash_path = home.join(".local/share/Trash/files");
+        // A unit test builds an App to drive its logic: it must not make
+        // folders in the real home, read the real configuration or open a
+        // connection to the running compositor.
+        let for_real = !cfg!(test);
+        if for_real {
+            crate::trash::ensure_home();
+        }
+        let trash_path = crate::trash::home_trash().files();
         let cloud_path = crate::cloud::cloud_root();
-        let _ = crate::cloud::ensure_cloud_dir();
+        // Only while nobody is signed in. With a sign-in on disk a missing
+        // ~/Cloud is something sync has to report ("the folder is missing",
+        // maybe its drive is not connected); re-creating it empty here
+        // would hide that behind "the folder is empty".
+        if for_real && !crate::cloud::Session::path().exists() {
+            let _ = crate::cloud::ensure_cloud_dir();
+        }
         let places = vec![
             Place {
                 name: "Home".into(),
@@ -398,6 +472,7 @@ impl App {
         Self {
             tabs: vec![tab],
             current_tab: 0,
+            absent_pins: Vec::new(),
             split: None,
             split_ratio: 0.5,
             current_dir: home,
@@ -413,11 +488,16 @@ impl App {
             sort_dir: SortDir::Asc,
             places,
             favorites: Vec::new(),
+            favorites_offline: std::collections::HashSet::new(),
             places_collapsed: false,
             favorites_collapsed: false,
             devices_collapsed: false,
-            drives: fs::detect_drives(),
-            phones: fs::detect_phones(),
+            sidebar_scroll: 0.0,
+            // Filled by the device watcher a few milliseconds after it is
+            // started: detection runs `lsblk`, not something to wait for
+            // before the first frame.
+            drives: Vec::new(),
+            phones: Vec::new(),
             rubber_band_start: None,
             rubber_band_end: None,
             context_target: None,
@@ -431,7 +511,7 @@ impl App {
             press_ctrl: false,
             last_click_time: None,
             last_click_idx: None,
-            double_click_to_open: read_double_click_to_open(),
+            double_click_to_open: for_real && read_double_click_to_open(),
             selection_anchor: None,
             drag_item: None,
             drag_tree_item: None,
@@ -456,37 +536,45 @@ impl App {
             save_name_cursor: 0,
             save_name_editing: false,
             save_name_selection: None,
+            save_check: None,
             properties: None,
             quick_look: None,
             pending_drop: None,
+            drop_hint: None,
             sudo_prompt: None,
+            priv_queue: std::collections::VecDeque::new(),
+            root_ticket: false,
+            leftovers_asked: std::collections::HashSet::new(),
             conflict_dialog: None,
             pending_paste: None,
             pending_rename: None,
-            op_progress: None,
-            dir_loads: Vec::new(),
+            ops: crate::ops::OpQueue::new(),
+            op_dialogs: std::collections::VecDeque::new(),
+            closing: false,
+            status_note: None,
+            refresh_wanted: Default::default(),
+            dir_loads: dir_load::DirLoads::new(),
+            tree_cache: std::collections::HashMap::new(),
+            focus_refresh: false,
+            device_watch: None,
+            device_jobs: Vec::new(),
+            signin: None,
+            look_jobs: Vec::new(),
+            last_pulse: Instant::now(),
             pending_icon_apply: Vec::new(),
-            wayland_clipboard: crate::clipboard::Clipboard::new(),
+            wayland_clipboard: for_real.then(crate::clipboard::Clipboard::new).flatten(),
             undo_stack: crate::undo::UndoStack::new(),
             breadcrumb_skip: 0,
             searching: false,
             search_buf: String::new(),
             search_cursor: 0,
             search_results: Vec::new(),
-            root_mode: false,
             search_tx: None,
             search_rx: None,
             cloud: None,
             cloud_sync: None,
             cloud_login: None,
-        }
-    }
-}
-
-impl Drop for App {
-    fn drop(&mut self) {
-        for phone in &self.phones {
-            fs::unmount_phone(phone);
+            cloud_ui: crate::cloud_ui::CloudUi::new(),
         }
     }
 }
@@ -530,20 +618,18 @@ pub(super) fn search_recursive(
         };
 
         if name.to_lowercase().contains(query) {
-            let file_entry = FileEntry {
-                name,
-                path: path.clone(),
-                is_dir: meta.is_dir(),
-                size: meta.len(),
-                modified: meta.modified().ok(),
-                selected: false,
-            };
+            // On the search thread, so a link's target and a folder's
+            // attributes can be read here.
+            let mut links = crate::links::Looker::new();
+            let file_entry = FileEntry::listed(name, path.clone(), Some(&meta), &mut links);
             if tx.send(file_entry).is_err() {
                 return;
             }
         }
 
-        // Recurse into subdirectories
+        // Recurse into subdirectories. By the entry's own kind: a link to a
+        // folder is a result like any other, and is not walked into (it may
+        // point back up the tree).
         if meta.is_dir() {
             search_recursive(&path, query, tx, cancel);
         }

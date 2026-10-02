@@ -1,56 +1,123 @@
-//! ID3v2 tag parsing (v2.2 / v2.3 / v2.4) and ID3v2.3 serialisation, plus the
-//! 128-byte ID3v1 trailer. Unknown frames survive a round-trip untouched, so a
-//! Serato / rekordbox / Mixed In Key analysis never gets wiped by us.
+//! ID3v2 tags, v2.2 / v2.3 / v2.4.
+//!
+//! A tag is written back in the version it was read in, and a frame nobody
+//! edited goes back byte for byte: its flags and its stored body are kept
+//! as they are, whatever they hold (compressed, encrypted, a Serato or
+//! rekordbox analysis, a second picture). Only the frames behind a field the
+//! user changed are replaced. A tag the parser could not follow to its end
+//! carries a `blocker` and is never rewritten. See `parse.rs`.
 
 use std::borrow::Cow;
 
-use super::{genres, Artwork, AudioTags};
+use super::{changed, Artwork, AudioTags};
+
+mod parse;
+mod text;
+
+pub use parse::{parse, tag_len};
+pub use text::splice_year;
+use text::{build_apic, build_pic, decode_text, encode_text, parse_apic, parse_pic};
 
 pub const HEADER_LEN: usize = 10;
 /// Padding appended to a freshly built tag so the next edit can land in place.
 const DEFAULT_PADDING: usize = 1024;
+/// Four sync-safe bytes: the most a tag (or a v2.4 frame) can say it holds.
+const MAX_SYNCSAFE: usize = 0x0FFF_FFFF;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Frame {
+    /// A v2.2 id is its three characters followed by a zero.
     pub id: [u8; 4],
+    /// The two flag bytes as read. v2.2 has none; new frames set none.
+    pub flags: [u8; 2],
+    /// The stored body, as it is on disk.
     pub data: Vec<u8>,
+}
+
+impl Frame {
+    pub fn new(id: &[u8], data: Vec<u8>) -> Self {
+        let mut four = [0u8; 4];
+        four[..id.len().min(4)].copy_from_slice(&id[..id.len().min(4)]);
+        Self {
+            id: four,
+            flags: [0, 0],
+            data,
+        }
+    }
+
+    pub fn is(&self, id: &[u8]) -> bool {
+        match id.len() {
+            3 => self.id[..3] == *id && self.id[3] == 0,
+            4 => self.id == *id,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct Id3Tag {
-    /// Major version the tag was read as (2/3/4); 3 when created fresh.
-    #[allow(dead_code)] // read by tests; writer always emits v2.3
+    /// Major version: 2, 3 or 4. A tag created here is v2.3.
     pub version: u8,
+    revision: u8,
+    experimental: bool,
+    /// v2.4 header bit "every frame is unsynchronised".
+    all_unsync: bool,
     pub frames: Vec<Frame>,
     /// Bytes the tag occupied on disk (header + body + padding + footer).
     pub total_len: usize,
+    /// Why this tag must not be rewritten: something in it could not be
+    /// accounted for, and a rewrite would delete it.
+    pub blocker: Option<String>,
 }
 
-// ── Header + helpers ────────────────────────────────────────────────────────
-
-/// Total on-disk length if `bytes` starts with an ID3v2 header.
-pub fn tag_len(bytes: &[u8]) -> Option<usize> {
-    if bytes.len() < HEADER_LEN || &bytes[..3] != b"ID3" {
-        return None;
-    }
-    let major = bytes[3];
-    if !(2..=4).contains(&major) || bytes[4] == 0xFF {
-        return None;
-    }
-    let size = syncsafe(&bytes[6..10])?;
-    let footer = if major == 4 && bytes[5] & 0x10 != 0 {
-        10
-    } else {
-        0
-    };
-    Some(HEADER_LEN + size + footer)
+/// Frame ids of the fields Fox edits, per version.
+struct Ids {
+    title: &'static [u8],
+    artist: &'static [u8],
+    album: &'static [u8],
+    genre: &'static [u8],
+    track: &'static [u8],
+    bpm: &'static [u8],
+    key: &'static [u8],
+    /// Where a year goes when the tag has no date yet.
+    year: &'static [u8],
+    picture: &'static [u8],
 }
 
-fn syncsafe(b: &[u8]) -> Option<usize> {
-    if b.len() < 4 || b[..4].iter().any(|&x| x & 0x80 != 0) {
-        return None;
-    }
-    Some(((b[0] as usize) << 21) | ((b[1] as usize) << 14) | ((b[2] as usize) << 7) | b[3] as usize)
+const V22: Ids = Ids {
+    title: b"TT2",
+    artist: b"TP1",
+    album: b"TAL",
+    genre: b"TCO",
+    track: b"TRK",
+    bpm: b"TBP",
+    key: b"TKE",
+    year: b"TYE",
+    picture: b"PIC",
+};
+const V23: Ids = Ids {
+    title: b"TIT2",
+    artist: b"TPE1",
+    album: b"TALB",
+    genre: b"TCON",
+    track: b"TRCK",
+    bpm: b"TBPM",
+    key: b"TKEY",
+    year: b"TYER",
+    picture: b"APIC",
+};
+const V24: Ids = Ids {
+    year: b"TDRC",
+    ..V23
+};
+
+/// Recording year (v2.3), recording time (v2.4), release time (v2.4): the
+/// frames a year is read from, in that order.
+const DATE_IDS: [&[u8]; 3] = [b"TYER", b"TDRC", b"TDRL"];
+
+/// The refusal for a tag with a `blocker`.
+pub fn blocked(why: &str) -> String {
+    format!("This file's ID3 tag cannot be rewritten without losing part of it: {why}")
 }
 
 fn to_syncsafe(n: usize) -> [u8; 4] {
@@ -62,372 +129,103 @@ fn to_syncsafe(n: usize) -> [u8; 4] {
     ]
 }
 
-fn be32(b: &[u8]) -> usize {
-    u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize
-}
-
-/// Undo unsynchronisation: every `FF 00` pair collapses to `FF`.
-fn deunsync(b: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        out.push(b[i]);
-        if b[i] == 0xFF && i + 1 < b.len() && b[i + 1] == 0x00 {
-            i += 2;
-        } else {
-            i += 1;
-        }
-    }
-    out
-}
-
-fn valid_id(id: &[u8]) -> bool {
-    id.iter().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
-}
-
-// ── Parsing ─────────────────────────────────────────────────────────────────
-
-pub fn parse(bytes: &[u8]) -> Option<Id3Tag> {
-    let total = tag_len(bytes)?;
-    let major = bytes[3];
-    let flags = bytes[5];
-    let body_end = (HEADER_LEN + syncsafe(&bytes[6..10])?).min(bytes.len());
-    let mut body: Cow<[u8]> = Cow::Borrowed(&bytes[HEADER_LEN..body_end]);
-    // v2.2 / v2.3 apply unsynchronisation to the whole tag body.
-    if flags & 0x80 != 0 && major < 4 {
-        body = Cow::Owned(deunsync(&body));
-    }
-    let mut pos = 0usize;
-    if flags & 0x40 != 0 && major >= 3 {
-        if body.len() < 4 {
-            return None;
-        }
-        let ext = if major == 4 {
-            syncsafe(&body[..4])?
-        } else {
-            be32(&body[..4]) + 4
-        };
-        pos = ext.min(body.len());
-    }
-    let mut frames = Vec::new();
-    match major {
-        2 => parse_v22(&body[pos..], &mut frames),
-        3 => parse_v23(&body[pos..], &mut frames, false),
-        _ => parse_v23(&body[pos..], &mut frames, true),
-    }
-    Some(Id3Tag {
-        version: major,
-        frames,
-        total_len: total,
-    })
-}
-
-fn parse_v22(body: &[u8], frames: &mut Vec<Frame>) {
-    let mut pos = 0;
-    while pos + 6 <= body.len() {
-        let id = &body[pos..pos + 3];
-        if id[0] == 0 || !valid_id(id) {
-            break;
-        }
-        let size = ((body[pos + 3] as usize) << 16)
-            | ((body[pos + 4] as usize) << 8)
-            | body[pos + 5] as usize;
-        pos += 6;
-        if pos + size > body.len() {
-            break;
-        }
-        let data = &body[pos..pos + size];
-        pos += size;
-        let new_id: &[u8; 4] = match id {
-            b"TT2" => b"TIT2",
-            b"TP1" => b"TPE1",
-            b"TAL" => b"TALB",
-            b"TYE" => b"TYER",
-            b"TCO" => b"TCON",
-            b"TRK" => b"TRCK",
-            b"TBP" => b"TBPM",
-            b"TKE" => b"TKEY",
-            b"PIC" => b"APIC",
-            _ => continue, // 3-char ids have no v2.3 home — dropped
-        };
-        let data = if new_id == b"APIC" {
-            convert_pic(data)
-        } else {
-            data.to_vec()
-        };
-        frames.push(Frame {
-            id: *new_id,
-            data,
-        });
-    }
-}
-
-/// v2.2 PIC → v2.3 APIC: the 3-byte format code becomes a MIME string.
-fn convert_pic(d: &[u8]) -> Vec<u8> {
-    if d.len() < 5 {
-        return Vec::new();
-    }
-    let mime: &[u8] = match &d[1..4] {
-        b"PNG" => b"image/png",
-        b"JPG" => b"image/jpeg",
-        _ => b"image/",
-    };
-    let mut out = vec![d[0]];
-    out.extend_from_slice(mime);
-    out.push(0);
-    out.extend_from_slice(&d[4..]);
-    out
-}
-
-fn parse_v23(body: &[u8], frames: &mut Vec<Frame>, v24: bool) {
-    let mut pos = 0;
-    while pos + 10 <= body.len() {
-        let id = &body[pos..pos + 4];
-        if id[0] == 0 || !valid_id(id) {
-            break;
-        }
-        let size = if v24 {
-            match syncsafe(&body[pos + 4..pos + 8]) {
-                Some(s) => s,
-                None => break,
-            }
-        } else {
-            be32(&body[pos + 4..pos + 8])
-        };
-        let flags = body[pos + 9];
-        pos += 10;
-        if size == 0 {
-            continue;
-        }
-        if pos + size > body.len() {
-            break;
-        }
-        let mut data: &[u8] = &body[pos..pos + size];
-        pos += size;
-        let (compressed, encrypted, grouped, unsync, dli) = if v24 {
-            (
-                flags & 0x08 != 0,
-                flags & 0x04 != 0,
-                flags & 0x40 != 0,
-                flags & 0x02 != 0,
-                flags & 0x01 != 0,
-            )
-        } else {
-            (flags & 0x80 != 0, flags & 0x40 != 0, flags & 0x20 != 0, false, false)
-        };
-        if compressed || encrypted {
-            continue;
-        }
-        if grouped && !data.is_empty() {
-            data = &data[1..];
-        }
-        if dli && data.len() >= 4 {
-            data = &data[4..];
-        }
-        let owned = if unsync {
-            deunsync(data)
-        } else {
-            data.to_vec()
-        };
-        frames.push(Frame {
-            id: [id[0], id[1], id[2], id[3]],
-            data: owned,
-        });
-    }
-}
-
-// ── Text encodings ──────────────────────────────────────────────────────────
-
-/// Decode a text frame body (encoding byte + text). v2.4 multi-values
-/// (NUL-separated) are joined with " / ".
-pub fn decode_text(data: &[u8]) -> String {
-    if data.is_empty() {
-        return String::new();
-    }
-    let s = decode_with(data[0], &data[1..]);
-    let parts: Vec<&str> = s
-        .split('\0')
-        .map(|p| p.trim())
-        .filter(|p| !p.is_empty())
-        .collect();
-    parts.join(" / ")
-}
-
-fn decode_with(enc: u8, b: &[u8]) -> String {
-    let s = match enc {
-        0 => b.iter().map(|&c| c as char).collect(),
-        1 => decode_utf16(b, None),
-        2 => decode_utf16(b, Some(true)),
-        _ => String::from_utf8_lossy(b).into_owned(),
-    };
-    s.trim_end_matches('\0').to_string()
-}
-
-fn decode_utf16(b: &[u8], big_endian: Option<bool>) -> String {
-    let (be, body) = match (big_endian, b) {
-        (_, [0xFF, 0xFE, rest @ ..]) => (false, rest),
-        (_, [0xFE, 0xFF, rest @ ..]) => (true, rest),
-        (Some(be), rest) => (be, rest),
-        (None, rest) => (false, rest),
-    };
-    let units: Vec<u16> = body
-        .chunks_exact(2)
-        .map(|c| {
-            if be {
-                u16::from_be_bytes([c[0], c[1]])
-            } else {
-                u16::from_le_bytes([c[0], c[1]])
-            }
-        })
-        .collect();
-    String::from_utf16_lossy(&units)
-}
-
-/// Split off one encoding-terminated string; returns (string, remainder).
-fn take_terminated(enc: u8, b: &[u8]) -> (String, &[u8]) {
-    if enc == 1 || enc == 2 {
-        let mut i = 0;
-        while i + 1 < b.len() {
-            if b[i] == 0 && b[i + 1] == 0 {
-                return (decode_with(enc, &b[..i]), &b[i + 2..]);
-            }
-            i += 2;
-        }
-        (decode_with(enc, b), &[])
-    } else {
-        match b.iter().position(|&c| c == 0) {
-            Some(i) => (decode_with(enc, &b[..i]), &b[i + 1..]),
-            None => (decode_with(enc, b), &[]),
-        }
-    }
-}
-
-fn is_latin1(s: &str) -> bool {
-    s.chars().all(|c| (c as u32) < 0x100)
-}
-
-fn push_encoded(out: &mut Vec<u8>, s: &str, latin: bool) {
-    if latin {
-        out.extend(s.chars().map(|c| c as u8));
-    } else {
-        out.extend_from_slice(&[0xFF, 0xFE]);
-        for u in s.encode_utf16() {
-            out.extend_from_slice(&u.to_le_bytes());
-        }
-    }
-}
-
-/// v2.3 text frame body: Latin-1 when it fits, else UTF-16LE with BOM.
-fn encode_text(s: &str) -> Vec<u8> {
-    let latin = is_latin1(s);
-    let mut out = vec![if latin { 0u8 } else { 1 }];
-    push_encoded(&mut out, s, latin);
-    out
-}
-
-/// desc + NUL + value, optionally with the 3-byte language of COMM/USLT.
-fn encode_pair(desc: &str, value: &str, lang: Option<&[u8]>) -> Vec<u8> {
-    let latin = is_latin1(desc) && is_latin1(value);
-    let mut out = vec![if latin { 0u8 } else { 1 }];
-    if let Some(l) = lang {
-        out.extend_from_slice(l);
-    }
-    push_encoded(&mut out, desc, latin);
-    out.extend_from_slice(if latin { &[0][..] } else { &[0, 0][..] });
-    push_encoded(&mut out, value, latin);
-    out
-}
-
-/// v2.4 allows UTF-8 / UTF-16BE text; v2.3 readers would show garbage, so
-/// re-encode those frames on the way out. Everything else passes through.
-fn normalize_v23(f: &Frame) -> Vec<u8> {
-    let d = &f.data;
-    let textual = f.id[0] == b'T' || &f.id == b"COMM" || &f.id == b"USLT";
-    if d.is_empty() || !textual || d[0] < 2 {
-        return d.clone();
-    }
-    let enc = d[0];
-    if &f.id == b"TXXX" {
-        let (desc, rest) = take_terminated(enc, &d[1..]);
-        return encode_pair(&desc, &decode_with(enc, rest), None);
-    }
-    if &f.id == b"COMM" || &f.id == b"USLT" {
-        if d.len() < 4 {
-            return d.clone();
-        }
-        let (desc, rest) = take_terminated(enc, &d[4..]);
-        return encode_pair(&desc, &decode_with(enc, rest), Some(&d[1..4]));
-    }
-    encode_text(&decode_text(d))
-}
-
-// ── APIC ────────────────────────────────────────────────────────────────────
-
-/// (mime, picture type, image bytes)
-pub fn parse_apic(data: &[u8]) -> Option<(String, u8, Vec<u8>)> {
-    if data.len() < 4 {
-        return None;
-    }
-    let enc = data[0];
-    let (mime, rest) = take_terminated(0, &data[1..]);
-    let pic_type = *rest.first()?;
-    let (_desc, rest) = take_terminated(enc, &rest[1..]);
-    if rest.is_empty() {
-        return None;
-    }
-    let mime = if mime.contains('/') {
-        mime
-    } else {
-        super::sniff_image_mime(rest).unwrap_or("image/jpeg").to_string()
-    };
-    Some((mime, pic_type, rest.to_vec()))
-}
-
-pub fn build_apic(mime: &str, data: &[u8]) -> Vec<u8> {
-    let mut out = vec![0u8]; // Latin-1 for the (empty) description
-    out.extend_from_slice(mime.as_bytes());
-    out.push(0);
-    out.push(3); // front cover
-    out.push(0); // description terminator
-    out.extend_from_slice(data);
-    out
-}
-
-// ── Tag API ─────────────────────────────────────────────────────────────────
-
 impl Id3Tag {
     pub fn new() -> Self {
         Self {
             version: 3,
-            frames: Vec::new(),
-            total_len: 0,
+            ..Default::default()
         }
     }
 
-    pub fn text(&self, id: &[u8; 4]) -> Option<String> {
+    fn block(&mut self, why: &str) {
+        if self.blocker.is_none() {
+            self.blocker = Some(why.to_string());
+        }
+    }
+
+    fn ids(&self) -> &'static Ids {
+        match self.version {
+            2 => &V22,
+            4 => &V24,
+            _ => &V23,
+        }
+    }
+
+    /// What a frame holds once its flags are undone. None when Fox cannot
+    /// read it (compressed, encrypted, flags it does not know); such a frame
+    /// is still carried through a save untouched.
+    fn content<'a>(&self, f: &'a Frame) -> Option<Cow<'a, [u8]>> {
+        let fl = f.flags[1];
+        match self.version {
+            2 => Some(Cow::Borrowed(&f.data[..])),
+            3 => {
+                // 80 compressed, 40 encrypted, 20 group byte first.
+                if fl & 0xDF != 0 {
+                    return None;
+                }
+                let skip = usize::from(fl & 0x20 != 0);
+                f.data.get(skip..).map(Cow::Borrowed)
+            }
+            _ => {
+                // 40 group byte, 08 compressed, 04 encrypted, 02
+                // unsynchronised, 01 four-byte length first.
+                if fl & 0xBC != 0 {
+                    return None;
+                }
+                let skip = usize::from(fl & 0x40 != 0) + if fl & 0x01 != 0 { 4 } else { 0 };
+                // Same leniency as other readers: a frame flagged as
+                // unsynchronised whose bytes plainly are not is read as is.
+                if (fl & 0x02 != 0 || self.all_unsync) && parse::unsync_is_valid(&f.data) {
+                    let d = parse::deunsync(&f.data);
+                    (d.len() >= skip).then(|| Cow::Owned(d[skip..].to_vec()))
+                } else {
+                    f.data.get(skip..).map(Cow::Borrowed)
+                }
+            }
+        }
+    }
+
+    pub fn text(&self, id: &[u8]) -> Option<String> {
         self.frames
             .iter()
-            .find(|f| &f.id == id)
-            .map(|f| decode_text(&f.data))
-            .filter(|s| !s.is_empty())
+            .filter(|f| f.is(id))
+            .filter_map(|f| self.content(f))
+            .map(|c| decode_text(&c))
+            .find(|s| !s.is_empty())
     }
 
-    pub fn set_text(&mut self, id: &[u8; 4], value: &str) {
-        let value = value.trim();
-        self.frames.retain(|f| &f.id != id);
-        if !value.is_empty() {
-            self.frames.push(Frame {
-                id: *id,
-                data: encode_text(value),
-            });
+    /// Replace every frame `id` with one holding `value` (none when empty).
+    /// The new frame takes the place of the first old one, so the order of
+    /// the tag stays what it was.
+    fn replace(&mut self, id: &[u8], body: Option<Vec<u8>>) {
+        let at = self.frames.iter().position(|f| f.is(id));
+        self.frames.retain(|f| !f.is(id));
+        if let Some(body) = body {
+            let frame = Frame::new(id, body);
+            match at {
+                Some(i) => self.frames.insert(i, frame),
+                None => self.frames.push(frame),
+            }
         }
+    }
+
+    pub fn set_text(&mut self, id: &[u8], value: &str) {
+        let value = value.trim();
+        self.replace(id, (!value.is_empty()).then(|| encode_text(value)));
     }
 
     /// Front cover if present, else the first picture.
     pub fn artwork(&self) -> Option<Artwork> {
+        let id = self.ids().picture;
         let mut best: Option<(u8, Artwork)> = None;
-        for f in self.frames.iter().filter(|f| &f.id == b"APIC") {
-            if let Some((mime, ty, data)) = parse_apic(&f.data) {
+        for f in self.frames.iter().filter(|f| f.is(id)) {
+            let Some(body) = self.content(f) else { continue };
+            let parsed = if self.version == 2 {
+                parse_pic(&body)
+            } else {
+                parse_apic(&body)
+            };
+            if let Some((mime, ty, data)) = parsed {
                 let better = match &best {
                     None => true,
                     Some((bt, _)) => ty == 3 && *bt != 3,
@@ -440,72 +238,145 @@ impl Id3Tag {
         best.map(|(_, a)| a)
     }
 
-    pub fn set_artwork(&mut self, art: Option<&Artwork>) {
-        self.frames.retain(|f| &f.id != b"APIC");
-        if let Some(a) = art {
-            self.frames.push(Frame {
-                id: *b"APIC",
-                data: build_apic(&a.mime, &a.data),
-            });
+    pub fn set_artwork(&mut self, art: Option<&Artwork>) -> Result<(), String> {
+        let id = self.ids().picture;
+        let body = match art {
+            None => None,
+            Some(a) if self.version == 2 => Some(build_pic(&a.mime, &a.data).ok_or_else(|| {
+                "This file's ID3v2.2 tag can only hold PNG, JPEG, GIF or BMP pictures".to_string()
+            })?),
+            Some(a) => Some(build_apic(&a.mime, &a.data)),
+        };
+        self.replace(id, body);
+        Ok(())
+    }
+
+    fn year(&self) -> String {
+        let stored = if self.version == 2 {
+            self.text(V22.year)
+        } else {
+            DATE_IDS.iter().find_map(|id| self.text(id))
+        };
+        stored
+            .map(|y| y.chars().take(4).collect())
+            .unwrap_or_default()
+    }
+
+    /// The year lives in up to three frames, and the stored value may be a
+    /// full date. Recording dates that exist follow the edit, keeping their
+    /// month and day; a release date is only removed, when the year is
+    /// cleared, or it would come straight back as the year on the next read.
+    fn set_year(&mut self, year: &str) {
+        let year = year.trim();
+        if self.version == 2 {
+            self.set_text(V22.year, year);
+            return;
+        }
+        if year.is_empty() {
+            for id in DATE_IDS {
+                self.replace(id, None);
+            }
+            return;
+        }
+        let mut updated = false;
+        for id in &DATE_IDS[..2] {
+            if let Some(stored) = self.text(id) {
+                self.set_text(id, &splice_year(&stored, year));
+                updated = true;
+            }
+        }
+        if !updated {
+            self.set_text(self.ids().year, year);
         }
     }
 
     pub fn to_tags(&self) -> AudioTags {
-        let year = self
-            .text(b"TYER")
-            .or_else(|| self.text(b"TDRC"))
-            .or_else(|| self.text(b"TDRL"))
-            .map(|y| y.chars().take(4).collect())
-            .unwrap_or_default();
+        let ids = self.ids();
+        let get = |id: &[u8]| self.text(id).unwrap_or_default();
         AudioTags {
-            title: self.text(b"TIT2").unwrap_or_default(),
-            artist: self.text(b"TPE1").unwrap_or_default(),
-            album: self.text(b"TALB").unwrap_or_default(),
-            year,
+            title: get(ids.title),
+            artist: get(ids.artist),
+            album: get(ids.album),
+            year: self.year(),
             genre: self
-                .text(b"TCON")
-                .map(|g| genres::resolve_tcon(&g))
+                .text(ids.genre)
+                .map(|g| super::genres::resolve_tcon(&g))
                 .unwrap_or_default(),
-            track: self.text(b"TRCK").unwrap_or_default(),
-            bpm: self.text(b"TBPM").unwrap_or_default(),
-            key: self.text(b"TKEY").unwrap_or_default(),
+            track: get(ids.track),
+            bpm: get(ids.bpm),
+            key: get(ids.key),
             artwork: self.artwork(),
         }
     }
 
-    pub fn apply(&mut self, t: &AudioTags) {
-        self.set_text(b"TIT2", &t.title);
-        self.set_text(b"TPE1", &t.artist);
-        self.set_text(b"TALB", &t.album);
-        // One year, not two: drop the v2.4 spellings when writing v2.3.
-        self.frames
-            .retain(|f| &f.id != b"TDRC" && &f.id != b"TDRL");
-        self.set_text(b"TYER", &t.year);
-        self.set_text(b"TCON", &t.genre);
-        self.set_text(b"TRCK", &t.track);
-        self.set_text(b"TBPM", &t.bpm);
-        self.set_text(b"TKEY", &t.key);
-        // Only when the picture really changed. Rebuilding it on every save
-        // collapsed all pictures into one retyped "front cover" even when
-        // the user only fixed a title.
-        if t.artwork != self.artwork() {
-            self.set_artwork(t.artwork.as_ref());
+    /// Carry the user's edit into the tag: `old` is what the editor showed,
+    /// `new` what it holds now. A field that is the same in both is not
+    /// touched, so a save never rewrites what was not edited. (It used to
+    /// rewrite everything from the displayed text: a full date became a
+    /// year, "(17)" became "Rock", several values became one.)
+    pub fn apply_changes(&mut self, old: &AudioTags, new: &AudioTags) -> Result<(), String> {
+        let ids = self.ids();
+        for (id, was, now) in [
+            (ids.title, &old.title, &new.title),
+            (ids.artist, &old.artist, &new.artist),
+            (ids.album, &old.album, &new.album),
+            (ids.genre, &old.genre, &new.genre),
+            (ids.track, &old.track, &new.track),
+            (ids.bpm, &old.bpm, &new.bpm),
+            (ids.key, &old.key, &new.key),
+        ] {
+            if changed(was, now) {
+                self.set_text(id, now);
+            }
         }
+        if changed(&old.year, &new.year) {
+            self.set_year(&new.year);
+        }
+        if old.artwork != new.artwork {
+            self.set_artwork(new.artwork.as_ref())?;
+        }
+        Ok(())
     }
 
-    /// Serialise as ID3v2.3. Pads up to `min_total` bytes when the content
-    /// fits, so the caller can overwrite an existing tag in place.
-    pub fn build(&self, min_total: usize) -> Vec<u8> {
+    /// `apply_changes` against the tag's own current values.
+    #[cfg(test)]
+    pub fn apply(&mut self, t: &AudioTags) {
+        let old = self.to_tags();
+        self.apply_changes(&old, t).unwrap();
+    }
+
+    /// Serialise in the tag's own version. Pads up to `min_total` bytes when
+    /// the content fits, so the caller can overwrite an existing tag in
+    /// place.
+    pub fn build(&self, min_total: usize) -> Result<Vec<u8>, String> {
+        let too_big = || "The tag would be larger than ID3 allows".to_string();
         let mut body = Vec::new();
         for f in &self.frames {
-            let data = normalize_v23(f);
-            if data.is_empty() {
-                continue;
+            let n = f.data.len();
+            match self.version {
+                2 => {
+                    if n > 0xFF_FFFF {
+                        return Err(too_big());
+                    }
+                    body.extend_from_slice(&f.id[..3]);
+                    body.extend_from_slice(&(n as u32).to_be_bytes()[1..]);
+                }
+                3 => {
+                    let n = u32::try_from(n).map_err(|_| too_big())?;
+                    body.extend_from_slice(&f.id);
+                    body.extend_from_slice(&n.to_be_bytes());
+                    body.extend_from_slice(&f.flags);
+                }
+                _ => {
+                    if n > MAX_SYNCSAFE {
+                        return Err(too_big());
+                    }
+                    body.extend_from_slice(&f.id);
+                    body.extend_from_slice(&to_syncsafe(n));
+                    body.extend_from_slice(&f.flags);
+                }
             }
-            body.extend_from_slice(&f.id);
-            body.extend_from_slice(&(data.len() as u32).to_be_bytes());
-            body.extend_from_slice(&[0, 0]);
-            body.extend_from_slice(&data);
+            body.extend_from_slice(&f.data);
         }
         let content = HEADER_LEN + body.len();
         let total = if content <= min_total {
@@ -513,11 +384,24 @@ impl Id3Tag {
         } else {
             content + DEFAULT_PADDING
         };
+        if total - HEADER_LEN > MAX_SYNCSAFE {
+            return Err(too_big());
+        }
+        // No unsynchronisation, extended header or footer in what we write:
+        // the first was undone on read (v2.4 frames carry their own flag),
+        // a tag with the second is never rewritten, and the third only
+        // repeats the header for a tag at the end of a file.
+        let flags = if self.experimental && self.version >= 3 {
+            0x20
+        } else {
+            0
+        };
         let mut out = Vec::with_capacity(total);
-        out.extend_from_slice(b"ID3\x03\x00\x00");
+        out.extend_from_slice(b"ID3");
+        out.extend_from_slice(&[self.version.clamp(2, 4), self.revision, flags]);
         out.extend_from_slice(&to_syncsafe(total - HEADER_LEN));
         out.extend_from_slice(&body);
         out.resize(total, 0);
-        out
+        Ok(out)
     }
 }

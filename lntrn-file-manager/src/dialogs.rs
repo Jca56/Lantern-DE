@@ -3,14 +3,11 @@ use lntrn_ui::gpu::{FontSize, FoxPalette, InteractionContext, TextInput, TextLab
 
 use crate::conflict::ConflictDialog;
 use crate::fs::Drive;
-use crate::sudo::PendingPrivOp;
 use crate::{
     ZONE_CLOUD_LOGIN_CANCEL, ZONE_CLOUD_LOGIN_EMAIL, ZONE_CLOUD_LOGIN_PASSWORD,
     ZONE_CLOUD_LOGIN_SCRIM, ZONE_CLOUD_LOGIN_SUBMIT, ZONE_CONFLICT_APPLY_TO_ALL,
     ZONE_CONFLICT_CANCEL, ZONE_CONFLICT_KEEP_BOTH, ZONE_CONFLICT_REPLACE, ZONE_CONFLICT_SCRIM,
-    ZONE_CONFLICT_SKIP, ZONE_DRIVE_DIALOG_CANCEL, ZONE_DRIVE_DIALOG_CONFIRM, ZONE_DRIVE_DIALOG_OK,
-    ZONE_DRIVE_DIALOG_SCRIM, ZONE_SUDO_CANCEL, ZONE_SUDO_PASSWORD, ZONE_SUDO_SCRIM,
-    ZONE_SUDO_SUBMIT,
+    ZONE_CONFLICT_SKIP, ZONE_DRIVE_DIALOG_OK, ZONE_DRIVE_DIALOG_SCRIM,
 };
 
 // ── Cloud login dialog ─────────────────────────────────────────────────────
@@ -199,24 +196,41 @@ pub fn draw_cloud_login(
     let btn_x = dx + dialog_w - pad - total_btn_w;
 
     let cancel_rect = Rect::new(btn_x, cy, btn_w, btn_h);
-    let cancel_state = input.add_zone(ZONE_CLOUD_LOGIN_CANCEL, cancel_rect);
-    draw_button(
-        painter,
-        text,
-        cancel_rect,
-        "Cancel",
-        cancel_state.is_hovered(),
-        pal,
-        ButtonStyle::Secondary,
-        sw,
-        sh,
-        s,
-    );
+    if dialog.submitting {
+        // The request is out and cannot be called back: the dialog waits
+        // for its answer (bounded by the HTTP timeouts).
+        draw_button(
+            painter,
+            text,
+            cancel_rect,
+            "Cancel",
+            false,
+            pal,
+            ButtonStyle::Disabled,
+            sw,
+            sh,
+            s,
+        );
+    } else {
+        let cancel_state = input.add_zone(ZONE_CLOUD_LOGIN_CANCEL, cancel_rect);
+        draw_button(
+            painter,
+            text,
+            cancel_rect,
+            "Cancel",
+            cancel_state.is_hovered(),
+            pal,
+            ButtonStyle::Secondary,
+            sw,
+            sh,
+            s,
+        );
+    }
 
     let submit_label = if dialog.submitting {
-        "Signing in..."
+        format!("Signing in{}", crate::bg::dots())
     } else {
-        "Sign In"
+        "Sign In".to_string()
     };
     let submit_rect = Rect::new(btn_x + btn_w + btn_gap, cy, btn_w, btn_h);
     let submit_state = input.add_zone(ZONE_CLOUD_LOGIN_SUBMIT, submit_rect);
@@ -229,7 +243,7 @@ pub fn draw_cloud_login(
         painter,
         text,
         submit_rect,
-        submit_label,
+        &submit_label,
         submit_state.is_hovered() && dialog.can_submit(),
         pal,
         submit_style,
@@ -239,7 +253,7 @@ pub fn draw_cloud_login(
     );
 }
 
-fn draw_overlay_with_scrim(
+pub(crate) fn draw_overlay_with_scrim(
     painter: &mut Painter,
     input: &mut InteractionContext,
     screen_w: f32,
@@ -279,6 +293,9 @@ pub enum DriveDialog {
         drive: Drive,
         disk_size: u64,
         error: Option<String>,
+        /// The format is running (app/device_ops.rs). The dialog says so and
+        /// offers only to be hidden; the result closes it or fills `error`.
+        working: bool,
     },
     /// Read-only properties view — single OK button.
     Properties { drive: Drive },
@@ -296,10 +313,16 @@ pub fn draw(
     s: f32,
 ) {
     match dialog {
-        DriveDialog::ConfirmFormat { drive, error, .. } => {
-            draw_confirm_format(
+        DriveDialog::ConfirmFormat {
+            drive,
+            error,
+            working,
+            ..
+        } => {
+            crate::format_dialog::draw(
                 drive,
                 error.as_deref(),
+                *working,
                 painter,
                 text,
                 palette,
@@ -320,7 +343,12 @@ pub fn draw(
 /// Greedy word-wrap `body` (honoring explicit `\n`) into lines no wider than
 /// `max_w` at `font_size`, measured with the real text engine so proportional
 /// fonts wrap accurately.
-fn wrap_lines(text: &mut TextRenderer, body: &str, font_size: f32, max_w: f32) -> Vec<String> {
+pub(crate) fn wrap_lines(
+    text: &mut TextRenderer,
+    body: &str,
+    font_size: f32,
+    max_w: f32,
+) -> Vec<String> {
     let mut lines = Vec::new();
     for para in body.split('\n') {
         let mut cur = String::new();
@@ -411,119 +439,6 @@ fn draw_message(
         ok_state.is_hovered(),
         pal,
         ButtonStyle::Primary,
-        sw,
-        sh,
-        s,
-    );
-}
-
-fn draw_confirm_format(
-    drive: &Drive,
-    error: Option<&str>,
-    painter: &mut Painter,
-    text: &mut TextRenderer,
-    pal: &FoxPalette,
-    input: &mut InteractionContext,
-    screen: (u32, u32),
-    s: f32,
-) {
-    let (sw, sh) = screen;
-    let screen_w = sw as f32;
-    let screen_h = sh as f32;
-
-    let pad = 24.0 * s;
-    let cr = 12.0 * s;
-    let title_font = 28.0 * s;
-    let body_font = 18.0 * s;
-    let row_gap = 8.0 * s;
-    let btn_h = 40.0 * s;
-    let btn_w = 120.0 * s;
-    let btn_gap = 12.0 * s;
-    let dialog_w = 480.0 * s;
-
-    let body_lines: f32 = if error.is_some() { 4.0 } else { 3.0 };
-    let dialog_h = pad * 2.0
-        + title_font
-        + pad * 0.6
-        + body_font * body_lines
-        + row_gap * (body_lines - 1.0)
-        + pad
-        + btn_h;
-
-    let dx = (screen_w - dialog_w) * 0.5;
-    let dy = (screen_h - dialog_h) * 0.5;
-
-    draw_overlay(
-        painter, input, screen_w, screen_h, dx, dy, dialog_w, dialog_h, cr, pal, s,
-    );
-
-    let mut cy = dy + pad;
-    TextLabel::new(&format!("Format {}?", drive.name), dx + pad, cy)
-        .size(FontSize::Custom(title_font))
-        .color(pal.text)
-        .max_width(dialog_w - pad * 2.0)
-        .draw(text, sw, sh);
-    cy += title_font + pad * 0.6;
-
-    let body_color = pal.text_secondary;
-    TextLabel::new(&format!("Device: {}", drive.device), dx + pad, cy)
-        .size(FontSize::Custom(body_font))
-        .color(body_color)
-        .max_width(dialog_w - pad * 2.0)
-        .draw(text, sw, sh);
-    cy += body_font + row_gap;
-    TextLabel::new(&format!("Size: {}", drive.total_display()), dx + pad, cy)
-        .size(FontSize::Custom(body_font))
-        .color(body_color)
-        .max_width(dialog_w - pad * 2.0)
-        .draw(text, sw, sh);
-    cy += body_font + row_gap;
-    TextLabel::new("All data on this drive will be erased.", dx + pad, cy)
-        .size(FontSize::Custom(body_font))
-        .color(pal.danger)
-        .max_width(dialog_w - pad * 2.0)
-        .draw(text, sw, sh);
-    cy += body_font + row_gap;
-
-    if let Some(err) = error {
-        TextLabel::new(&format!("Error: {err}"), dx + pad, cy)
-            .size(FontSize::Custom(body_font))
-            .color(pal.danger)
-            .max_width(dialog_w - pad * 2.0)
-            .draw(text, sw, sh);
-        cy += body_font + row_gap;
-    }
-
-    cy += pad - row_gap;
-
-    let total_btn_w = btn_w * 2.0 + btn_gap;
-    let btn_x = dx + dialog_w - pad - total_btn_w;
-
-    let cancel_rect = Rect::new(btn_x, cy, btn_w, btn_h);
-    let cancel_state = input.add_zone(ZONE_DRIVE_DIALOG_CANCEL, cancel_rect);
-    draw_button(
-        painter,
-        text,
-        cancel_rect,
-        "Cancel",
-        cancel_state.is_hovered(),
-        pal,
-        ButtonStyle::Secondary,
-        sw,
-        sh,
-        s,
-    );
-
-    let confirm_rect = Rect::new(btn_x + btn_w + btn_gap, cy, btn_w, btn_h);
-    let confirm_state = input.add_zone(ZONE_DRIVE_DIALOG_CONFIRM, confirm_rect);
-    draw_button(
-        painter,
-        text,
-        confirm_rect,
-        "Format",
-        confirm_state.is_hovered(),
-        pal,
-        ButtonStyle::Danger,
         sw,
         sh,
         s,
@@ -631,7 +546,7 @@ fn draw_properties(
     );
 }
 
-fn draw_overlay(
+pub(crate) fn draw_overlay(
     painter: &mut Painter,
     input: &mut InteractionContext,
     screen_w: f32,
@@ -661,13 +576,16 @@ fn draw_overlay(
 }
 
 #[derive(Clone, Copy)]
-enum ButtonStyle {
+pub(crate) enum ButtonStyle {
     Primary,
     Secondary,
     Danger,
+    /// Present but not available: greyed out. The caller adds no zone.
+    Disabled,
 }
 
-fn draw_button(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_button(
     painter: &mut Painter,
     text: &mut TextRenderer,
     rect: Rect,
@@ -699,6 +617,11 @@ fn draw_button(
             let bg = if hovered { brighten(base, 0.08) } else { base };
             (bg, Color::rgba(1.0, 1.0, 1.0, 1.0), None)
         }
+        ButtonStyle::Disabled => (
+            pal.surface_2.with_alpha(0.3),
+            pal.muted,
+            Some(pal.muted.with_alpha(0.15)),
+        ),
     };
 
     painter.rect_filled(rect, cr, bg);
@@ -726,181 +649,6 @@ fn brighten(c: Color, amount: f32) -> Color {
     )
 }
 
-// ── Sudo password modal ────────────────────────────────────────────────────
-
-/// Modal that captures keys/clicks until dismissed. Holds the pending op so
-/// the click/key handler can retry it once the password is submitted.
-#[derive(Clone, Debug)]
-pub struct SudoPrompt {
-    pub password: String,
-    pub cursor: usize,
-    pub op: PendingPrivOp,
-    pub error: Option<String>,
-    pub submitting: bool,
-}
-
-impl SudoPrompt {
-    pub fn new(op: PendingPrivOp) -> Self {
-        Self {
-            password: String::new(),
-            cursor: 0,
-            op,
-            error: None,
-            submitting: false,
-        }
-    }
-
-    pub fn can_submit(&self) -> bool {
-        !self.submitting && !self.password.is_empty()
-    }
-}
-
-pub fn draw_sudo_prompt(
-    dialog: &SudoPrompt,
-    painter: &mut Painter,
-    text: &mut TextRenderer,
-    pal: &FoxPalette,
-    input: &mut InteractionContext,
-    screen: (u32, u32),
-    s: f32,
-) {
-    let (sw, sh) = screen;
-    let screen_w = sw as f32;
-    let screen_h = sh as f32;
-
-    let pad = 24.0 * s;
-    let cr = 12.0 * s;
-    let title_font = 26.0 * s;
-    let body_font = 18.0 * s;
-    let label_font = 16.0 * s;
-    let field_h = 48.0 * s;
-    let row_gap = 14.0 * s;
-    let btn_h = 44.0 * s;
-    let btn_w = 130.0 * s;
-    let btn_gap = 12.0 * s;
-    let dialog_w = 540.0 * s;
-
-    let action_desc = dialog.op.description();
-    let err_lines: f32 = if dialog.error.is_some() { 1.0 } else { 0.0 };
-    let dialog_h = pad * 2.0
-        + title_font
-        + pad * 0.4
-        + body_font
-        + row_gap
-        + label_font
-        + 4.0 * s
-        + field_h
-        + row_gap
-        + (err_lines * (body_font + row_gap * 0.5))
-        + pad * 0.4
-        + btn_h;
-
-    let dx = (screen_w - dialog_w) * 0.5;
-    let dy = (screen_h - dialog_h) * 0.5;
-
-    draw_overlay_with_scrim(
-        painter,
-        input,
-        screen_w,
-        screen_h,
-        dx,
-        dy,
-        dialog_w,
-        dialog_h,
-        cr,
-        pal,
-        s,
-        ZONE_SUDO_SCRIM,
-    );
-
-    let mut cy = dy + pad;
-    TextLabel::new("Administrator password required", dx + pad, cy)
-        .size(FontSize::Custom(title_font))
-        .color(pal.text)
-        .max_width(dialog_w - pad * 2.0)
-        .draw(text, sw, sh);
-    cy += title_font + pad * 0.4;
-
-    TextLabel::new(&action_desc, dx + pad, cy)
-        .size(FontSize::Custom(body_font))
-        .color(pal.text_secondary)
-        .max_width(dialog_w - pad * 2.0)
-        .draw(text, sw, sh);
-    cy += body_font + row_gap;
-
-    TextLabel::new("Password", dx + pad, cy)
-        .size(FontSize::Custom(label_font))
-        .color(pal.text_secondary)
-        .max_width(dialog_w - pad * 2.0)
-        .draw(text, sw, sh);
-    cy += label_font + 4.0 * s;
-    let pw_rect = Rect::new(dx + pad, cy, dialog_w - pad * 2.0, field_h);
-    input.add_zone(ZONE_SUDO_PASSWORD, pw_rect);
-    let masked: String = "\u{2022}".repeat(dialog.password.chars().count());
-    TextInput::new(pw_rect)
-        .text(&masked)
-        .placeholder("\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}")
-        .focused(true)
-        .cursor_pos(dialog.cursor)
-        .scale(s)
-        .draw(painter, text, pal, sw, sh);
-    cy += field_h + row_gap;
-
-    if let Some(err) = &dialog.error {
-        TextLabel::new(err, dx + pad, cy)
-            .size(FontSize::Custom(body_font))
-            .color(pal.danger)
-            .max_width(dialog_w - pad * 2.0)
-            .draw(text, sw, sh);
-        cy += body_font + row_gap * 0.5;
-    }
-
-    cy += pad * 0.4;
-
-    let total_btn_w = btn_w * 2.0 + btn_gap;
-    let btn_x = dx + dialog_w - pad - total_btn_w;
-
-    let cancel_rect = Rect::new(btn_x, cy, btn_w, btn_h);
-    let cancel_state = input.add_zone(ZONE_SUDO_CANCEL, cancel_rect);
-    draw_button(
-        painter,
-        text,
-        cancel_rect,
-        "Cancel",
-        cancel_state.is_hovered(),
-        pal,
-        ButtonStyle::Secondary,
-        sw,
-        sh,
-        s,
-    );
-
-    let submit_label = if dialog.submitting {
-        "Authenticating..."
-    } else {
-        "Authenticate"
-    };
-    let submit_rect = Rect::new(btn_x + btn_w + btn_gap, cy, btn_w, btn_h);
-    let submit_state = input.add_zone(ZONE_SUDO_SUBMIT, submit_rect);
-    let submit_style = if dialog.can_submit() {
-        ButtonStyle::Primary
-    } else {
-        ButtonStyle::Secondary
-    };
-    draw_button(
-        painter,
-        text,
-        submit_rect,
-        submit_label,
-        submit_state.is_hovered() && dialog.can_submit(),
-        pal,
-        submit_style,
-        sw,
-        sh,
-        s,
-    );
-}
-
 // ── Conflict dialog (Replace / Keep Both / Skip) ──────────────────────────
 
 pub fn draw_conflict_dialog(
@@ -920,14 +668,14 @@ pub fn draw_conflict_dialog(
     let cr = 12.0 * s;
     let title_font = 24.0 * s;
     let body_font = 18.0 * s;
-    let meta_font = 15.0 * s;
+    let meta_font = 18.0 * s;
     let row_gap = 8.0 * s;
     let section_gap = 16.0 * s;
-    let btn_h = 44.0 * s;
-    let btn_w = 130.0 * s;
+    let btn_h = 48.0 * s;
+    let btn_w = 140.0 * s;
     let btn_gap = 10.0 * s;
-    let dialog_w = 600.0 * s;
-    let checkbox_size = 20.0 * s;
+    let dialog_w = 640.0 * s;
+    let checkbox_size = 22.0 * s;
 
     let name = dialog
         .target
@@ -943,21 +691,38 @@ pub fn draw_conflict_dialog(
                 .unwrap_or_else(|| p.display().to_string())
         })
         .unwrap_or_default();
-    let title = format!("\u{201C}{name}\u{201D} already exists");
+    let title = if dialog.target_meta.is_dir {
+        format!("A folder named \u{201C}{name}\u{201D} already exists")
+    } else {
+        format!("\u{201C}{name}\u{201D} already exists")
+    };
     let subtitle = format!("in \u{201C}{dest_label}\u{201D}");
+
+    // What Replace really does, said before it is chosen. A folder is
+    // replaced whole: nothing is merged, so files that exist only in the
+    // old folder leave with it (to the Trash, where they can be restored).
+    let replace_note = if dialog.no_trash {
+        "There is no Trash on this device, so Replace is not available here."
+    } else if dialog.target_meta.is_dir {
+        "Replace moves the whole existing folder to the Trash. The two folders are not merged."
+    } else {
+        "Replace moves the existing item to the Trash."
+    };
+    let note_lines = wrap_lines(text, replace_note, body_font, dialog_w - pad * 2.0);
+    let note_h = (body_font + row_gap) * note_lines.len() as f32;
 
     let remaining_line = if dialog.remaining_count > 0 { 1.0 } else { 0.0 };
 
     let dialog_h = pad * 2.0
         + title_font + row_gap
         + body_font + section_gap
-        + body_font + row_gap  // "Existing file:" label
+        + body_font + row_gap  // "Existing" label
         + meta_font * 2.0 + row_gap // size + date lines
         + section_gap
-        + body_font + row_gap  // "Source file:" label
-        + meta_font * 2.0 + section_gap
-        + checkbox_size + row_gap
-        + remaining_line * (meta_font + row_gap)
+        + body_font + row_gap  // "Replacement" label
+        + meta_font * 2.0 + row_gap + section_gap
+        + note_h + section_gap
+        + remaining_line * (checkbox_size + row_gap)
         + pad * 0.4
         + btn_h;
 
@@ -977,6 +742,12 @@ pub fn draw_conflict_dialog(
         pal,
         s,
         ZONE_CONFLICT_SCRIM,
+    );
+    // The panel is its own zone: only a click outside it (or Cancel) gives
+    // the whole paste up, not a click on its text.
+    input.add_zone(
+        crate::ZONE_CONFLICT_PANEL,
+        Rect::new(dx, dy, dialog_w, dialog_h),
     );
 
     let mut cy = dy + pad;
@@ -1039,6 +810,17 @@ pub fn draw_conflict_dialog(
         .max_width(dialog_w - pad * 2.0 - 12.0 * s)
         .draw(text, sw, sh);
     cy += meta_font + section_gap;
+
+    for line in &note_lines {
+        TextLabel::new(line, dx + pad, cy)
+            .size(FontSize::Custom(body_font))
+            .color(if dialog.no_trash { pal.warning } else { pal.text_secondary })
+            // Slack so the measured last glyph isn't clipped by the wrap bound.
+            .max_width(dialog_w - pad * 2.0 + 4.0 * s)
+            .draw(text, sw, sh);
+        cy += body_font + row_gap;
+    }
+    cy += section_gap;
 
     // Apply-to-all checkbox.
     if dialog.remaining_count > 0 {
@@ -1112,19 +894,39 @@ pub fn draw_conflict_dialog(
     bx += btn_w + btn_gap;
 
     let rep_rect = Rect::new(bx, cy, btn_w, btn_h);
-    let rep_hov = input.add_zone(ZONE_CONFLICT_REPLACE, rep_rect).is_hovered();
-    draw_button(
-        painter,
-        text,
-        rep_rect,
-        "Replace",
-        rep_hov,
-        pal,
-        ButtonStyle::Danger,
-        sw,
-        sh,
-        s,
-    );
+    if dialog.replace_allowed() {
+        let rep_hov = input.add_zone(ZONE_CONFLICT_REPLACE, rep_rect).is_hovered();
+        draw_button(
+            painter,
+            text,
+            rep_rect,
+            "Replace",
+            rep_hov,
+            pal,
+            ButtonStyle::Danger,
+            sw,
+            sh,
+            s,
+        );
+    } else {
+        // Shown greyed out. It still has its zone, which does nothing while
+        // Replace is not allowed (`resolve_conflict` returns at once):
+        // without one a press here fell through to the scrim, and that
+        // cancels the whole paste.
+        input.add_zone(ZONE_CONFLICT_REPLACE, rep_rect);
+        draw_button(
+            painter,
+            text,
+            rep_rect,
+            "Replace",
+            false,
+            pal,
+            ButtonStyle::Disabled,
+            sw,
+            sh,
+            s,
+        );
+    }
 
     // Cancel sits on the left so it's not next to Replace (avoid misclick).
     let cancel_rect = Rect::new(dx + pad, cy, btn_w, btn_h);
@@ -1146,9 +948,17 @@ pub fn draw_conflict_dialog(
 }
 
 fn format_meta_line(meta: &crate::conflict::ConflictMeta) -> String {
-    // A directory's own size is its inode size, which says nothing.
+    // A directory's own size is its inode size, which says nothing. How
+    // much is in it is what matters before replacing it.
     if meta.is_dir {
-        return "Folder".to_string();
+        return match meta.items {
+            Some(1) => "Folder \u{00B7} 1 item".to_string(),
+            Some(n) if n >= crate::conflict::ITEM_COUNT_CAP => {
+                format!("Folder \u{00B7} {n}+ items")
+            }
+            Some(n) => format!("Folder \u{00B7} {n} items"),
+            None => "Folder".to_string(),
+        };
     }
     format!("File \u{00B7} {}", crate::fs::format_size(meta.size))
 }

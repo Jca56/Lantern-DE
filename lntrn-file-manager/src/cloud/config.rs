@@ -11,6 +11,22 @@ pub struct CloudConfig {
     pub api_key: String,
     pub project_id: String,
     pub storage_bucket: String,
+    /// Where Firestore and Storage are reached. Not normally in the file:
+    /// the defaults are Google's. They exist so the requests can be pointed
+    /// at a local server (the tests do; the Firebase emulator would work the
+    /// same way).
+    #[serde(default = "firestore_origin")]
+    pub firestore_url: String,
+    #[serde(default = "storage_origin")]
+    pub storage_url: String,
+}
+
+fn firestore_origin() -> String {
+    "https://firestore.googleapis.com".to_string()
+}
+
+fn storage_origin() -> String {
+    "https://firebasestorage.googleapis.com".to_string()
 }
 
 impl CloudConfig {

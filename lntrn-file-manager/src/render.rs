@@ -1,24 +1,20 @@
 use lntrn_render::{Color, Rect, TextureDraw};
 use lntrn_ui::gpu::{
-    draw_window_bg, ContextMenu, FontSize, FoxPalette, InteractionContext, MenuEvent, ScrollArea,
-    Scrollbar, TabBar, TextInput, TextLabel, TitleBar,
+    draw_window_bg, ContextMenu, FontSize, FoxPalette, InteractionContext, InteractionState,
+    MenuEvent, ScrollArea, TabBar, TextInput, TextLabel, TitleBar,
 };
 
 use crate::app::{App, ViewMode};
 use crate::icons::{self, IconCache};
 use crate::layout::*;
-use crate::sections::SidebarHovered;
 use crate::sections::*;
 use crate::views::{draw_content_list, draw_content_tree};
 use crate::{
-    Gpu, ZONE_BREADCRUMB_BASE, ZONE_CLOSE, ZONE_CONTENT, ZONE_DRIVE_ITEM_BASE, ZONE_DROP_CANCEL,
-    ZONE_DROP_COPY, ZONE_DROP_MOVE, ZONE_FAVORITE_ITEM_BASE, ZONE_FILE_ITEM_BASE, ZONE_MAXIMIZE,
-    ZONE_MENU_VIEW, ZONE_MINIMIZE, ZONE_NAV_BACK, ZONE_NAV_FORWARD, ZONE_NAV_PREVIEW_TOGGLE,
-    ZONE_NAV_SEARCH, ZONE_NAV_SORT, ZONE_NAV_UP, ZONE_NAV_VIEW_TOGGLE, ZONE_PATH_INPUT,
-    ZONE_PREVIEW_RESIZE, ZONE_RENAME_INPUT, ZONE_SCROLLBAR, ZONE_SIDEBAR_DEVICES_HEADER,
-    ZONE_SIDEBAR_FAVORITES_HEADER, ZONE_SIDEBAR_FAVORITES_PLUS, ZONE_SIDEBAR_ITEM_BASE,
-    ZONE_SIDEBAR_PLACES_HEADER, ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE, ZONE_TAB_NEW,
-    ZONE_TREE_ITEM_BASE,
+    Gpu, ZONE_BREADCRUMB_BASE, ZONE_CLOSE, ZONE_CONTENT, ZONE_DROP_CANCEL, ZONE_DROP_COPY,
+    ZONE_DROP_MOVE, ZONE_FILE_ITEM_BASE, ZONE_MAXIMIZE, ZONE_MENU_VIEW, ZONE_MINIMIZE,
+    ZONE_NAV_BACK, ZONE_NAV_FORWARD, ZONE_NAV_PREVIEW_TOGGLE, ZONE_NAV_SEARCH, ZONE_NAV_SORT,
+    ZONE_NAV_UP, ZONE_NAV_VIEW_TOGGLE, ZONE_PATH_INPUT, ZONE_PREVIEW_RESIZE, ZONE_RENAME_INPUT,
+    ZONE_SCROLLBAR, ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE, ZONE_TAB_NEW, ZONE_TREE_ITEM_BASE,
 };
 use lntrn_ui::gpu::controls::{Button, ButtonVariant};
 
@@ -55,6 +51,7 @@ pub fn render_frame(
     let s = scale;
 
     painter.clear();
+    crate::sections::emblem::start_frame();
     // Normally the text queue empties itself when the last layer renders.
     // After a frame that failed to begin (surface lost), it did not: the
     // stale text and layer state would be replayed into this frame.
@@ -62,7 +59,7 @@ pub fn render_frame(
     input.begin_frame();
 
     // ── Compute content geometry per view mode ─────────────────────────
-    icon_cache.ensure_dir(&app.current_dir);
+    icon_cache.begin_frame([Some(app.current_dir.as_path()), app.inactive_dir()]);
     icon_cache.poll_thumbs(ctx, tex_pass);
     // Quick Look texture upload happens here, before any texture borrows
     // are taken for draw lists.
@@ -128,13 +125,22 @@ pub fn render_frame(
             } else {
                 list_row_h(s, zoom)
             };
-            entries.len() as f32 * rh + 32.0 * list_zoom_multiplier(zoom) * s // +header
+            entries.len() as f32 * rh + list_header_h(s, zoom)
         }
         ViewMode::Tree => tree_content_height(app.tree_entries.len(), s, zoom),
     };
     let scroll_area = ScrollArea::new(content, total_content_h, &mut app.scroll_offset);
     let base_y = scroll_area.content_y();
     let icsz = icon_size(s, zoom);
+    // Where rows are drawn and clicked: in List view everything below the
+    // fixed column header, otherwise the whole content area. Row zones, the
+    // icon pass, the rename box and the play badges all clip to this, so a
+    // row scrolled part-way up cannot show or be hit through the header.
+    let rows_area = if view_mode == ViewMode::List {
+        list_rows_rect(content, s, zoom)
+    } else {
+        content
+    };
 
     // Icon loading for all view modes (visible entries only)
     let has_icon: Vec<bool> = match view_mode {
@@ -158,17 +164,17 @@ pub fn render_frame(
             } else {
                 list_row_h(s, zoom)
             };
-            let hdr_h = 32.0 * list_zoom_multiplier(zoom) * s;
+            let hdr_h = list_header_h(s, zoom);
             for i in 0..entries.len() {
                 let y = base_y + hdr_h + i as f32 * row_h;
-                if y + row_h >= content.y && y <= content.y + content.h {
+                if y + row_h >= rows_area.y && y <= content.y + content.h {
                     icon_cache.get_or_load(&entries[i], ctx, tex_pass);
                 }
             }
             (0..entries.len())
                 .map(|i| {
                     let y = base_y + hdr_h + i as f32 * row_h;
-                    y + row_h >= content.y
+                    y + row_h >= rows_area.y
                         && y <= content.y + content.h
                         && icon_cache.has_icon(&entries[i])
                 })
@@ -266,17 +272,46 @@ pub fn render_frame(
         crate::app::PaneSide::Left => (lx, lw),
         crate::app::PaneSide::Right => (rx, rw),
     });
+    // The pane's buttons come from one layout, so a narrow pane drops
+    // some instead of stacking them (layout/pane_nav.rs); a dropped button
+    // has an empty rect and gets no zone below.
+    let pane_btns = active_col.map(|(px, pw)| {
+        let is_right = matches!(split_geom, Some((_, crate::app::PaneSide::Right)));
+        // What the strip must hold whatever the pane's width: the ROOT
+        // badge, and a box that is being typed into.
+        let typing = app.searching || app.path_editing;
+        let strip = if app.root_mode() {
+            let badge = crate::sections::root_badge::min_width(text, s);
+            let field = if typing {
+                (crate::sections::root_badge::GAP + 60.0) * s
+            } else {
+                0.0
+            };
+            Strip::Badge(badge + field)
+        } else if typing {
+            Strip::Typing
+        } else {
+            Strip::Path
+        };
+        pane_nav(px, pw, is_right, strip, s)
+    });
+    let mut zone = |id: u32, rect: Rect| -> InteractionState {
+        if shown(&rect) {
+            input.add_zone(id, rect)
+        } else {
+            InteractionState::Idle
+        }
+    };
     let (nav_rect, vt_rect, back_rect, fwd_rect, up_rect, cloud_rect, p_rect) =
-        if let Some((px, pw)) = active_col {
-            let is_right = matches!(split_geom, Some((_, crate::app::PaneSide::Right)));
+        if let (Some((px, pw)), Some(btns)) = (active_col, pane_btns) {
             (
                 pane_nav_bar_rect(px, pw, s),
-                pane_view_toggle_rect(px, s),
-                pane_back_rect(px, s),
-                pane_forward_rect(px, s),
-                pane_up_rect(px, s),
+                btns.view_toggle,
+                btns.back,
+                btns.forward,
+                btns.up,
                 Rect::new(0.0, 0.0, 0.0, 0.0),
-                pane_path_rect(px, pw, is_right, s),
+                btns.path,
             )
         } else {
             (
@@ -289,90 +324,32 @@ pub fn render_frame(
                 path_rect(wf, s),
             )
         };
-    let vt_state = input.add_zone(ZONE_NAV_VIEW_TOGGLE, vt_rect);
-    let back_state = input.add_zone(ZONE_NAV_BACK, back_rect);
-    let fwd_state = input.add_zone(ZONE_NAV_FORWARD, fwd_rect);
-    let up_state = input.add_zone(ZONE_NAV_UP, up_rect);
-    let cloud_state = if cloud_rect.w > 0.0 {
-        input.add_zone(crate::ZONE_NAV_CLOUD, cloud_rect)
-    } else {
-        lntrn_ui::gpu::InteractionState::Idle
-    };
+    // Root mode: the ROOT badge takes the head of the path strip. The
+    // breadcrumbs, the path field and their zones all work from what is left.
+    let (p_rect, root_badge) = crate::sections::root_badge::carve(p_rect, app.root_mode(), text, s);
+    let vt_state = zone(ZONE_NAV_VIEW_TOGGLE, vt_rect);
+    let back_state = zone(ZONE_NAV_BACK, back_rect);
+    let fwd_state = zone(ZONE_NAV_FORWARD, fwd_rect);
+    let up_state = zone(ZONE_NAV_UP, up_rect);
+    let cloud_state = zone(crate::ZONE_NAV_CLOUD, cloud_rect);
     let mut breadcrumb_hovered = Vec::new();
     let path_hovered;
     if !app.path_editing && !app.searching {
-        // Register breadcrumb segment zones
-        let segments = crate::sections::breadcrumb_segments(&app.current_dir, s);
-        let font = 22.0 * s;
-        let char_w = font * 0.45;
-        let sep_w = 14.0 * s;
-        let pad_x = 6.0 * s;
-        let seg_width = |name: &str| -> f32 { name.len() as f32 * char_w + pad_x * 2.0 };
-
-        // Compute overflow skip
-        let total_w: f32 = segments
-            .iter()
-            .enumerate()
-            .map(|(i, (name, _))| {
-                if i > 0 {
-                    seg_width(name) + sep_w
-                } else {
-                    seg_width(name)
-                }
-            })
-            .sum();
-        let mut skip = 0;
-        if total_w > p_rect.w {
-            let ellipsis_w = seg_width("...") + sep_w;
-            for (i, _) in segments.iter().enumerate() {
-                let remaining: f32 = segments[i..]
-                    .iter()
-                    .enumerate()
-                    .map(|(j, (n, _))| {
-                        if j > 0 {
-                            seg_width(n) + sep_w
-                        } else {
-                            seg_width(n)
-                        }
-                    })
-                    .sum();
-                if ellipsis_w + remaining <= p_rect.w {
-                    break;
-                }
-                skip = i + 1;
-            }
+        // Breadcrumb zones, from the measured layout the trail is drawn
+        // from (sections/crumbs.rs): each zone is the box its word is in.
+        let trail = crate::sections::crumbs::layout(text, &app.current_dir, p_rect, s);
+        app.breadcrumb_skip = trail.skip;
+        for crumb in trail.crumbs.iter().take(crate::sections::crumbs::MAX_ZONES) {
+            let zone_id = ZONE_BREADCRUMB_BASE + (crumb.index - trail.skip) as u32;
+            breadcrumb_hovered.push(zone(zone_id, crumb.rect).is_hovered());
         }
-
-        app.breadcrumb_skip = skip;
-
-        let mut cx = p_rect.x + 4.0 * s;
-        if skip > 0 {
-            cx += seg_width("...") + sep_w;
-        }
-        for (i, (name, _)) in segments.iter().enumerate() {
-            if i < skip {
-                continue;
-            }
-            if i > skip {
-                cx += sep_w;
-            }
-            let sw = seg_width(name);
-            let seg_rect = Rect::new(cx, p_rect.y + 2.0 * s, sw, p_rect.h - 4.0 * s);
-            let zone_id = ZONE_BREADCRUMB_BASE + (i - skip) as u32;
-            let state = input.add_zone(zone_id, seg_rect);
-            breadcrumb_hovered.push(state.is_hovered());
-            cx += sw;
-        }
-        // Register remaining empty area for clicking into edit mode
-        let remaining_w = (p_rect.x + p_rect.w) - cx;
-        if remaining_w > 0.0 {
-            let empty_rect = Rect::new(cx, p_rect.y, remaining_w, p_rect.h);
-            input.add_zone(ZONE_PATH_INPUT, empty_rect);
+        // What is not a segment starts editing the path when clicked.
+        for rect in &trail.edit {
+            zone(ZONE_PATH_INPUT, *rect);
         }
         path_hovered = false;
     } else {
-        let zone = input.add_zone(ZONE_PATH_INPUT, p_rect);
-        path_hovered = zone.is_hovered();
+        path_hovered = zone(ZONE_PATH_INPUT, p_rect).is_hovered();
     };
     let preview_btn_rect = if active_col.is_some() {
         Rect::new(0.0, 0.0, 0.0, 0.0)
@@ -382,32 +359,27 @@ pub fn render_frame(
     // Only register the preview toggle zone when the active view supports it,
     // so it can't be clicked in Grid mode.
     let preview_btn_state = if preview_supported {
-        input.add_zone(ZONE_NAV_PREVIEW_TOGGLE, preview_btn_rect)
+        zone(ZONE_NAV_PREVIEW_TOGGLE, preview_btn_rect)
     } else {
-        lntrn_ui::gpu::InteractionState::Idle
+        InteractionState::Idle
     };
-    let (sort_rect, srch_rect) = if let Some((px, pw)) = active_col {
-        (pane_sort_rect(px, pw, s), pane_search_rect(px, pw, s))
-    } else {
-        (sort_button_rect(wf, s), search_button_rect(wf, s))
+    let (sort_rect, srch_rect) = match pane_btns {
+        Some(btns) => (btns.sort, btns.search),
+        None => (sort_button_rect(wf, s), search_button_rect(wf, s)),
     };
-    let sort_state = input.add_zone(ZONE_NAV_SORT, sort_rect);
-    let srch_state = input.add_zone(ZONE_NAV_SEARCH, srch_rect);
+    let sort_state = zone(ZONE_NAV_SORT, sort_rect);
+    let srch_state = zone(ZONE_NAV_SEARCH, srch_rect);
 
     // Split toggle: top-right of the window — the single nav bar, or the
     // right pane's nav when split is on and the right pane is focused (the
     // unfocused right pane registers it in render_inactive_pane instead).
-    let split_btn_rect = match split_geom {
+    let split_btn_rect = match pane_btns {
         None => Some(split_toggle_rect(wf, s)),
-        Some(((_, _, rx, rw), crate::app::PaneSide::Right)) => {
-            Some(pane_split_toggle_rect(rx, rw, s))
-        }
-        Some((_, crate::app::PaneSide::Left)) => None,
+        // Empty on the left pane, whose row has no split toggle.
+        Some(btns) => Some(btns.split_toggle).filter(shown),
     };
     if let Some(sb_rect) = split_btn_rect {
-        let sb_hov = input
-            .add_zone(crate::ZONE_SPLIT_TOGGLE, sb_rect)
-            .is_hovered();
+        let sb_hov = zone(crate::ZONE_SPLIT_TOGGLE, sb_rect).is_hovered();
         let active = app.split.is_some();
         let color = if active {
             pal.accent
@@ -455,6 +427,19 @@ pub fn render_frame(
         (w, h),
         s,
     );
+
+    if let Some(badge) = root_badge {
+        crate::sections::root_badge::draw(
+            painter,
+            text,
+            input,
+            pal,
+            badge,
+            Some(crate::ZONE_ROOT_BADGE),
+            (w, h),
+            s,
+        );
+    }
 
     // Focused-pane indicator: accent underline beneath the focused pane's
     // nav bar so it's obvious which pane keyboard/actions apply to.
@@ -589,68 +574,12 @@ pub fn render_frame(
 
     // ── Sidebar ───────────────────────────────────────────────────────
     let sidebar = sidebar_rect(hf, s);
-    let places = app.sidebar_places();
-    let favorites = app.sidebar_favorites();
-    let sb_layout = build_sidebar_layout(
-        s,
-        places.len(),
-        favorites.len(),
-        app.drives.len(),
-        app.phones.len(),
-        app.places_collapsed,
-        app.favorites_collapsed,
-        app.devices_collapsed,
-    );
-
-    // Section header zones (toggle collapse on click).
-    let places_header_hov = input
-        .add_zone(ZONE_SIDEBAR_PLACES_HEADER, sb_layout.places_header)
-        .is_hovered();
-    let favorites_header_hov = input
-        .add_zone(ZONE_SIDEBAR_FAVORITES_HEADER, sb_layout.favorites_header)
-        .is_hovered();
-    let favorites_plus_hov = input
-        .add_zone(ZONE_SIDEBAR_FAVORITES_PLUS, sb_layout.favorites_plus)
-        .is_hovered();
-    let devices_header_hov = if sb_layout.has_devices {
-        input
-            .add_zone(ZONE_SIDEBAR_DEVICES_HEADER, sb_layout.devices_header)
-            .is_hovered()
-    } else {
-        false
-    };
-
-    let mut sidebar_hovered = Vec::with_capacity(places.len());
-    for (i, item_rect) in sb_layout.place_items.iter().enumerate() {
-        let zone_id = ZONE_SIDEBAR_ITEM_BASE + i as u32;
-        sidebar_hovered.push(input.add_zone(zone_id, *item_rect).is_hovered());
-    }
-    let mut favorite_hovered = Vec::with_capacity(favorites.len());
-    for (i, item_rect) in sb_layout.favorite_items.iter().enumerate() {
-        let zone_id = ZONE_FAVORITE_ITEM_BASE + i as u32;
-        favorite_hovered.push(input.add_zone(zone_id, *item_rect).is_hovered());
-    }
-    let mut drive_hovered = Vec::with_capacity(app.drives.len());
-    for (i, item_rect) in sb_layout.drive_items.iter().enumerate() {
-        let zone_id = ZONE_DRIVE_ITEM_BASE + i as u32;
-        drive_hovered.push(input.add_zone(zone_id, *item_rect).is_hovered());
-    }
-    let mut phone_hovered = Vec::with_capacity(app.phones.len());
-    for (i, item_rect) in sb_layout.phone_items.iter().enumerate() {
-        let zone_id = crate::ZONE_PHONE_ITEM_BASE + i as u32;
-        phone_hovered.push(input.add_zone(zone_id, *item_rect).is_hovered());
-    }
+    // One layout (scrolled, cut to the sidebar's strip) for the zones and
+    // the drawing; the offset it clamped is the one kept.
+    let sb_layout = app.sidebar_layout(hf, s);
+    app.sidebar_scroll = sb_layout.scroll;
+    let hov = register_sidebar_zones(input, &sb_layout, s);
     let dragging = app.drag_item.is_some() || app.drag_tree_item.is_some();
-    let hov = SidebarHovered {
-        places: &sidebar_hovered,
-        favorites: &favorite_hovered,
-        drives: &drive_hovered,
-        phones: &phone_hovered,
-        places_header: places_header_hov,
-        favorites_header: favorites_header_hov,
-        devices_header: devices_header_hov,
-        favorites_plus: favorites_plus_hov,
-    };
     draw_sidebar(
         painter,
         text,
@@ -728,13 +657,13 @@ pub fn render_frame(
             } else {
                 list_row_h(s, zoom)
             };
-            let hdr_h = 32.0 * list_zoom_multiplier(zoom) * s;
+            let hdr_h = list_header_h(s, zoom);
             let mut item_hovered = Vec::with_capacity(entries.len());
             for i in 0..entries.len() {
                 let y = base_y + hdr_h + i as f32 * row_h;
                 // Off-screen rows get no zone (and skip the text measuring
                 // the tight rect needs).
-                if y + row_h < content.y || y > content.y + content.h {
+                if y + row_h < rows_area.y || y > content.y + content.h {
                     item_hovered.push(false);
                     continue;
                 }
@@ -748,7 +677,9 @@ pub fn render_frame(
                     crate::views::list_row_hit_rect(text, &entries[i], content, y, row_h, s, zoom)
                 };
                 let zone_id = ZONE_FILE_ITEM_BASE + i as u32;
-                let hovered = if let Some(clipped) = row_rect.intersect(&content) {
+                // Only the part below the header: the part of a row that
+                // has slid under it is not there to be clicked.
+                let hovered = if let Some(clipped) = row_rect.intersect(&rows_area) {
                     input.add_zone(zone_id, clipped).is_hovered()
                 } else {
                     false
@@ -788,7 +719,9 @@ pub fn render_frame(
                     let input_h = (row_h - 4.0 * s).max(28.0 * s);
                     let input_y = y + (row_h - input_h) * 0.5;
                     let input_rect = Rect::new(input_x, input_y, input_w, input_h);
-                    draw_rename_input(painter, text, input, pal, app, input_rect, content, s, w, h);
+                    draw_rename_input(
+                        painter, text, input, pal, app, input_rect, rows_area, s, w, h,
+                    );
                 }
             }
         }
@@ -888,9 +821,10 @@ pub fn render_frame(
     // Scrollbar — the zone is the widened hover band over the whole track,
     // not just the thumb, so it's grabbable and track-clicks page-jump.
     if scroll_area.is_scrollable() {
-        let scrollbar = Scrollbar::new(&content, total_content_h, app.scroll_offset);
-        input.add_zone(ZONE_SCROLLBAR, scrollbar.hover_zone());
-        let sb_state = input.zone_state(ZONE_SCROLLBAR);
+        // Sized with the display scale (scrollbar.rs), like everything else.
+        let scrollbar = crate::scrollbar::bar(&content, total_content_h, app.scroll_offset, s);
+        let sb_state =
+            input.add_zone(ZONE_SCROLLBAR, crate::scrollbar::hover_zone(&scrollbar, s));
         draw_scrollbar(painter, &scrollbar, sb_state, pal);
     }
 
@@ -937,6 +871,24 @@ pub fn render_frame(
         .color(pal.text_secondary)
         .draw(text, w, h);
     }
+    // Not empty: unreadable. (Permission denied, a device that is gone.)
+    let unreadable = entries.is_empty()
+        && !app.dir_loading()
+        && !is_searching
+        && crate::fs::is_unreadable(&app.current_dir);
+    if unreadable {
+        let hint = "This folder can\u{2019}t be read";
+        let font = 22.0 * s;
+        let hint_w = text.measure_width(hint, font);
+        TextLabel::new(
+            hint,
+            content.x + (content.w - hint_w) * 0.5,
+            content.y + content.h * 0.4,
+        )
+        .size(FontSize::Custom(font))
+        .color(pal.text_secondary)
+        .draw(text, w, h);
+    }
 
     // ── Status bar / Pick bar ──────────────────────────────────────────
     if app.pick.is_some() {
@@ -944,14 +896,9 @@ pub fn render_frame(
         crate::pick_bar::draw_pick_bar(app, painter, text, pal, input, wf, bar_y, s, (w, h));
     } else {
         let status = status_rect(wf, hf, s);
-        // Only surface sync status while the user is actually inside ~/Cloud,
-        // so the pill doesn't follow them around the filesystem.
-        let in_cloud = app.current_dir.starts_with(crate::cloud::cloud_root());
-        let cloud_status = if in_cloud {
-            app.cloud_sync.as_ref().map(|h| h.status())
-        } else {
-            None
-        };
+        // Inside ~/Cloud the sync state; anywhere else only what needs the
+        // user (held deletions, a lost sign-in, a missing folder).
+        let cloud_pill = app.cloud_pill();
         draw_status_bar(
             painter,
             text,
@@ -959,9 +906,11 @@ pub fn render_frame(
             status,
             &app.entries,
             app.dir_loading(),
+            unreadable,
             file_info,
-            cloud_status,
-            app.op_progress.as_ref(),
+            cloud_pill.as_ref(),
+            &app.ops,
+            app.status_note(),
             git.branch(),
             input,
             (w, h),
@@ -996,6 +945,7 @@ pub fn render_frame(
                     scroll: tab.scroll_offset,
                     zoom,
                     dragging,
+                    loading: app.dir_is_loading(&tab.path),
                 },
                 hf,
                 (w, h),
@@ -1017,6 +967,11 @@ pub fn render_frame(
             pal,
             s,
         );
+    }
+
+    // Root mode: a frame in the badge's colour around this pane's files.
+    if root_badge.is_some() {
+        crate::sections::root_badge::draw_frame(painter, pal, full_content, s);
     }
 
     // ── Rubber band selection overlay ─────────────────────────────────
@@ -1070,8 +1025,12 @@ pub fn render_frame(
         }
     }
 
+    // Both panes and the preview have asked for their icons: thumbnails of
+    // rows no longer on screen leave the queue, the visible ones go first.
+    icon_cache.end_requests();
+
     // ── Collect texture draws for icons ────────────────────────────────
-    let content_clip = [content.x, content.y, content.w, content.h];
+    let content_clip = [rows_area.x, rows_area.y, rows_area.w, rows_area.h];
     let mut tex_draws: Vec<TextureDraw> = match view_mode {
         ViewMode::Grid => (0..entries.len())
             .filter(|&i| has_icon[i])
@@ -1101,7 +1060,7 @@ pub fn render_frame(
             } else {
                 list_row_h(s, zoom)
             };
-            let hdr_h = 32.0 * m * s;
+            let hdr_h = list_header_h(s, zoom);
             let list_icon_sz = 28.0 * m * s;
             (0..entries.len())
                 .filter(|&i| has_icon[i])
@@ -1182,13 +1141,16 @@ pub fn render_frame(
             ViewMode::List => {
                 let m = list_zoom_multiplier(zoom);
                 let row_h = list_row_h(s, zoom);
-                let hdr_h = 32.0 * m * s;
+                let hdr_h = list_header_h(s, zoom);
                 let list_icon_sz = 28.0 * m * s;
                 let total_h = p2_entries.len() as f32 * row_h + hdr_h;
                 let p2_base_y = icr.y - clamp_scroll(total_h);
+                // Like the rows they belong to: below the header only.
+                let p2_rows = list_rows_rect(icr, s, zoom);
+                let p2_clip = [p2_rows.x, p2_rows.y, p2_rows.w, p2_rows.h];
                 tex_draws.extend((0..p2_entries.len()).filter_map(|i| {
                     let y = p2_base_y + hdr_h + i as f32 * row_h;
-                    if y + row_h < icr.y || y > icr.y + icr.h {
+                    if y + row_h < p2_rows.y || y > icr.y + icr.h {
                         return None;
                     }
                     let icon_x = icr.x + 8.0 * m * s;
@@ -1252,7 +1214,7 @@ pub fn render_frame(
             } else {
                 list_row_h(s, zoom)
             };
-            let hdr_h = 32.0 * m * s;
+            let hdr_h = list_header_h(s, zoom);
             let list_icon_sz = 28.0 * m * s;
             (0..entries.len())
                 .filter(|&i| has_icon[i] && is_video_entry(&entries[i]))
@@ -1344,22 +1306,21 @@ pub fn render_frame(
     // set_layer dropped the clip stack, so the list's badges get the
     // content clip back: a row scrolled half under the nav bar must not
     // paint its badge over the chrome.
-    painter.push_clip(content);
+    painter.push_clip(rows_area);
     for rect in &video_overlays {
         draw_play_badge(painter, *rect, s);
     }
     painter.pop_clip();
+    // The link marks the views asked for, over the icons as well.
+    crate::sections::emblem::draw_marked(painter, pal);
     if let Some(rect) = preview_overlay {
         draw_play_badge(painter, rect, s);
     }
+    if let Some(hint) = app.drop_hint.as_deref() {
+        crate::dnd_in::draw_hint(hint, painter, text, pal, wf, hf, s, (w, h));
+    }
 
     let mut props_tex_draws = Vec::new();
-    // Collect props action outside the &mut borrow so we can mutate
-    // app.properties / icon_cache after the dialog draws.
-    let mut props_close = false;
-    let mut props_icon_chosen: Option<(std::path::PathBuf, std::path::PathBuf)> = None;
-    let mut props_icon_reset: Option<std::path::PathBuf> = None;
-    let mut props_copy_text: Option<String> = None;
     let mut props_icon_rect_data: Option<(crate::fs::FileEntry, (f32, f32, f32, f32))> = None;
     if let Some(ref mut props) = app.properties {
         // The probe for this file may not have landed when the dialog
@@ -1368,26 +1329,9 @@ pub fn render_frame(
         if !props.is_dir && props.image_dimensions.is_none() && props.media_duration.is_none() {
             props.populate_media_info(file_info);
         }
-        let evt = crate::properties::draw_properties_dialog(
+        crate::properties::draw_properties_dialog(
             props, painter, text, input, pal, wf, hf, s, w, h,
         );
-        match evt {
-            Some(crate::properties::PropertiesEvent::Close) => {
-                props_close = true;
-            }
-            Some(crate::properties::PropertiesEvent::IconChosen(icon_path)) => {
-                props_icon_chosen = Some((props.path.clone(), icon_path));
-                props.picker_open = false;
-            }
-            Some(crate::properties::PropertiesEvent::IconReset) => {
-                props_icon_reset = Some(props.path.clone());
-                props.picker_open = false;
-            }
-            Some(crate::properties::PropertiesEvent::CopyText(t)) => {
-                props_copy_text = Some(t);
-            }
-            None => {}
-        }
         if let Some((ix, iy, iw, ih)) = props.icon_rect {
             let entry = crate::fs::FileEntry {
                 name: props.name.clone(),
@@ -1397,20 +1341,28 @@ pub fn render_frame(
                 // cache key matches the one the listing stored it under.
                 size: props.listing_size,
                 modified: props.listing_modified,
+                is_symlink: props.is_symlink,
                 selected: false,
+                folder_icon: props.folder_icon.clone(),
+                folder_color: props.folder_color.clone(),
             };
             props_icon_rect_data = Some((entry, (ix, iy, iw, ih)));
         }
         // Picker cell thumbnails: the wayland loop pre-warms the SVG cache
         // (between frames, when icon_cache isn't borrowed by tex_draws).
         // Here we only do immutable lookups.
+        // They scroll (props_scroll.rs), and textures are drawn in a pass
+        // of their own that the painter's clip does not reach.
         for (path, cx, cy, cw, ch) in &props.picker_cell_rects {
             if let Some(tex) = icon_cache.get_svg_path(path) {
                 let (bx, by, bw, bh) = icons::fit_in_box(tex, *cx, *cy, *cw, *ch);
-                props_tex_draws.push(TextureDraw::new(tex, bx, by, bw, bh));
+                let mut draw = TextureDraw::new(tex, bx, by, bw, bh);
+                draw.clip = props.texture_clip();
+                props_tex_draws.push(draw);
             }
         }
     }
+    let props_clip = app.properties.as_ref().and_then(|p| p.texture_clip());
     // Cover art: the Rc clone keeps the texture alive for the draw list even
     // if the dialog is closed a few lines below.
     let props_art = app
@@ -1426,23 +1378,6 @@ pub fn render_frame(
         }
     }
 
-    if props_close {
-        app.properties = None;
-    }
-    if let Some((folder, icon_path)) = props_icon_chosen {
-        // Defer xattr + invalidation to the next frame — icon_cache is
-        // still borrowed by tex_draws at this point in the frame.
-        app.pending_icon_apply
-            .push((folder, Some(icon_path.to_string_lossy().to_string())));
-    }
-    if let Some(folder) = props_icon_reset {
-        app.pending_icon_apply.push((folder, None));
-    }
-    if let Some(text) = props_copy_text {
-        if let Some(clip) = &app.wayland_clipboard {
-            clip.set_text(&text);
-        }
-    }
     if let Some((entry, (ix, iy, iw, ih))) = props_icon_rect_data {
         if let Some(tex) = icon_cache.get(&entry) {
             let (bx, by, bw, bh) = icons::fit_in_box(tex, ix, iy, iw, ih);
@@ -1451,7 +1386,16 @@ pub fn render_frame(
     }
     if let Some((tex, r)) = &props_art {
         let (bx, by, bw, bh) = icons::fit_in_box(tex, r.x, r.y, r.w, r.h);
-        props_tex_draws.push(TextureDraw::new(tex, bx, by, bw, bh));
+        // Cover art scrolled out of the dialog's body is not drawn at all
+        // (a scissor cannot be empty), and clipped when part of it is.
+        let in_view = props_clip.map_or(true, |c| {
+            by < c[1] + c[3] && by + bh > c[1] && bx < c[0] + c[2] && bx + bw > c[0]
+        });
+        if in_view {
+            let mut draw = TextureDraw::new(tex, bx, by, bw, bh);
+            draw.clip = props_clip;
+            props_tex_draws.push(draw);
+        }
     }
     if let Some(ref drop) = app.pending_drop {
         draw_drop_modal(drop, painter, text, input, pal, wf, hf, s, w, h);
@@ -1462,18 +1406,25 @@ pub fn render_frame(
     if let Some(ref dialog) = app.cloud_login {
         crate::dialogs::draw_cloud_login(dialog, painter, text, pal, input, (w, h), s);
     }
-    if let Some(ref dialog) = app.sudo_prompt {
-        crate::dialogs::draw_sudo_prompt(dialog, painter, text, pal, input, (w, h), s);
+    // Not drawn for the first moment of a quick command (see priv_ops.rs).
+    if let Some(dialog) = app.sudo_prompt.as_ref().filter(|d| d.visible()) {
+        crate::priv_dialog::draw_sudo_prompt(dialog, painter, text, pal, input, (w, h), s);
     }
     if let Some(ref dialog) = app.conflict_dialog {
         crate::dialogs::draw_conflict_dialog(dialog, painter, text, pal, input, (w, h), s);
     }
+    if let Some(dialog) = app.op_dialogs.front() {
+        let busy = app.ops.shown().map(|op| op.label.to_string());
+        crate::op_dialogs::draw(dialog, busy, painter, text, pal, input, (w, h), s);
+    }
 
     // ── Quick Look overlay (topmost modal) ─────────────────────────
     if let Some(ref ql) = app.quick_look {
-        if let Some(draw) =
-            crate::quick_look::draw_quick_look(ql, painter, text, pal, input, wf, hf, s, w, h)
-        {
+        // A cache lookup, not a load: only what the view already has.
+        let thumbnail = ql.thumbnail_entry().and_then(|e| icon_cache.get(e));
+        if let Some(draw) = crate::quick_look::draw_quick_look(
+            ql, thumbnail, painter, text, pal, input, wf, hf, s, w, h,
+        ) {
             props_tex_draws.push(draw);
         }
     }

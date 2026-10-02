@@ -1,9 +1,8 @@
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
-use lntrn_ui::gpu::{FontSize, FoxPalette, TextInput, TextLabel};
+use lntrn_ui::gpu::{FoxPalette, TextInput};
 
 use crate::app::App;
 
-use super::breadcrumb_segments;
 use super::icons::{draw_preview_pane_icon, draw_sort_icon, draw_view_mode_icon};
 
 // ── Nav bar ─────────────────────────────────────────────────────────────────
@@ -41,6 +40,10 @@ pub fn draw_nav_bar(
     // this region. Stacking `palette.surface` here would compound the alpha
     // and look opaque under transparency.
 
+    // A split pane too narrow for one of its buttons hands in an empty
+    // rect for it (layout/pane_nav.rs): such a button is not drawn.
+    let shown = crate::layout::shown;
+
     // ── View mode toggle icon (changes per mode) ────────────────────────
     let vt_color = if view_toggle_hovered {
         palette.text
@@ -50,19 +53,21 @@ pub fn draw_nav_bar(
     if view_toggle_hovered {
         painter.rect_filled(view_toggle_rect, 4.0 * s, palette.surface_2.with_alpha(0.5));
     }
-    draw_view_mode_icon(painter, app.view_mode, view_toggle_rect, vt_color, s);
+    if shown(&view_toggle_rect) {
+        draw_view_mode_icon(painter, app.view_mode, view_toggle_rect, vt_color, s);
 
-    // Vertical divider
-    painter.rect_filled(
-        Rect::new(
-            view_toggle_rect.x + view_toggle_rect.w + 2.0 * s,
-            nav_rect.y + 12.0 * s,
-            1.0,
-            24.0 * s,
-        ),
-        0.0,
-        Color::WHITE.with_alpha(0.08),
-    );
+        // Vertical divider
+        painter.rect_filled(
+            Rect::new(
+                view_toggle_rect.x + view_toggle_rect.w + 2.0 * s,
+                nav_rect.y + 12.0 * s,
+                1.0,
+                24.0 * s,
+            ),
+            0.0,
+            Color::WHITE.with_alpha(0.08),
+        );
+    }
 
     // ── Cloud quick-link button (hidden in split view: zero-width rect) ──
     if cloud_rect.w > 0.0 {
@@ -112,22 +117,24 @@ pub fn draw_nav_bar(
         palette.muted.with_alpha(0.4)
     };
     let bm = 0.22; // margin ratio within button
-    painter.line(
-        back_rect.x + back_rect.w * (1.0 - bm),
-        back_rect.y + back_rect.h * bm,
-        back_rect.x + back_rect.w * bm,
-        back_rect.center_y(),
-        2.0 * s,
-        back_color,
-    );
-    painter.line(
-        back_rect.x + back_rect.w * bm,
-        back_rect.center_y(),
-        back_rect.x + back_rect.w * (1.0 - bm),
-        back_rect.y + back_rect.h * (1.0 - bm),
-        2.0 * s,
-        back_color,
-    );
+    if shown(&back_rect) {
+        painter.line(
+            back_rect.x + back_rect.w * (1.0 - bm),
+            back_rect.y + back_rect.h * bm,
+            back_rect.x + back_rect.w * bm,
+            back_rect.center_y(),
+            2.0 * s,
+            back_color,
+        );
+        painter.line(
+            back_rect.x + back_rect.w * bm,
+            back_rect.center_y(),
+            back_rect.x + back_rect.w * (1.0 - bm),
+            back_rect.y + back_rect.h * (1.0 - bm),
+            2.0 * s,
+            back_color,
+        );
+    }
 
     // ── Forward button ─────────────────────────────────────────────────────
     let forward_color = if app.can_go_forward() {
@@ -139,22 +146,24 @@ pub fn draw_nav_bar(
     } else {
         palette.muted.with_alpha(0.4)
     };
-    painter.line(
-        forward_rect.x + forward_rect.w * bm,
-        forward_rect.y + forward_rect.h * bm,
-        forward_rect.x + forward_rect.w * (1.0 - bm),
-        forward_rect.center_y(),
-        2.0 * s,
-        forward_color,
-    );
-    painter.line(
-        forward_rect.x + forward_rect.w * (1.0 - bm),
-        forward_rect.center_y(),
-        forward_rect.x + forward_rect.w * bm,
-        forward_rect.y + forward_rect.h * (1.0 - bm),
-        2.0 * s,
-        forward_color,
-    );
+    if shown(&forward_rect) {
+        painter.line(
+            forward_rect.x + forward_rect.w * bm,
+            forward_rect.y + forward_rect.h * bm,
+            forward_rect.x + forward_rect.w * (1.0 - bm),
+            forward_rect.center_y(),
+            2.0 * s,
+            forward_color,
+        );
+        painter.line(
+            forward_rect.x + forward_rect.w * (1.0 - bm),
+            forward_rect.center_y(),
+            forward_rect.x + forward_rect.w * bm,
+            forward_rect.y + forward_rect.h * (1.0 - bm),
+            2.0 * s,
+            forward_color,
+        );
+    }
 
     // ── Up button ──────────────────────────────────────────────────────────
     let up_color = if app.can_go_up() {
@@ -166,37 +175,41 @@ pub fn draw_nav_bar(
     } else {
         palette.muted.with_alpha(0.4)
     };
-    painter.line(
-        up_rect.x + up_rect.w * bm,
-        up_rect.center_y(),
-        up_rect.center_x(),
-        up_rect.y + up_rect.h * bm,
-        2.0 * s,
-        up_color,
-    );
-    painter.line(
-        up_rect.center_x(),
-        up_rect.y + up_rect.h * bm,
-        up_rect.x + up_rect.w * (1.0 - bm),
-        up_rect.center_y(),
-        2.0 * s,
-        up_color,
-    );
+    if shown(&up_rect) {
+        painter.line(
+            up_rect.x + up_rect.w * bm,
+            up_rect.center_y(),
+            up_rect.center_x(),
+            up_rect.y + up_rect.h * bm,
+            2.0 * s,
+            up_color,
+        );
+        painter.line(
+            up_rect.center_x(),
+            up_rect.y + up_rect.h * bm,
+            up_rect.x + up_rect.w * (1.0 - bm),
+            up_rect.center_y(),
+            2.0 * s,
+            up_color,
+        );
 
-    // Vertical divider before path
-    painter.rect_filled(
-        Rect::new(
-            up_rect.x + up_rect.w + 4.0 * s,
-            nav_rect.y + 12.0 * s,
-            1.0,
-            24.0 * s,
-        ),
-        0.0,
-        Color::WHITE.with_alpha(0.08),
-    );
+        // Vertical divider before path
+        painter.rect_filled(
+            Rect::new(
+                up_rect.x + up_rect.w + 4.0 * s,
+                nav_rect.y + 12.0 * s,
+                1.0,
+                24.0 * s,
+            ),
+            0.0,
+            Color::WHITE.with_alpha(0.08),
+        );
+    }
 
     // ── Path bar / Search bar ────────────────────────────────────────────
-    if app.searching {
+    if !shown(&path_rect) {
+        // No room for a path strip in this pane.
+    } else if app.searching {
         TextInput::new(path_rect)
             .text(&app.search_buf)
             .placeholder("Search files...")
@@ -213,103 +226,18 @@ pub fn draw_nav_bar(
             .scale(s)
             .draw(painter, text, palette, screen.0, screen.1);
     } else {
-        // Breadcrumb path bar
-        let segments = breadcrumb_segments(&app.current_dir, s);
-        let font = 22.0 * s;
-        let char_w = font * 0.45;
-        let sep_w = 14.0 * s;
-        let pad_x = 6.0 * s;
-        let seg_width = |name: &str| -> f32 { name.len() as f32 * char_w + pad_x * 2.0 };
-        let text_y = path_rect.y + (path_rect.h - font) * 0.5;
-
-        // Compute overflow skip (must match render.rs exactly)
-        let total_w: f32 = segments
-            .iter()
-            .enumerate()
-            .map(|(i, (name, _))| {
-                if i > 0 {
-                    seg_width(name) + sep_w
-                } else {
-                    seg_width(name)
-                }
-            })
-            .sum();
-        let mut skip = 0;
-        if total_w > path_rect.w {
-            let ellipsis_w = seg_width("...") + sep_w;
-            for (i, _) in segments.iter().enumerate() {
-                let remaining: f32 = segments[i..]
-                    .iter()
-                    .enumerate()
-                    .map(|(j, (n, _))| {
-                        if j > 0 {
-                            seg_width(n) + sep_w
-                        } else {
-                            seg_width(n)
-                        }
-                    })
-                    .sum();
-                if ellipsis_w + remaining <= path_rect.w {
-                    break;
-                }
-                skip = i + 1;
-            }
-        }
-
-        let mut cx = path_rect.x + 4.0 * s;
-
-        if skip > 0 {
-            TextLabel::new("...", cx + pad_x, text_y)
-                .size(FontSize::Custom(font))
-                .color(palette.muted)
-                .draw(text, screen.0, screen.1);
-            cx += seg_width("...");
-            let sep_x = cx + (sep_w - char_w) * 0.5;
-            TextLabel::new("/", sep_x, text_y)
-                .size(FontSize::Custom(font))
-                .color(palette.muted.with_alpha(0.3))
-                .draw(text, screen.0, screen.1);
-            cx += sep_w;
-        }
-
-        for (i, (name, _)) in segments.iter().enumerate() {
-            if i < skip {
-                continue;
-            }
-            if i > skip {
-                let sep_x = cx + (sep_w - char_w) * 0.5;
-                TextLabel::new("/", sep_x, text_y)
-                    .size(FontSize::Custom(font))
-                    .color(palette.muted.with_alpha(0.3))
-                    .draw(text, screen.0, screen.1);
-                cx += sep_w;
-            }
-
-            let sw = seg_width(name);
-            let is_last = i == segments.len() - 1;
-            let hover_idx = i - skip;
-            let hovered = breadcrumb_hovered.get(hover_idx).copied().unwrap_or(false);
-
-            if hovered {
-                painter.rect_filled(
-                    Rect::new(cx, path_rect.y + 2.0 * s, sw, path_rect.h - 4.0 * s),
-                    4.0 * s,
-                    palette.surface_2.with_alpha(0.4),
-                );
-            }
-
-            let color = if is_last {
-                palette.text
-            } else {
-                palette.text_secondary
-            };
-            TextLabel::new(name, cx + pad_x, text_y)
-                .size(FontSize::Custom(font))
-                .color(color)
-                .draw(text, screen.0, screen.1);
-
-            cx += sw;
-        }
+        // Breadcrumb path bar: the same layout render.rs made the zones
+        // from (sections/crumbs.rs). A pane too narrow for a path strip has
+        // an empty rect here and no trail.
+        super::crumbs::layout(text, &app.current_dir, path_rect, s).draw(
+            painter,
+            text,
+            palette,
+            breadcrumb_hovered,
+            false,
+            screen,
+            s,
+        );
     }
 
     // ── Preview pane toggle (hidden in split view: zero-width rect) ──────
@@ -348,7 +276,12 @@ pub fn draw_nav_bar(
     if sort_hovered {
         painter.rect_filled(sort_rect, 4.0 * s, palette.surface_2.with_alpha(0.5));
     }
-    draw_sort_icon(painter, sort_rect, sort_color, app.sort_dir, s);
+    if shown(&sort_rect) {
+        draw_sort_icon(painter, sort_rect, sort_color, app.sort_dir, s);
+    }
+    if !shown(&search_rect) {
+        return;
+    }
 
     // ── Search button ──────────────────────────────────────────────────────
     let search_active = app.searching;

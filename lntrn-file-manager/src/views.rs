@@ -6,6 +6,7 @@ use std::path::Path;
 
 use crate::app::TreeEntry;
 use crate::fs::FileEntry;
+use crate::layout::{list_columns, list_rows_rect};
 use crate::sections::{selection_tint, truncate_to_width};
 
 /// Extra layout width (logical px) given to a label that was already cut to
@@ -22,19 +23,6 @@ const LABEL_SLACK: f32 = 4.0;
 // (render.rs) and the highlight pills below share these so the hitbox and
 // the visuals can't drift.
 
-/// List view column x positions (normal mode): `(name_x, size_x, date_x)`.
-/// The date column reserves ~180*m px ("Sep 30, 2026" at font 20*m) plus a
-/// small right gutter so it doesn't kiss the preview pane / window edge.
-fn list_columns(content_rect: Rect, m: f32, s: f32) -> (f32, f32, f32) {
-    let right_pad = 12.0 * m * s;
-    let date_w = 180.0 * m * s;
-    let size_w = 110.0 * m * s;
-    let date_x = content_rect.x + content_rect.w - right_pad - date_w;
-    let size_x = date_x - size_w;
-    let name_x = content_rect.x + 42.0 * m * s;
-    (name_x, size_x, date_x)
-}
-
 /// Tight hit/highlight rect for a normal-mode list row: mini icon through the
 /// end of the (truncated) name, full row height.
 pub fn list_row_hit_rect(
@@ -48,8 +36,8 @@ pub fn list_row_hit_rect(
 ) -> Rect {
     let m = crate::layout::list_zoom_multiplier(zoom);
     let font_px = 24.0 * m * s;
-    let (name_x, size_x, _) = list_columns(content_rect, m, s);
-    let max_name_w = size_x - name_x - 12.0 * m * s;
+    let cols = list_columns(content_rect, m, s);
+    let (name_x, max_name_w) = (cols.name_x, cols.name_w);
     // Selected rows draw the untruncated name, so measure what's shown.
     let name_w = if entry.selected {
         text.measure_width(&entry.name, font_px)
@@ -130,31 +118,31 @@ pub fn draw_content_list(
         0.0,
         palette.muted.with_alpha(0.2),
     );
-    let (name_x, size_x, date_x) = list_columns(content_rect, m, s);
-    let size_w = 110.0 * m * s;
-    let date_w = 180.0 * m * s;
+    // Columns the width has room for: Modified goes first, then Size, so
+    // the header, the rows and the hit rects all agree (layout/list.rs).
+    let cols = list_columns(content_rect, m, s);
+    let name_x = cols.name_x;
     let hdr_font = FontSize::Custom(20.0 * m * s);
-    TextLabel::new("Name", name_x, hdr_y + 5.0 * m * s)
-        .size(hdr_font)
-        .color(palette.text_secondary)
-        .draw(text, screen.0, screen.1);
-    if searching {
-        TextLabel::new("Location", size_x, hdr_y + 5.0 * m * s)
+    let header = |text: &mut TextRenderer, label: &str, x: f32| {
+        TextLabel::new(label, x, hdr_y + 5.0 * m * s)
             .size(hdr_font)
             .color(palette.text_secondary)
             .draw(text, screen.0, screen.1);
-    } else {
-        TextLabel::new("Size", size_x, hdr_y + 5.0 * m * s)
-            .size(hdr_font)
-            .color(palette.text_secondary)
-            .draw(text, screen.0, screen.1);
-        TextLabel::new("Modified", date_x, hdr_y + 5.0 * m * s)
-            .size(hdr_font)
-            .color(palette.text_secondary)
-            .draw(text, screen.0, screen.1);
+    };
+    header(text, "Name", name_x);
+    if let Some(size_x) = cols.size_x {
+        header(text, if searching { "Location" } else { "Size" }, size_x);
+    }
+    if let Some(date_x) = cols.date_x.filter(|_| !searching) {
+        header(text, "Modified", date_x);
     }
 
     area.begin(painter, text);
+    // Rows live below the header. Clipped only to the whole content area,
+    // a row scrolled part-way up slid over the header's labels.
+    let rows = list_rows_rect(content_rect, s, zoom);
+    painter.push_clip(rows);
+    text.push_clip([rows.x, rows.y, rows.w, rows.h]);
     let base_y = area.content_y();
     let content_top = content_rect.y + hdr_h;
     let content_bottom = content_rect.y + content_rect.h;
@@ -234,6 +222,13 @@ pub fn draw_content_list(
             }
         }
 
+        // Link mark at the icon slot's bottom-left corner.
+        if entry.is_symlink {
+            let left = content_rect.x + 8.0 * m * s;
+            let bottom = y + (row_h + 28.0 * m * s) * 0.5;
+            crate::sections::emblem::mark_link(left, bottom, 7.0 * m * s, alpha, rows);
+        }
+
         // Git badge — dot at the icon slot's bottom-right corner.
         if !searching {
             if let Some(mark) = git.mark(&entry.path) {
@@ -309,7 +304,7 @@ pub fn draw_content_list(
         } else {
             // Normal mode: name, size, date columns
             let text_y = y + (row_h - 24.0 * m * s) * 0.5;
-            let max_name_w = size_x - name_x - 12.0 * m * s;
+            let max_name_w = cols.name_w;
             let name_color = palette.text.with_alpha(alpha);
             // Exact-measure truncation — see the tree view note below: the
             // char-width estimate let two-word names wrap onto the next row.
@@ -325,24 +320,28 @@ pub fn draw_content_list(
                 .draw(text, screen.0, screen.1);
 
             // Size
-            let size_str = if entry.is_dir {
-                "--".to_string()
-            } else {
-                format_bytes(entry.size)
-            };
-            TextLabel::new(&size_str, size_x, text_y)
-                .size(small_font)
-                .color(palette.muted.with_alpha(alpha))
-                .max_width(size_w - 8.0 * m * s)
-                .draw(text, screen.0, screen.1);
+            if let Some(size_x) = cols.size_x {
+                let size_str = if entry.is_dir {
+                    "--".to_string()
+                } else {
+                    format_bytes(entry.size)
+                };
+                TextLabel::new(&size_str, size_x, text_y)
+                    .size(small_font)
+                    .color(palette.muted.with_alpha(alpha))
+                    .max_width(cols.size_w - 8.0 * m * s)
+                    .draw(text, screen.0, screen.1);
+            }
 
             // Modified date
-            let date_str = format_date(entry.modified);
-            TextLabel::new(&date_str, date_x, text_y)
-                .size(small_font)
-                .color(palette.muted.with_alpha(alpha))
-                .max_width(date_w)
-                .draw(text, screen.0, screen.1);
+            if let Some(date_x) = cols.date_x {
+                let date_str = format_date(entry.modified);
+                TextLabel::new(&date_str, date_x, text_y)
+                    .size(small_font)
+                    .color(palette.muted.with_alpha(alpha))
+                    .max_width(cols.date_w)
+                    .draw(text, screen.0, screen.1);
+            }
         }
 
         // Divider
@@ -357,6 +356,8 @@ pub fn draw_content_list(
             Color::WHITE.with_alpha(0.05),
         );
     }
+    text.pop_clip();
+    painter.pop_clip();
     area.end(painter, text);
 }
 
@@ -512,6 +513,11 @@ pub fn draw_content_tree(
                     );
                 }
             }
+        }
+
+        if te.entry.is_symlink {
+            let bottom = icon_y + icon_sz;
+            crate::sections::emblem::mark_link(icon_x, bottom, 6.0 * m * s, alpha, content_rect);
         }
 
         // Name (skip if this row is being renamed — TextInput is drawn over it)

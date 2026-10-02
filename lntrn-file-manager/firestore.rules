@@ -4,6 +4,14 @@
 //
 // Rule: an authenticated user can only read/write documents under their own
 // /users/{uid}/** subtree. Nothing else is accessible.
+//
+// What sync needs from these rules, all under /users/{uid}/files2 (builds
+// before 2026-10 used /users/{uid}/files; the rule covers both):
+//   read   get one doc, list the collection, query it (by updated_at for
+//          "what changed since my last pull", by sha256 before a blob is
+//          deleted)
+//   write  create and update a file's doc, and delete the doc of a deletion
+//          once it is 30 days old
 
 rules_version = '2';
 service cloud.firestore {

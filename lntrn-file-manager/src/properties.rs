@@ -1,13 +1,19 @@
-use std::os::unix::fs::MetadataExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use std::time::SystemTime;
+
+use crate::bg::Task;
+use crate::props_load::Details;
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{FoxPalette, GradientStrip, InteractionContext};
 
 const ZONE_PROPS_CLOSE: u32 = 800;
 const ZONE_PROPS_BACKDROP: u32 = 801;
-const ZONE_PROPS_CHECKSUM_ROW: u32 = 805;
+/// The panel itself: a press on it keeps the dialog open.
+const ZONE_PROPS_PANEL: u32 = 802;
+pub(crate) const ZONE_PROPS_CHECKSUM_ROW: u32 = 805;
 const ZONE_SECTION_BASE: u32 = 810; // 810..817 for 8 sections
 
 const DIALOG_W: f32 = 520.0;
@@ -26,13 +32,13 @@ const ICON_SIZE: f32 = 64.0;
 const BAR_H: f32 = 10.0;
 
 // Section indices
-const SEC_GENERAL: usize = 0;
+pub(crate) const SEC_GENERAL: usize = 0;
 const SEC_MEDIA: usize = 1;
-const SEC_DISK: usize = 2;
-const SEC_SYSTEM: usize = 3;
-const SEC_PERMS: usize = 4;
+pub(crate) const SEC_DISK: usize = 2;
+pub(crate) const SEC_SYSTEM: usize = 3;
+pub(crate) const SEC_PERMS: usize = 4;
 const SEC_SYMLINK: usize = 5;
-const SEC_CHECKSUM: usize = 6;
+pub(crate) const SEC_CHECKSUM: usize = 6;
 const SEC_AUDIO: usize = 7;
 
 /// Gathered file properties for display.
@@ -72,7 +78,13 @@ pub struct FileProperties {
     pub audio: Option<crate::properties_audio::AudioEdit>,
     // UI state
     pub section_open: [bool; 8],
+    /// How far the information rows are scrolled (props_scroll.rs).
     pub scroll_offset: f32,
+    /// How far the icon picker's grid is scrolled.
+    pub picker_scroll: f32,
+    /// The scrolling part as it was last drawn: what the wheel, the
+    /// scrollbar and the texture pass work from.
+    pub scroll_view: Option<crate::props_scroll::ScrollView>,
     /// Lazy SHA-256 — spawned the first time the Checksum section opens.
     pub checksum_job: Option<crate::checksums::ChecksumJob>,
     /// Set by draw_properties_dialog for render.rs to place the icon texture.
@@ -80,10 +92,6 @@ pub struct FileProperties {
     /// When true, the Properties body is replaced with the icon picker.
     pub picker_open: bool,
     pub picker_tab: IconPickerTab,
-    /// Edge-detect tracking — `is_active()` returns true every frame while
-    /// the mouse is held, so a simple "if active → toggle" pumps the picker
-    /// open/closed at 60Hz. Track previous frame to fire on the press edge.
-    pub icon_was_active: bool,
     /// Per-cell rects from the icon picker grid, exposed so render.rs can
     /// draw the actual SVG thumbnails (icon_cache is borrowed in the
     /// renderer; the picker body can't touch it). Cleared each frame; each
@@ -91,12 +99,28 @@ pub struct FileProperties {
     pub picker_cell_rects: Vec<(PathBuf, f32, f32, f32, f32)>,
     /// Icon list of the picker tab last shown, so the folder is read when
     /// the tab changes and not on every frame.
-    picker_icons: Option<(IconPickerTab, Vec<PathBuf>)>,
+    pub(crate) picker_icons: Option<(IconPickerTab, Vec<PathBuf>)>,
     /// Size and mtime as the directory listing reports them (lstat), i.e.
     /// what the thumbnail cache keys this file's texture on.
     pub listing_size: u64,
     pub listing_modified: Option<SystemTime>,
+    /// A folder's custom icon and colour, for the icon in the header.
+    pub folder_icon: Option<String>,
+    pub folder_color: Option<String>,
+    /// The item is on a phone or network mount: no checksum, no tags.
+    pub slow: bool,
+    /// What the filesystem has to say, on its way from a worker thread
+    /// (props_load.rs). The rows show "…" until it is here.
+    pub(crate) details: Option<Task<Option<Details>>>,
+    /// The folder attributes being read again after an icon change.
+    pub(crate) look: Option<Task<(Option<String>, Option<String>)>>,
+    /// Raised (with a wake-up) by the custom-icon picker thread once it has
+    /// changed the folder's icon: the listings are read again then.
+    pub(crate) refresh: Arc<AtomicBool>,
 }
+
+/// Shown in a row whose value is still being read.
+pub(crate) const PENDING: &str = "\u{2026}";
 
 /// Categories shown as tabs in the icon picker. The first three map to
 /// `~/.lantern/icons/folders/{Standard,Colors,Awesome}/`; Custom opens a
@@ -155,150 +179,9 @@ pub fn list_picker_icons(tab: IconPickerTab) -> Vec<PathBuf> {
 }
 
 impl FileProperties {
-    pub fn from_path(path: &Path) -> Option<Self> {
-        let sym_meta = std::fs::symlink_metadata(path).ok()?;
-        let is_symlink = sym_meta.file_type().is_symlink();
-        let symlink_target = if is_symlink {
-            std::fs::read_link(path)
-                .ok()
-                .map(|t| t.to_string_lossy().to_string())
-        } else {
-            None
-        };
-
-        // A dangling symlink has no target to stat: describe the link
-        // itself instead of refusing to open. "/" has no file name.
-        let meta = match std::fs::metadata(path) {
-            Ok(m) => m,
-            Err(_) if is_symlink => sym_meta.clone(),
-            Err(_) => return None,
-        };
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.display().to_string());
-        let is_dir = meta.is_dir();
-
-        let ext = path
-            .extension()
-            .map(|e| e.to_string_lossy().to_lowercase())
-            .unwrap_or_default();
-
-        let file_type = if is_dir {
-            "Folder".to_string()
-        } else if ext.is_empty() {
-            "File".to_string()
-        } else {
-            format!("{} File", ext.to_uppercase())
-        };
-
-        let mime_type = if is_dir {
-            "inode/directory".into()
-        } else {
-            mime_from_ext(&ext)
-        };
-
-        let size_bytes = if is_dir { 0 } else { meta.len() };
-        let size = if is_dir {
-            let count = std::fs::read_dir(path).map(|d| d.count()).unwrap_or(0);
-            format!("{} items", count)
-        } else {
-            format_size_with_bytes(size_bytes)
-        };
-
-        let location = path
-            .parent()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default();
-
-        let modified = meta
-            .modified()
-            .ok()
-            .map(format_time)
-            .unwrap_or_else(|| "Unknown".into());
-        let created = meta
-            .created()
-            .ok()
-            .map(format_time)
-            .unwrap_or_else(|| "Unknown".into());
-        let accessed = meta
-            .accessed()
-            .ok()
-            .map(format_time)
-            .unwrap_or_else(|| "Unknown".into());
-
-        let mode = meta.mode();
-        let permissions = format_permissions(mode, is_dir);
-        let owner = get_username(meta.uid()).unwrap_or_else(|| format!("{}", meta.uid()));
-        let group = get_groupname(meta.gid()).unwrap_or_else(|| format!("{}", meta.gid()));
-
-        let (disk_total, disk_free, disk_used_fraction) = disk_usage(path);
-        let audio = if is_dir {
-            None
-        } else {
-            crate::properties_audio::AudioEdit::load(path)
-        };
-
-        Some(Self {
-            path: path.to_path_buf(),
-            name,
-            file_type,
-            mime_type,
-            size,
-            size_bytes,
-            location,
-            modified,
-            created,
-            accessed,
-            permissions,
-            permissions_mode: mode,
-            owner,
-            group,
-            is_dir,
-            is_symlink,
-            symlink_target,
-            inode: meta.ino(),
-            device_id: meta.dev(),
-            hard_links: meta.nlink(),
-            block_size: meta.blksize(),
-            blocks: meta.blocks(),
-            disk_total,
-            disk_free,
-            disk_used_fraction,
-            image_dimensions: None,
-            media_duration: None,
-            // Checksum starts closed — hashing only begins when the user
-            // opens the section (could be a 50GB ISO).
-            section_open: {
-                let mut so = [true; 8];
-                so[SEC_CHECKSUM] = false;
-                // Audio files lead with their tags; everything else starts
-                // folded so the dialog fits a laptop screen with the Audio
-                // section open (one click expands any of them).
-                if audio.is_some() {
-                    so[SEC_GENERAL] = false;
-                    so[SEC_DISK] = false;
-                    so[SEC_SYSTEM] = false;
-                    so[SEC_PERMS] = false;
-                }
-                so
-            },
-            audio,
-            scroll_offset: 0.0,
-            icon_rect: None,
-            checksum_job: None,
-            picker_open: false,
-            picker_tab: IconPickerTab::Standard,
-            icon_was_active: false,
-            picker_cell_rects: Vec::new(),
-            picker_icons: None,
-            listing_size: sym_meta.len(),
-            listing_modified: sym_meta.modified().ok(),
-        })
-    }
-
     pub fn populate_media_info(&mut self, file_info: &mut crate::file_info::FileInfoCache) {
-        let info = file_info.get(&self.path);
+        // The state the listing showed: a file edited since is read again.
+        let info = file_info.get(&self.path, (self.listing_size, self.listing_modified));
         self.image_dimensions = info.dimensions;
         self.media_duration = info.duration.clone();
     }
@@ -331,7 +214,7 @@ fn format_size(bytes: u64) -> String {
     format!("{:.2} GB", gb)
 }
 
-fn format_size_with_bytes(bytes: u64) -> String {
+pub(crate) fn format_size_with_bytes(bytes: u64) -> String {
     let human = format_size(bytes);
     if bytes < 1024 {
         return human;
@@ -346,7 +229,7 @@ fn format_size_with_bytes(bytes: u64) -> String {
     format!("{} ({} bytes)", human, s)
 }
 
-fn format_time(time: SystemTime) -> String {
+pub(crate) fn format_time(time: SystemTime) -> String {
     let Some(t) = crate::datetime::local(time) else {
         return "—".into();
     };
@@ -362,7 +245,7 @@ fn format_time(time: SystemTime) -> String {
     )
 }
 
-fn format_permissions(mode: u32, is_dir: bool) -> String {
+pub(crate) fn format_permissions(mode: u32, is_dir: bool) -> String {
     let d = if is_dir { "d" } else { "-" };
     let r = |bit: u32| if mode & bit != 0 { "r" } else { "-" };
     let w = |bit: u32| if mode & bit != 0 { "w" } else { "-" };
@@ -383,51 +266,7 @@ fn format_permissions(mode: u32, is_dir: bool) -> String {
     )
 }
 
-fn get_username(uid: u32) -> Option<String> {
-    let pw = unsafe { libc::getpwuid(uid) };
-    if pw.is_null() {
-        return None;
-    }
-    let name = unsafe { std::ffi::CStr::from_ptr((*pw).pw_name) };
-    Some(name.to_string_lossy().to_string())
-}
-
-fn get_groupname(gid: u32) -> Option<String> {
-    let gr = unsafe { libc::getgrgid(gid) };
-    if gr.is_null() {
-        return None;
-    }
-    let name = unsafe { std::ffi::CStr::from_ptr((*gr).gr_name) };
-    Some(name.to_string_lossy().to_string())
-}
-
-fn disk_usage(path: &Path) -> (u64, u64, f32) {
-    let dir = if path.is_dir() {
-        path
-    } else {
-        path.parent().unwrap_or(path)
-    };
-    let c_path = match std::ffi::CString::new(dir.to_string_lossy().as_bytes()) {
-        Ok(c) => c,
-        Err(_) => return (0, 0, 0.0),
-    };
-    unsafe {
-        let mut stat: libc::statvfs = std::mem::zeroed();
-        if libc::statvfs(c_path.as_ptr(), &mut stat) != 0 {
-            return (0, 0, 0.0);
-        }
-        let total = stat.f_blocks as u64 * stat.f_frsize as u64;
-        let free = stat.f_bavail as u64 * stat.f_frsize as u64;
-        let used_frac = if total > 0 {
-            1.0 - (free as f32 / total as f32)
-        } else {
-            0.0
-        };
-        (total, free, used_frac)
-    }
-}
-
-fn mime_from_ext(ext: &str) -> String {
+pub(crate) fn mime_from_ext(ext: &str) -> String {
     match ext {
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
@@ -487,7 +326,7 @@ pub fn draw_properties_dialog(
     s: f32,
     sw: u32,
     sh: u32,
-) -> Option<PropertiesEvent> {
+) {
     let dialog_w = if props.audio.is_some() {
         AUDIO_DIALOG_W
     } else {
@@ -503,10 +342,22 @@ pub fn draw_properties_dialog(
     let icon_sz = ICON_SIZE * s;
     let bar_h = BAR_H * s;
 
-    // Calculate content height
-    let header_h =
-        pad + icon_sz + 8.0 * s + TITLE_FONT * s + 4.0 * s + SUBTITLE_FONT * s + pad * 0.5;
-    let mut content_h = header_h + 1.0 * s; // separator
+    // Calculate content height. The header (icon, name, subtitle, divider)
+    // stays put; `content_h` counts the rows below it, which scroll when
+    // the window is too short for all of them.
+    let header_h = pad
+        + icon_sz
+        + 8.0 * s
+        + TITLE_FONT * s
+        + 4.0 * s
+        + SUBTITLE_FONT * s
+        + pad * 0.5
+        + 4.0 * s
+        + pad * 0.25;
+    // The scrolling part stops this far above the panel's bottom edge, clear
+    // of its rounded corners.
+    let foot = 8.0 * s;
+    let mut content_h = 0.0;
 
     // Audio section (WAV / MP3 tags)
     if let Some(audio) = &props.audio {
@@ -569,11 +420,22 @@ pub fn draw_properties_dialog(
         }
     }
 
-    content_h += pad; // bottom padding
+    content_h += pad - foot; // bottom padding
 
-    let dialog_h = content_h.min(screen_h - 40.0 * s);
+    let picking = props.picker_open && props.is_dir;
+    // The picker is sized for itself (five rows of icons), not for however
+    // many information rows happen to be unfolded behind it.
+    let body_h = if picking {
+        crate::props_picker::PICKER_BODY_H * s
+    } else {
+        content_h
+    };
+    let dialog_h =
+        crate::props_scroll::panel_height(header_h + body_h + foot, header_h, screen_h, s);
     let dialog_x = (screen_w - dialog_w) / 2.0;
-    let dialog_y = (screen_h - dialog_h) / 2.0;
+    // Never above the window: the close button is at the top.
+    let dialog_y = ((screen_h - dialog_h) / 2.0).max(0.0);
+    props.scroll_view = None;
 
     // Clear picker cell rects up front — stale entries from a previous
     // frame would otherwise keep painting thumbnails over the regular body
@@ -605,7 +467,7 @@ pub fn draw_properties_dialog(
     painter.rect_stroke_sdf(panel, corner_r, 1.0 * s, fox.muted.with_alpha(0.2));
 
     // Panel zone (clicks inside don't close)
-    let _panel_zone = ix.add_zone(802, panel);
+    let _panel_zone = ix.add_zone(ZONE_PROPS_PANEL, panel);
 
     let inner_x = dialog_x + pad;
     let inner_w = dialog_w - pad * 2.0;
@@ -648,16 +510,13 @@ pub fn draw_properties_dialog(
     let icon_box = Rect::new(icon_x, cy, icon_sz, icon_sz);
     painter.rect_filled(icon_box, icon_sz / 2.0, fox.accent.with_alpha(0.1));
     // Clickable hint ring — folders only, since file icons aren't customizable.
+    // (What a click on it does is in props_click.rs, like every click in
+    // this dialog: taken on the press, not read off the zone while drawing.)
     if props.is_dir {
         let icon_zone = ix.add_zone(crate::ZONE_PROPS_ICON, icon_box);
         if icon_zone.is_hovered() {
             painter.rect_stroke_sdf(icon_box, icon_sz / 2.0, 2.0 * s, fox.accent);
         }
-        let active = icon_zone.is_active();
-        if active && !props.icon_was_active {
-            props.picker_open = !props.picker_open;
-        }
-        props.icon_was_active = active;
     }
     cy += icon_sz + 8.0 * s;
 
@@ -708,8 +567,8 @@ pub fn draw_properties_dialog(
     cy += 4.0 * s + pad * 0.25;
 
     // If the picker is open, replace the rest of the body with it.
-    if props.picker_open && props.is_dir {
-        if let Some(evt) = draw_icon_picker_body(
+    if picking {
+        crate::props_picker::draw_icon_picker_body(
             props,
             painter,
             text,
@@ -722,14 +581,13 @@ pub fn draw_properties_dialog(
             s,
             sw,
             sh,
-        ) {
-            return Some(evt);
-        }
-        if close_zone.is_active() {
-            return Some(PropertiesEvent::Close);
-        }
-        return None;
+        );
+        return;
     }
+
+    // The rows scroll inside what is left of the panel.
+    let body = Rect::new(panel.x, cy, panel.w, panel.y + panel.h - foot - cy);
+    cy = props.begin_scroll(painter, text, body, content_h);
 
     // ── Audio section (WAV / MP3 tags) ──────────────────────────────────
     if props.audio.is_some() {
@@ -913,7 +771,7 @@ pub fn draw_properties_dialog(
             text,
             fox,
             "",
-            "Unavailable",
+            if props.loading() { PENDING } else { "Unavailable" },
             inner_x,
             cy,
             inner_w,
@@ -930,7 +788,15 @@ pub fn draw_properties_dialog(
         "System", SEC_SYSTEM, props, painter, text, ix, fox, inner_x, cy, inner_w, section_h, s,
         sw, sh,
     );
-    if props.section_open[SEC_SYSTEM] {
+    if props.section_open[SEC_SYSTEM] && props.loading() {
+        // Not zeros: the numbers are not known yet.
+        for label in ["Inode", "Device", "Hard Links", "Block Size", "Blocks"] {
+            cy = draw_row(
+                painter, text, fox, label, PENDING, inner_x, cy, inner_w, label_w, label_font,
+                row_h, sw, sh,
+            );
+        }
+    } else if props.section_open[SEC_SYSTEM] {
         let inode = format!("{}", props.inode);
         cy = draw_row(
             painter, text, fox, "Inode", &inode, inner_x, cy, inner_w, label_w, label_font, row_h,
@@ -1042,7 +908,11 @@ pub fn draw_properties_dialog(
             painter, text, fox, "Other", "", mode, 0, inner_x, cy, inner_w, label_w, label_font,
             row_h, s, sw, sh,
         );
-        let octal = format!("{:04o}", mode & 0o7777);
+        let octal = if props.loading() {
+            PENDING.to_string()
+        } else {
+            format!("{:04o}", mode & 0o7777)
+        };
         cy = draw_row(
             painter, text, fox, "Mode", &octal, inner_x, cy, inner_w, label_w, label_font, row_h,
             sw, sh,
@@ -1082,7 +952,6 @@ pub fn draw_properties_dialog(
     }
 
     // ── Checksum section (files only) ───────────────────────────────────
-    let mut checksum_copy: Option<String> = None;
     if !props.is_dir {
         cy = draw_section_header(
             "Checksum",
@@ -1100,15 +969,35 @@ pub fn draw_properties_dialog(
             sw,
             sh,
         );
-        if props.section_open[SEC_CHECKSUM] {
+        if props.section_open[SEC_CHECKSUM] && props.slow {
+            // Hashing reads the whole file, and on a phone reading means
+            // downloading all of it under the device's one lock.
+            let _ = draw_row(
+                painter,
+                text,
+                fox,
+                "SHA-256",
+                "Not computed on phones and network folders",
+                inner_x,
+                cy,
+                inner_w,
+                label_w,
+                label_font,
+                row_h,
+                sw,
+                sh,
+            );
+        } else if props.section_open[SEC_CHECKSUM] {
             if props.checksum_job.is_none() {
                 props.checksum_job = Some(crate::checksums::ChecksumJob::spawn(props.path.clone()));
             }
             match props.checksum_job.as_ref().and_then(|j| j.get()) {
                 Some(hash) => {
                     let row_rect = Rect::new(inner_x, cy, inner_w, row_h);
-                    let zone = ix.add_zone(ZONE_PROPS_CHECKSUM_ROW, row_rect);
-                    if zone.is_hovered() {
+                    let hovered = props
+                        .visible_part(row_rect)
+                        .is_some_and(|r| ix.add_zone(ZONE_PROPS_CHECKSUM_ROW, r).is_hovered());
+                    if hovered {
                         painter.rect_filled(row_rect, 4.0 * s, fox.accent.with_alpha(0.08));
                     }
                     // 64 hex chars overflow the value column — show a prefix,
@@ -1118,9 +1007,6 @@ pub fn draw_properties_dialog(
                         painter, text, fox, "SHA-256", &display, inner_x, cy, inner_w, label_w,
                         label_font, row_h, sw, sh,
                     );
-                    if zone.is_active() {
-                        checksum_copy = Some(hash);
-                    }
                 }
                 None => {
                     let _ = draw_row(
@@ -1143,14 +1029,22 @@ pub fn draw_properties_dialog(
         }
     }
 
-    // Handle events
-    if close_zone.is_active() {
-        return Some(PropertiesEvent::Close);
+    props.end_scroll(painter, text, ix, fox, s);
+    // Rows scrolled out of the body keep their zones; put the panel (and
+    // above and below it the backdrop) over them, then the header's own
+    // zones back on top.
+    crate::props_scroll::mask_outside_viewport(
+        ix,
+        panel,
+        body,
+        screen_h,
+        ZONE_PROPS_PANEL,
+        ZONE_PROPS_BACKDROP,
+    );
+    ix.add_zone(ZONE_PROPS_CLOSE, close_rect);
+    if props.is_dir {
+        ix.add_zone(crate::ZONE_PROPS_ICON, icon_box);
     }
-    if let Some(hash) = checksum_copy {
-        return Some(PropertiesEvent::CopyText(hash));
-    }
-    None
 }
 
 // ── Section header with toggle triangle ────────────────────────────────────
@@ -1174,13 +1068,17 @@ fn draw_section_header(
 ) -> f32 {
     let zone_id = ZONE_SECTION_BASE + section_idx as u32;
     let rect = Rect::new(x, y, w, h);
-    let zone = ix.add_zone(zone_id, rect);
+    // A header scrolled part-way out of the body is a button only where it
+    // can be seen.
+    let hovered = props
+        .visible_part(rect)
+        .is_some_and(|r| ix.add_zone(zone_id, r).is_hovered());
 
     // Subtle separator line above
     painter.rect_filled(Rect::new(x, y, w, 1.0 * s), 0.0, fox.muted.with_alpha(0.12));
 
     // Hover highlight
-    if zone.is_hovered() {
+    if hovered {
         painter.rect_filled(rect, 4.0 * s, fox.text.with_alpha(0.04));
     }
 
@@ -1231,6 +1129,10 @@ fn draw_section_header(
 
 // ── Row helpers ────────────────────────────────────────────────────────────
 
+/// Extra layout width for text already cut to fit: queued with exactly its
+/// own measured width as the limit, its last glyph can wrap away.
+const WRAP_SLACK: f32 = 4.0;
+
 #[allow(clippy::too_many_arguments)]
 fn draw_row(
     _painter: &mut Painter,
@@ -1251,7 +1153,12 @@ fn draw_row(
     if !label.is_empty() {
         text.queue(label, font, x, ty, fox.text_secondary, label_w, sw, sh);
     }
-    text.queue(value, font, x + label_w, ty, fox.text, w - label_w, sw, sh);
+    // Cut to the column. Inside the scrolling body text is bounded by the
+    // body, not by its own line: a value left to wrap (a long path) would
+    // show its second line on top of the next row.
+    let value_w = w - label_w;
+    let (shown, _) = crate::sections::fit_label(text, value, value_w, font);
+    text.queue(&shown, font, x + label_w, ty, fox.text, value_w + WRAP_SLACK, sw, sh);
     y + row_h
 }
 
@@ -1278,15 +1185,16 @@ fn draw_perm_row(
     let ty = y + (row_h - font) / 2.0;
     // Role label
     text.queue(role, font, x, ty, fox.text_secondary, label_w * 0.5, sw, sh);
-    // Name (owner/group)
+    // Name (owner/group), cut to its column like the values in `draw_row`.
     if !name.is_empty() {
+        let (shown, _) = crate::sections::fit_label(text, name, label_w * 0.6, font);
         text.queue(
-            name,
+            &shown,
             font,
             x + label_w * 0.5,
             ty,
             fox.text,
-            label_w * 0.6,
+            label_w * 0.6 + WRAP_SLACK,
             sw,
             sh,
         );
@@ -1330,257 +1238,13 @@ fn draw_perm_row(
     y + row_h
 }
 
+/// What a click in the dialog asks the app to do (props_click.rs).
+#[derive(Debug, PartialEq)]
 pub enum PropertiesEvent {
-    Close,
     /// User picked an icon — apply via icons::set_folder_icon and close picker.
     IconChosen(PathBuf),
     /// "Reset" — clear the folder icon xattr.
     IconReset,
     /// Put this text on the clipboard (checksum click-to-copy).
     CopyText(String),
-}
-
-// ── Icon picker body ──────────────────────────────────────────────────────
-
-/// Cache of icon path strings per tab so we don't hammer std::fs::read_dir
-/// every frame. Keyed by (tab, modified) — kept extremely simple: read once
-/// per dialog session (cleared on close).
-fn picker_icons_cached(props: &mut FileProperties) -> Vec<PathBuf> {
-    let tab = props.picker_tab;
-    match &props.picker_icons {
-        Some((cached_tab, icons)) if *cached_tab == tab => icons.clone(),
-        _ => {
-            let icons = list_picker_icons(tab);
-            props.picker_icons = Some((tab, icons.clone()));
-            icons
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn draw_icon_picker_body(
-    props: &mut FileProperties,
-    painter: &mut Painter,
-    text: &mut TextRenderer,
-    ix: &mut InteractionContext,
-    fox: &FoxPalette,
-    x: f32,
-    y_start: f32,
-    w: f32,
-    h: f32,
-    s: f32,
-    sw: u32,
-    sh: u32,
-) -> Option<PropertiesEvent> {
-    let pad = 12.0 * s;
-    let tab_h = 36.0 * s;
-    let tab_gap = 6.0 * s;
-    let footer_h = 48.0 * s;
-    // Reset per-frame so removed cells (eg after switching tab) don't leak
-    // their textures into the next frame's draw list.
-    props.picker_cell_rects.clear();
-
-    // ── Tabs ──────────────────────────────────────────────────────────
-    let tabs = IconPickerTab::all();
-    let tab_w = (w - tab_gap * (tabs.len() - 1) as f32) / tabs.len() as f32;
-    for (i, t) in tabs.iter().enumerate() {
-        let tx = x + (tab_w + tab_gap) * i as f32;
-        let tr = Rect::new(tx, y_start, tab_w, tab_h);
-        let zone_id = crate::ZONE_PROPS_PICKER_TAB_BASE + i as u32;
-        let state = ix.add_zone(zone_id, tr);
-        let active = *t == props.picker_tab;
-        let bg = if active {
-            fox.accent.with_alpha(0.20)
-        } else if state.is_hovered() {
-            fox.surface_2.with_alpha(0.8)
-        } else {
-            fox.surface_2.with_alpha(0.4)
-        };
-        painter.rect_filled(tr, 8.0 * s, bg);
-        if active {
-            painter.rect_stroke_sdf(tr, 8.0 * s, 1.5 * s, fox.accent.with_alpha(0.7));
-        }
-        let label_font = 16.0 * s;
-        let lw = text.measure_width(t.label(), label_font);
-        let lx = tr.x + (tr.w - lw) * 0.5;
-        let ly = tr.y + (tr.h - label_font) * 0.5;
-        text.queue(
-            t.label(),
-            label_font,
-            lx,
-            ly,
-            if active { fox.text } else { fox.text_secondary },
-            tr.w,
-            sw,
-            sh,
-        );
-        if state.is_active() {
-            props.picker_tab = *t;
-        }
-    }
-
-    let mut y = y_start + tab_h + pad;
-    let grid_h = (h - tab_h - pad - footer_h - pad).max(80.0 * s);
-
-    // ── Grid of icons ────────────────────────────────────────────────
-    if props.picker_tab == IconPickerTab::Custom {
-        // Custom tab: just a "Choose Custom Image..." button.
-        let btn = Rect::new(x + w * 0.25, y + grid_h * 0.4, w * 0.5, 48.0 * s);
-        let state = ix.add_zone(crate::ZONE_PROPS_PICKER_BACK, btn);
-        let bg = if state.is_hovered() {
-            fox.accent
-        } else {
-            fox.accent.with_alpha(0.85)
-        };
-        painter.rect_filled(btn, 8.0 * s, bg);
-        let label = "Choose Custom Image\u{2026}";
-        let label_font = 16.0 * s;
-        let lw = text.measure_width(label, label_font);
-        text.queue(
-            label,
-            label_font,
-            btn.x + (btn.w - lw) * 0.5,
-            btn.y + (btn.h - label_font) * 0.5,
-            Color::WHITE,
-            btn.w,
-            sw,
-            sh,
-        );
-        if state.is_active() {
-            // Spawn the existing file-picker flow inline. Reuses CTX_CHANGE_ICON's
-            // logic via a thread that re-applies the chosen icon on success.
-            let folder = props.path.clone();
-            std::thread::spawn(move || {
-                let output = std::process::Command::new("lntrn-file-manager")
-                    .args([
-                        "--pick",
-                        "--title",
-                        "Choose Folder Icon",
-                        "--filters",
-                        "Images:*.png,*.svg,*.jpg,*.jpeg,*.webp,*.ico",
-                    ])
-                    .output();
-                if let Ok(out) = output {
-                    if out.status.success() {
-                        let chosen = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                        if !chosen.is_empty() {
-                            crate::icons::set_folder_icon(&folder, &chosen);
-                        }
-                    }
-                }
-            });
-            props.picker_open = false;
-        }
-    } else {
-        let icons = picker_icons_cached(props);
-        let cell = 80.0 * s;
-        let cell_gap = 10.0 * s;
-        let cols = ((w + cell_gap) / (cell + cell_gap)).max(1.0) as usize;
-
-        for (i, path) in icons.iter().enumerate() {
-            let col = i % cols;
-            let row = i / cols;
-            let cx = x + col as f32 * (cell + cell_gap);
-            let cy = y + row as f32 * (cell + cell_gap);
-            if cy + cell > y + grid_h {
-                break;
-            } // overflow — needs scrolling, future polish
-            let r = Rect::new(cx, cy, cell, cell);
-            let zone_id = crate::ZONE_PROPS_ICON_BASE + i as u32;
-            let state = ix.add_zone(zone_id, r);
-            let bg = if state.is_hovered() {
-                fox.accent.with_alpha(0.18)
-            } else {
-                fox.surface_2.with_alpha(0.5)
-            };
-            painter.rect_filled(r, 8.0 * s, bg);
-            // Stash the cell rect so render.rs can draw the SVG thumbnail
-            // (icon_cache is borrowed there; we can't touch it from here).
-            // Inset slightly so the texture doesn't paint over the rounded edge.
-            let inset = 8.0 * s;
-            props.picker_cell_rects.push((
-                path.clone(),
-                r.x + inset,
-                r.y + inset,
-                r.w - inset * 2.0,
-                r.h - inset * 2.0,
-            ));
-            if state.is_active() {
-                return Some(PropertiesEvent::IconChosen(path.clone()));
-            }
-        }
-        // Empty-state hint
-        if icons.is_empty() {
-            let msg = "No icons found in this category.";
-            let font = 16.0 * s;
-            let mw = text.measure_width(msg, font);
-            text.queue(
-                msg,
-                font,
-                x + (w - mw) * 0.5,
-                y + grid_h * 0.4,
-                fox.muted,
-                w,
-                sw,
-                sh,
-            );
-        }
-    }
-
-    y += grid_h + pad;
-
-    // ── Footer: Reset + Back ──────────────────────────────────────────
-    let btn_w = 130.0 * s;
-    let btn_h = 40.0 * s;
-    let by = y;
-    let reset_rect = Rect::new(x, by, btn_w, btn_h);
-    let reset_state = ix.add_zone(crate::ZONE_PROPS_PICKER_RESET, reset_rect);
-    let reset_bg = if reset_state.is_hovered() {
-        fox.danger.with_alpha(0.85)
-    } else {
-        fox.danger.with_alpha(0.6)
-    };
-    painter.rect_filled(reset_rect, 8.0 * s, reset_bg);
-    let lbl = "Reset to Default";
-    let lf = 15.0 * s;
-    let lw = text.measure_width(lbl, lf);
-    text.queue(
-        lbl,
-        lf,
-        reset_rect.x + (reset_rect.w - lw) * 0.5,
-        reset_rect.y + (reset_rect.h - lf) * 0.5,
-        Color::WHITE,
-        reset_rect.w,
-        sw,
-        sh,
-    );
-    if reset_state.is_active() {
-        return Some(PropertiesEvent::IconReset);
-    }
-
-    let back_rect = Rect::new(x + w - btn_w, by, btn_w, btn_h);
-    let back_state = ix.add_zone(crate::ZONE_PROPS_PICKER_BACK + 1, back_rect);
-    let back_bg = if back_state.is_hovered() {
-        fox.surface_2.with_alpha(1.0)
-    } else {
-        fox.surface_2.with_alpha(0.7)
-    };
-    painter.rect_filled(back_rect, 8.0 * s, back_bg);
-    let lbl = "Back";
-    let lw = text.measure_width(lbl, lf);
-    text.queue(
-        lbl,
-        lf,
-        back_rect.x + (back_rect.w - lw) * 0.5,
-        back_rect.y + (back_rect.h - lf) * 0.5,
-        fox.text,
-        back_rect.w,
-        sw,
-        sh,
-    );
-    if back_state.is_active() {
-        props.picker_open = false;
-    }
-
-    None
 }

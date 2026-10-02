@@ -29,3 +29,4 @@ ureq = { version = "2", default-features = false, features = ["tls", "json", "gz
 notify = "6"
 sha2 = "0.10"
 urlencoding = "2"
+xkbcommon = "0.9"

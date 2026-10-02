@@ -3,7 +3,6 @@ use std::time::Instant;
 use lntrn_ui::gpu::{ContextMenu, InteractionContext, MenuItem, WaylandPopupBackend};
 
 use crate::app::{App, ContextTarget};
-use crate::desktop;
 use crate::wayland::State;
 use crate::{
     ClickAction, VIEW_SHOW_HIDDEN_ID, VIEW_SLIDER_ID, ZONE_BREADCRUMB_BASE, ZONE_CLOSE,
@@ -41,6 +40,29 @@ pub(crate) fn handle_click(
         if app.quick_look.is_some() {
             if zone_id == crate::ZONE_QUICK_LOOK {
                 app.quick_look = None;
+            }
+            return ClickAction::Consumed;
+        }
+        // ── File-operation dialogs (failure notice, delete question,
+        // close-while-busy question): capture all clicks while open ──
+        if app.op_dialog_open() {
+            match zone_id {
+                crate::ZONE_OP_DIALOG_ACT => app.op_dialog_choose(true),
+                // A click outside the panel is the safe answer.
+                crate::ZONE_OP_DIALOG_SAFE | crate::ZONE_OP_DIALOG_SCRIM => {
+                    app.op_dialog_choose(false)
+                }
+                // The scrollbar of a cloud dialog's list: held until the
+                // button goes up (the main loop follows the pointer).
+                crate::ZONE_CLOUD_DLG_LIST_BAR => {
+                    if let Some((_, cy)) = input.cursor() {
+                        app.cloud_list_press(cy, s);
+                    }
+                }
+                // Restore / Delete everywhere and the other buttons only
+                // cloud sync's dialogs have.
+                id if crate::cloud_ui::is_dialog_zone(id) => app.cloud_dialog_button(id),
+                _ => {}
             }
             return ClickAction::Consumed;
         }
@@ -86,7 +108,8 @@ pub(crate) fn handle_click(
             }
             return ClickAction::Consumed;
         }
-        // ── Sudo password modal: capture all clicks while open ──────
+        // ── Privileged-operation modal (delete question, password,
+        // working): capture all clicks while it exists, drawn or not ──
         if app.sudo_prompt.is_some() {
             match zone_id {
                 crate::ZONE_SUDO_PASSWORD => {
@@ -94,7 +117,11 @@ pub(crate) fn handle_click(
                         p.cursor = p.password.chars().count();
                     }
                 }
-                crate::ZONE_SUDO_SUBMIT => app.submit_sudo_prompt(),
+                // Delete Permanently on the question, Authenticate on the
+                // password field.
+                crate::ZONE_SUDO_SUBMIT => app.sudo_prompt_button(),
+                // A click outside the panel is the safe answer. (Ignored
+                // while the commands run: they are waited for.)
                 crate::ZONE_SUDO_CANCEL | crate::ZONE_SUDO_SCRIM => {
                     app.cancel_sudo_prompt();
                 }
@@ -119,7 +146,7 @@ pub(crate) fn handle_click(
                 }
                 crate::ZONE_CLOUD_LOGIN_SUBMIT => app.submit_cloud_login(),
                 crate::ZONE_CLOUD_LOGIN_CANCEL | crate::ZONE_CLOUD_LOGIN_SCRIM => {
-                    app.cloud_login = None;
+                    app.cancel_cloud_login();
                 }
                 _ => {}
             }
@@ -227,10 +254,12 @@ pub(crate) fn handle_click(
                     app.navigate_to(path.clone());
                 }
             }
+            crate::ZONE_ROOT_BADGE => app.leave_root_mode(),
             ZONE_NAV_BACK => app.go_back(),
             ZONE_NAV_FORWARD => app.go_forward(),
             ZONE_NAV_UP => app.go_up(),
             crate::ZONE_NAV_CLOUD => app.open_cloud_or_login(),
+            crate::ZONE_CLOUD_PILL => app.cloud_pill_clicked(),
             ZONE_NAV_SEARCH => {
                 if app.searching {
                     app.close_search();
@@ -252,12 +281,16 @@ pub(crate) fn handle_click(
                     let btn = match app.split.as_ref() {
                         Some(sp) => {
                             let (lx, lw, rx, rw) = crate::layout::split_pane_cols(wf, sp.ratio, s);
+                            // Where the button is drawn: whenever it is
+                            // shown at all it is in this place, whatever
+                            // the path strip holds.
+                            let strip = crate::layout::Strip::Path;
                             match sp.focused {
                                 crate::app::PaneSide::Left => {
-                                    crate::layout::pane_sort_rect(lx, lw, s)
+                                    crate::layout::pane_nav(lx, lw, false, strip, s).sort
                                 }
                                 crate::app::PaneSide::Right => {
-                                    crate::layout::pane_sort_rect(rx, rw, s)
+                                    crate::layout::pane_nav(rx, rw, true, strip, s).sort
                                 }
                             }
                         }
@@ -353,6 +386,8 @@ pub(crate) fn handle_click(
                             app.press_ctrl = ctrl;
                         }
                         if ctrl {
+                            // (A picker for one item: this row only.)
+                            app.unselect_others(&path);
                             if let Some(i) = entry_idx {
                                 app.entries[i].selected = !app.entries[i].selected;
                                 app.selection_anchor = Some(i);
@@ -407,27 +442,11 @@ pub(crate) fn handle_click(
             id if (ZONE_FILE_ITEM_BASE..ZONE_TREE_ITEM_BASE).contains(&id) => {
                 let idx = (id - ZONE_FILE_ITEM_BASE) as usize;
                 if app.searching && !app.search_buf.is_empty() {
-                    // Search result clicked — navigate to parent and highlight,
-                    // or open file directly
-                    if idx < app.search_results.len() {
-                        let entry = app.search_results[idx].clone();
-                        if entry.is_dir {
-                            app.close_search();
-                            app.navigate_to(entry.path);
-                        } else {
-                            let path = entry.path.clone();
-                            let ext = path
-                                .extension()
-                                .and_then(|e| e.to_str())
-                                .map(|s| s.to_lowercase())
-                                .unwrap_or_default();
-                            if let Some(app) = desktop::default_app_for_extension(&ext) {
-                                desktop::launch_app(&app.exec, &path);
-                            } else {
-                                crate::desktop::xdg_open(path);
-                            }
-                        }
-                    }
+                    // A search result: go to the folder or open the file,
+                    // on the click the double-click setting asks for.
+                    app.on_search_result_click(idx);
+                    // No rubber band from here either way.
+                    return ClickAction::Consumed;
                 } else if idx < app.entries.len() {
                     // Always record `pending_open` so the rubber-band branch
                     // below (which fires for ClickAction::None when no
@@ -443,6 +462,9 @@ pub(crate) fn handle_click(
                     if ctrl {
                         // Toggle this entry's selection immediately so the user
                         // sees feedback. Release will skip on_item_click.
+                        // (A picker for one item: this entry only.)
+                        let path = app.entries[idx].path.clone();
+                        app.unselect_others(&path);
                         app.entries[idx].selected = !app.entries[idx].selected;
                         app.selection_anchor = Some(idx);
                     } else if !shift {

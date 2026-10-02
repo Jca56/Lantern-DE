@@ -1,17 +1,13 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use lntrn_render::{Color, GpuContext, GpuTexture, Painter, TexturePass};
 
 use crate::fs::FileEntry;
+use crate::icon_store::{thumb_key, thumb_path, TextureStore};
 use crate::thumbs::{ThumbKind, ThumbPool};
 
 const ICON_RENDER_SIZE: u32 = 192;
-
-/// Max image/video thumbnails kept on the GPU at once (~147KB each at
-/// 192px RGBA → ~75MB cap). Past this, navigation purges them; the disk
-/// cache makes regeneration cheap.
-const THUMB_RAM_CAP: usize = 512;
 
 fn icon_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
@@ -21,12 +17,15 @@ fn icon_dir() -> PathBuf {
 // ── Icon cache ───────────────────────────────────────────────────────────────
 
 pub struct IconCache {
-    cache: HashMap<String, GpuTexture>,
-    cached_dir: PathBuf,
-    /// Background workers generating image/video thumbnails.
+    /// Thumbnails in it are bounded: the least recently shown ones go when
+    /// new ones arrive (icon_store.rs).
+    cache: TextureStore<GpuTexture>,
+    /// The folders on screen: the focused pane's and, in split view, the
+    /// other pane's.
+    shown_dirs: Vec<PathBuf>,
+    /// Background workers generating image/video thumbnails, and the keys
+    /// queued or in flight on them.
     pool: ThumbPool,
-    /// Keys queued or in flight on the pool.
-    pending: HashSet<String>,
     /// Keys whose generation failed — never retried this visit, so a corrupt
     /// or oversized file costs one attempt instead of one per frame.
     failed: HashSet<String>,
@@ -35,40 +34,54 @@ pub struct IconCache {
 impl IconCache {
     pub fn new() -> Self {
         Self {
-            cache: HashMap::new(),
-            cached_dir: PathBuf::new(),
+            cache: TextureStore::new(),
+            shown_dirs: Vec::new(),
             pool: ThumbPool::new(),
-            pending: HashSet::new(),
             failed: HashSet::new(),
         }
     }
 
-    /// Called on navigation. Thumbnails stay cached across directory changes
-    /// (instant back-nav) until the RAM cap is hit; queued-but-unstarted jobs
-    /// for the old directory are dropped so the new one renders first.
-    pub fn ensure_dir(&mut self, dir: &Path) {
-        if self.cached_dir != dir {
-            let thumb_count = self
-                .cache
-                .keys()
-                .filter(|k| k.starts_with("thumb:"))
-                .count();
-            if thumb_count > THUMB_RAM_CAP {
-                self.cache.retain(|k, _| !k.starts_with("thumb:"));
-            }
-            for key in self.pool.clear_queue() {
-                self.pending.remove(&key);
-            }
-            self.failed.clear();
-            self.cached_dir = dir.to_path_buf();
+    /// Called at the start of every frame with the folders it shows.
+    /// Thumbnails stay cached across directory changes (instant back-nav),
+    /// within the store's bound. When the folders change, the failures
+    /// recorded outside them are forgotten, so a revisit tries those files
+    /// again. A split view swapping focus between its panes shows the same
+    /// two folders as before: that is not a navigation.
+    pub fn begin_frame(&mut self, shown: [Option<&Path>; 2]) {
+        self.cache.begin_frame();
+        let same = shown
+            .iter()
+            .flatten()
+            .all(|dir| self.shown_dirs.iter().any(|s| s == dir))
+            && self
+                .shown_dirs
+                .iter()
+                .all(|s| shown.iter().flatten().any(|dir| s == dir));
+        if same {
+            return;
         }
+        self.shown_dirs.clear();
+        for dir in shown.into_iter().flatten() {
+            if !self.shown_dirs.iter().any(|s| s == dir) {
+                self.shown_dirs.push(dir.to_path_buf());
+            }
+        }
+        let shown_dirs = &self.shown_dirs;
+        self.failed.retain(|key| {
+            thumb_path(key).is_some_and(|p| shown_dirs.iter().any(|d| Path::new(p).starts_with(d)))
+        });
+    }
+
+    /// Every view of the frame has asked for the icons it shows: the
+    /// thumbnail queue is cut down to those, top row first.
+    pub fn end_requests(&mut self) {
+        self.pool.end_frame();
     }
 
     /// Drain completed thumbnails from the worker pool and upload to GPU.
     /// Call once per frame before rendering.
     pub fn poll_thumbs(&mut self, gpu: &GpuContext, tex: &TexturePass) {
         while let Some(result) = self.pool.try_recv() {
-            self.pending.remove(&result.key);
             match result.rgba {
                 Some((rgba, w, h)) => {
                     let texture = tex.upload(gpu, &rgba, w, h);
@@ -84,20 +97,21 @@ impl IconCache {
     /// True while thumbnail jobs are queued or in flight — the event loop
     /// polls faster so finished thumbs appear promptly.
     pub fn has_pending(&self) -> bool {
-        !self.pending.is_empty()
+        self.pool.has_pending()
     }
 
     /// Check if an icon texture is already cached for this entry.
     pub fn has_icon(&self, entry: &FileEntry) -> bool {
-        self.cache.contains_key(&cache_key(entry))
+        self.cache.contains(&cache_key(entry))
     }
 
-    /// Drop any cached icon entries that involve this path. Called after
-    /// the user changes a folder's icon so the next render reads the new
-    /// xattr instead of serving the stale texture.
+    /// Drop any cached icon entries that involve this path. Called when
+    /// the user changes a folder's icon. (The folder's own texture is keyed
+    /// by the icon and colour its entry carries, so it changes when the
+    /// entry does: `App::apply_folder_icon`.)
     pub fn invalidate(&mut self, path: &Path) {
         let needle = path.to_string_lossy().to_string();
-        self.cache.retain(|k, _| !k.contains(&needle));
+        self.cache.retain(|k| !k.contains(&needle));
         self.failed.retain(|k| !k.contains(&needle));
     }
 
@@ -116,10 +130,9 @@ impl IconCache {
         tex: &TexturePass,
     ) -> Option<&GpuTexture> {
         let key = cache_key(entry);
-        if !self.cache.contains_key(&key)
-            && !self.pending.contains(&key)
-            && !self.failed.contains(&key)
-        {
+        // `want`: a thumbnail still on its way is asked for again every
+        // frame its row is on screen, which keeps its job in the queue.
+        if !self.cache.contains(&key) && !self.failed.contains(&key) && !self.pool.want(&key) {
             if entry.is_dir {
                 match load_folder_icon(entry, gpu, tex) {
                     Some(texture) => {
@@ -138,17 +151,16 @@ impl IconCache {
                     // those keep the generic icon.
                     match kind {
                         ThumbKind::Image => {
-                            self.pending.insert(key.clone());
                             self.pool
-                                .submit_slow(key.clone(), entry.path.clone(), kind);
+                                .submit(key.clone(), entry.path.clone(), kind, true);
                         }
                         ThumbKind::Video | ThumbKind::Audio => {
                             self.failed.insert(key.clone());
                         }
                     }
                 } else {
-                    self.pending.insert(key.clone());
-                    self.pool.submit(key.clone(), entry.path.clone(), kind);
+                    self.pool
+                        .submit(key.clone(), entry.path.clone(), kind, false);
                 }
             }
             // Other file types: procedural fallback icon, no texture.
@@ -164,12 +176,20 @@ impl IconCache {
     /// Eagerly load an SVG icon (no-op if cached). Used by the Properties
     /// icon picker's two-pass render: load everything mutably, then borrow
     /// each texture immutably to build draw calls without borrow conflicts.
-    pub fn ensure_svg_path(&mut self, svg_path: &Path, gpu: &GpuContext, tex: &TexturePass) {
+    /// True when the texture was made just now: the frame that asked for
+    /// it was drawn without it.
+    pub fn ensure_svg_path(
+        &mut self,
+        svg_path: &Path,
+        gpu: &GpuContext,
+        tex: &TexturePass,
+    ) -> bool {
         let key = format!("svg:{}", svg_path.display());
-        if !self.cache.contains_key(&key) && !self.failed.contains(&key) {
+        if !self.cache.contains(&key) && !self.failed.contains(&key) {
             match rasterize_svg(svg_path, gpu, tex) {
                 Some(t) => {
                     self.cache.insert(key, t);
+                    return true;
                 }
                 // Remember the failure: this is called every frame while
                 // the picker is open, and a broken SVG was re-read and
@@ -179,6 +199,7 @@ impl IconCache {
                 }
             }
         }
+        false
     }
 
     /// Immutable lookup matching `ensure_svg_path`.
@@ -196,7 +217,7 @@ impl IconCache {
         tex: &TexturePass,
     ) -> Option<&GpuTexture> {
         let key = format!("folder_color:{color}");
-        if !self.cache.contains_key(&key) {
+        if !self.cache.contains(&key) {
             let icon_name = if color.is_empty() {
                 "folders/Colors/lntrn-folder-yellow.svg".to_string()
             } else {
@@ -224,9 +245,12 @@ impl IconCache {
 
 fn cache_key(entry: &FileEntry) -> String {
     if entry.is_dir {
-        // Include xattr icon/color in cache key so custom folders get unique textures
-        let icon = get_folder_icon(&entry.path).unwrap_or_default();
-        let color = get_folder_color(&entry.path).unwrap_or_default();
+        // Custom icon and colour are part of the key so such folders get a
+        // texture of their own. They come with the entry (read when its
+        // listing was built): this runs three times per visible entry per
+        // frame and must not touch the filesystem.
+        let icon = entry.folder_icon.as_deref().unwrap_or_default();
+        let color = entry.folder_color.as_deref().unwrap_or_default();
         // The name only matters for the seven standard folders. Keying on
         // every folder's own name rasterised the same yellow SVG once per
         // distinct name, on the render thread, into a texture never freed.
@@ -247,7 +271,7 @@ fn cache_key(entry: &FileEntry) -> String {
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        format!("thumb:{}:{}:{}", entry.path.display(), entry.size, stamp)
+        thumb_key(&entry.path, entry.size, stamp)
     } else {
         // File type icons are shared by extension
         let ext = entry
@@ -277,11 +301,11 @@ const STANDARD_FOLDERS: [&str; 7] = [
 /// requires disk access (xattr custom icon path).
 fn folder_icon_embedded(entry: &FileEntry) -> Option<&'static [u8]> {
     // xattr custom icon path? Must go to disk.
-    if get_folder_icon(&entry.path).is_some() {
+    if entry.folder_icon.is_some() {
         return None;
     }
     // xattr custom color? Try embedded.
-    if let Some(color) = get_folder_color(&entry.path) {
+    if let Some(color) = &entry.folder_color {
         return lntrn_icons::get(&format!("folders/Colors/lntrn-folder-{color}.svg"));
     }
     // Standard named folders
@@ -318,16 +342,18 @@ fn load_folder_icon(entry: &FileEntry, gpu: &GpuContext, tex: &TexturePass) -> O
 fn folder_icon_path(entry: &FileEntry) -> PathBuf {
     let base = icon_dir();
 
-    // Check xattr for custom icon path first (any image/SVG)
-    if let Some(icon_path) = get_folder_icon(&entry.path) {
-        let p = PathBuf::from(&icon_path);
-        if p.exists() {
+    // Check xattr for custom icon path first (any image/SVG). This runs on
+    // the render thread (once per icon), so an image kept on a phone or a
+    // network share is not looked at: the folder gets the stock icon.
+    if let Some(icon_path) = &entry.folder_icon {
+        let p = PathBuf::from(icon_path);
+        if !crate::fs::is_slow_path(&p) && p.exists() {
             return p;
         }
     }
 
     // Check xattr for custom color
-    if let Some(color) = get_folder_color(&entry.path) {
+    if let Some(color) = &entry.folder_color {
         let color_svg = format!("lntrn-folder-{color}.svg");
         let color_path = base.join("Colors").join(&color_svg);
         if color_path.exists() {
@@ -352,9 +378,14 @@ fn folder_icon_path(entry: &FileEntry) -> PathBuf {
 const XATTR_FOLDER_COLOR: &str = "user.lantern.folder_color";
 const XATTR_FOLDER_ICON: &str = "user.lantern.folder_icon";
 
-/// Read a custom icon path xattr from a directory.
-pub fn get_folder_icon(path: &Path) -> Option<String> {
-    read_xattr(path, XATTR_FOLDER_ICON)
+/// A folder's custom icon path and colour, straight from its attributes.
+/// Two syscalls, each a device round-trip on a slow mount: for listing and
+/// worker threads, never for drawing (entries carry the result).
+pub fn read_folder_attrs(path: &Path) -> (Option<String>, Option<String>) {
+    (
+        read_xattr(path, XATTR_FOLDER_ICON),
+        read_xattr(path, XATTR_FOLDER_COLOR),
+    )
 }
 
 /// Set a custom icon path xattr on a directory.
@@ -367,11 +398,6 @@ pub fn clear_folder_icon(path: &Path) {
     remove_xattr(path, XATTR_FOLDER_ICON);
 }
 
-/// Read the folder color xattr from a directory path.
-pub fn get_folder_color(path: &Path) -> Option<String> {
-    read_xattr(path, XATTR_FOLDER_COLOR)
-}
-
 /// Set a folder color xattr on a directory path.
 pub fn set_folder_color(path: &Path, color: &str) {
     write_xattr(path, XATTR_FOLDER_COLOR, color);
@@ -379,12 +405,6 @@ pub fn set_folder_color(path: &Path, color: &str) {
 
 fn read_xattr(path: &Path, attr: &str) -> Option<String> {
     use std::ffi::CString;
-    // Called for every visible folder on every frame. On a slow mount each
-    // getxattr is a device round-trip that can queue behind a whole-file
-    // download (jmtpfs), and MTP has no user xattrs to find anyway.
-    if crate::fs::is_slow_path(path) {
-        return None;
-    }
     let c_path = CString::new(path.as_os_str().as_encoded_bytes()).ok()?;
     let c_name = CString::new(attr).ok()?;
     let mut buf = [0u8; 512];

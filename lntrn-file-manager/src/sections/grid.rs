@@ -159,6 +159,14 @@ pub fn draw_content_grid(
             }
         }
 
+        // Link mark at the icon's bottom-left corner.
+        if entry.is_symlink {
+            let r = (icsz * 0.1).max(8.0 * s);
+            let icon_x = x + (isz - icsz) * 0.5;
+            let icon_bottom = y + top_pad + icsz;
+            super::emblem::mark_link(icon_x, icon_bottom, r, alpha, content_rect);
+        }
+
         // Git badge — dot at the icon's bottom-right corner.
         if let Some(mark) = git.mark(&entry.path) {
             let color = match mark {

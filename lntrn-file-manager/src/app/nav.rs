@@ -1,78 +1,11 @@
-//! Navigation, history, current-dir reload, cloud sign-in flow.
+//! Navigation, history, current-dir reload. (The Cloud button and the
+//! sign-in state are in cloud_ui.rs.)
 
 use crate::fs;
 
-use super::{matches_filter, App, DirLoadTarget, ViewMode};
+use super::{matches_filter, App, ViewMode};
 
 impl App {
-    /// Called when the user clicks the Cloud button or sidebar Cloud entry.
-    /// If signed in, navigate to ~/Cloud. Otherwise open the login dialog.
-    pub fn open_cloud_or_login(&mut self) {
-        let _ = crate::cloud::ensure_cloud_dir();
-        if self.cloud.is_some() {
-            self.navigate_to(crate::cloud::cloud_root());
-        } else {
-            self.cloud_login = Some(crate::dialogs::CloudLoginDialog::new());
-        }
-    }
-
-    /// Submit the login form. Blocks the UI for the duration of the HTTP
-    /// round-trip (typically <2s). On success: starts sync, navigates to
-    /// ~/Cloud, closes the dialog. On failure: surfaces the error in-dialog.
-    pub fn submit_cloud_login(&mut self) {
-        let Some(dlg) = self.cloud_login.as_mut() else {
-            return;
-        };
-        if !dlg.can_submit() {
-            return;
-        }
-        dlg.submitting = true;
-        dlg.error = None;
-        let email = dlg.email_buf.trim().to_string();
-        let password = dlg.password_buf.clone();
-
-        let cfg = match crate::cloud::CloudConfig::load() {
-            Ok(c) => c,
-            Err(e) => {
-                if let Some(dlg) = self.cloud_login.as_mut() {
-                    dlg.submitting = false;
-                    dlg.error = Some(format!("Config error: {e}"));
-                }
-                return;
-            }
-        };
-
-        match crate::cloud::auth::sign_in(&cfg, &email, &password) {
-            Ok(_session) => {
-                self.cloud_login = None;
-                self.init_cloud();
-                self.navigate_to(crate::cloud::cloud_root());
-            }
-            Err(e) => {
-                if let Some(dlg) = self.cloud_login.as_mut() {
-                    dlg.submitting = false;
-                    dlg.error = Some(format!("{e}"));
-                }
-            }
-        }
-    }
-
-    /// Try to bring up cloud sync from the cached session. Idempotent — safe to
-    /// call again after a sign-in. Logs to stderr; never panics.
-    pub fn init_cloud(&mut self) {
-        if self.cloud_sync.is_some() {
-            return;
-        }
-        let Some(state) = crate::cloud::CloudState::try_load() else {
-            return; // not signed in yet — UI/CLI will prompt
-        };
-        let handle =
-            crate::cloud::sync::SyncHandle::spawn(state.config.clone(), state.session.clone());
-        self.cloud = Some(state);
-        self.cloud_sync = Some(handle);
-        eprintln!("[fox-cloud] sync thread spawned");
-    }
-
     // ── Navigation ────────────────────────────────────────────────────
 
     pub fn navigate_to_home(&mut self) {
@@ -85,7 +18,7 @@ impl App {
             self.reload();
             return;
         }
-        self.root_mode = false;
+        self.leave_root_mode();
         let cur = self.current_dir.clone();
         let tab = self.active_nav_tab();
         tab.history_back.push(cur);
@@ -130,12 +63,33 @@ impl App {
         if path == self.current_dir {
             return;
         }
+        self.leave_root_mode();
+        self.keep_listing_for_tree();
         self.current_dir = path.clone();
         self.active_nav_tab().path = path;
-        self.reload();
+        // Only the folder that was clicked is new. The rest of the tree is
+        // not asked for again: on a phone every click into a folder would
+        // otherwise re-list the root and every expanded folder.
+        self.reload_with(false);
     }
 
     pub fn reload(&mut self) {
+        self.dir_loads.begin_reload(self.show_hidden);
+        self.reload_with(true);
+        self.dir_loads.end_reload();
+    }
+
+    /// `reload` that does not let a slow mount's listing wait its turn: for
+    /// a change after which what is shown is wrong, not merely old.
+    pub fn reload_now(&mut self) {
+        self.dir_loads.begin_urgent_reload(self.show_hidden);
+        self.reload_with(true);
+        self.dir_loads.end_reload();
+    }
+
+    /// `refresh_tree`: also ask for fresh listings of the slow folders a
+    /// tree view shows expanded (fast ones are re-listed by the rebuild).
+    fn reload_with(&mut self, refresh_tree: bool) {
         if fs::is_slow_path(&self.current_dir) {
             // Never list a slow mount on the render thread (app/dir_load.rs).
             // If the listing we're holding belongs to a different folder,
@@ -149,27 +103,57 @@ impl App {
                 self.entries.clear();
                 self.active_nav_tab().entries.clear();
                 self.renaming = None;
-                if self.view_mode == ViewMode::Tree {
-                    self.tree_entries.clear();
+            }
+            // A folder the tree view already holds a listing of (it was
+            // expanded there): show that at once, and refresh it below.
+            let mut rebuilt = false;
+            if self.entries.is_empty() {
+                if let Some(mut known) = self.tree_cache.get(&self.current_dir).cloned() {
+                    fs::sort_entries(&mut known, self.sort_by, self.sort_dir);
+                    self.apply_listing(known);
+                    rebuilt = true;
                 }
             }
+            // What is on screen takes the pane's current order at once: a
+            // change of sort must not wait for the device.
+            if !rebuilt && !self.entries.is_empty() {
+                let mut sorted = self.entries.clone();
+                fs::sort_entries(&mut sorted, self.sort_by, self.sort_dir);
+                let same_order = sorted
+                    .iter()
+                    .map(|e| &e.path)
+                    .eq(self.entries.iter().map(|e| &e.path));
+                if !same_order {
+                    self.apply_listing(sorted);
+                    rebuilt = true;
+                }
+            }
+            // Nothing to show: the user is waiting for this one. Otherwise
+            // it is a refresh of what is on screen and may take its turn.
+            let waiting = self.entries.is_empty();
             let dir = self.current_dir.clone();
-            let sort = (self.sort_by, self.sort_dir);
-            self.spawn_dir_load(dir, DirLoadTarget::Focused, sort);
+            self.request_dir_load(dir, waiting);
+            // Either pane's tree may hold slow folders.
+            if refresh_tree {
+                self.refresh_tree_dirs();
+            }
+            if self.view_mode == ViewMode::Tree && !rebuilt {
+                self.rebuild_tree();
+            }
             self.reload_inactive_pane();
             return;
         }
-        // A slow-mount listing still in flight for this pane belongs to a
-        // folder we have left. Its result would be dropped anyway; dropping
-        // the handle now stops "Loading…" (and the 60 fps polling it drives)
-        // from hanging over a local folder.
-        self.drop_focused_dir_load();
         let entries = fs::list_directory(
             &self.current_dir,
             self.show_hidden,
             self.sort_by,
             self.sort_dir,
         );
+        if refresh_tree {
+            // A slow folder expanded under a local root (in either pane's
+            // tree) is asked for again as well.
+            self.refresh_tree_dirs();
+        }
         self.apply_listing(entries);
         self.reload_inactive_pane();
     }
@@ -253,8 +237,10 @@ impl App {
         if tab_idx < self.tabs.len() {
             let path = self.tabs[tab_idx].path.clone();
             if fs::is_slow_path(&path) {
-                let sort = (self.sort_by, self.sort_dir);
-                self.spawn_dir_load(path, DirLoadTarget::Tab(tab_idx), sort);
+                // Delivered to the tab by its directory, wherever the tab
+                // sits in the strip by then.
+                let waiting = self.tabs[tab_idx].entries.is_empty();
+                self.request_dir_load(path, waiting);
                 return;
             }
             let tab = &mut self.tabs[tab_idx];
@@ -300,6 +286,8 @@ impl App {
         let cur = self.current_dir.clone();
         let tab = self.active_nav_tab();
         if let Some(prev) = tab.history_back.pop() {
+            // Root mode stays with the folder that is being left.
+            tab.root_dir = None;
             tab.history_forward.push(cur);
             tab.path = prev.clone();
             tab.scroll_offset = 0.0;
@@ -314,6 +302,7 @@ impl App {
         let cur = self.current_dir.clone();
         let tab = self.active_nav_tab();
         if let Some(next) = tab.history_forward.pop() {
+            tab.root_dir = None;
             tab.history_back.push(cur);
             tab.path = next.clone();
             tab.scroll_offset = 0.0;
@@ -326,7 +315,7 @@ impl App {
 
     #[allow(dead_code)]
     pub fn window_title(&self) -> String {
-        let suffix = if self.root_mode { " [ROOT]" } else { "" };
+        let suffix = if self.root_mode() { " [ROOT]" } else { "" };
         if let Some(name) = self.current_dir.file_name() {
             format!(
                 "{} — Lantern File Manager{}",

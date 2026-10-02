@@ -119,6 +119,19 @@ pub fn normalize(input: &str) -> Option<KeyInfo> {
     from_camelot(camelot_number(pc, minor), minor)
 }
 
+/// The key to write for what is in the editor's Key field. A field the
+/// user left alone goes back exactly as the file has it ("8A" stays "8A");
+/// what they typed is stored in its musical spelling.
+pub fn to_store(typed: &str, saved: &str) -> String {
+    let typed = typed.trim();
+    if typed == saved.trim() {
+        return saved.to_string();
+    }
+    normalize(typed)
+        .map(|k| k.musical.to_string())
+        .unwrap_or_else(|| typed.to_string())
+}
+
 fn strip_any<'a>(s: &'a str, prefixes: &[&str]) -> Option<&'a str> {
     prefixes.iter().find_map(|p| s.strip_prefix(p))
 }

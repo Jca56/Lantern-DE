@@ -1,6 +1,14 @@
 use lntrn_render::Rect;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+mod list;
+mod pane_nav;
+mod sidebar;
+
+pub use list::{list_columns, list_header_h, list_rows_rect};
+pub use pane_nav::{pane_nav, shown, Strip};
+pub use sidebar::{build_sidebar_layout, SidebarLayout, SidebarSpec};
+
 /// When true, layout omits the title bar (desktop widget mode).
 pub static DESKTOP_MODE: AtomicBool = AtomicBool::new(false);
 
@@ -49,11 +57,23 @@ pub fn zoom_multiplier(zoom: f32) -> f32 {
     1.8 + zoom * 2.2
 }
 
+/// Positions of the zoom slider that List/Tree rows tell apart.
+const LIST_ZOOM_STEPS: f32 = 16.0;
+
 /// Gentler zoom multiplier for List/Tree rows — they're inherently dense,
 /// so we don't want them to balloon like grid items.
 /// 0.0 → 0.8x, 0.5 → 1.5x (default), 1.0 → 2.2x.
+///
+/// In steps, not continuous: the List/Tree font sizes are this multiplier
+/// times a constant, and the text engine keeps every glyph it has ever
+/// rasterised at every size (its atlas only grows, and once full new glyphs
+/// come out blank). A slider dragged end to end used to walk each font
+/// through well over a hundred sizes; now it is seventeen, and rows, icons
+/// and text step together.
 pub fn list_zoom_multiplier(zoom: f32) -> f32 {
-    0.8 + zoom * 1.4
+    let zoom = if zoom.is_finite() { zoom.clamp(0.0, 1.0) } else { 0.5 };
+    let step = (zoom * LIST_ZOOM_STEPS).round() / LIST_ZOOM_STEPS;
+    0.8 + step * 1.4
 }
 
 /// Scaled layout helper. All public functions return physical-pixel values.
@@ -187,122 +207,6 @@ pub fn sidebar_rect(height: f32, s: f32) -> Rect {
     Rect::new(0.0, top, SIDEBAR_W * s, bottom - top)
 }
 
-// ── Sidebar layout (dynamic) ────────────────────────────────────────────────
-//
-// Sections (Places / Favorites / Devices) are collapsible and the Favorites
-// list is user-driven, so item rects can't be computed from index alone. We
-// walk the layout once per frame and hand out a struct of all hit/draw rects.
-// Both the renderer (draw) and the input pass (zone registration) consume the
-// same `SidebarLayout`, so they can't drift.
-
-const SIDEBAR_HEADER_H: f32 = 30.0;
-const SIDEBAR_HEADER_GAP: f32 = 12.0; // gap above each section header
-const SIDEBAR_PLACE_ITEM_H: f32 = 40.0;
-const SIDEBAR_DRIVE_ITEM_H: f32 = 64.0;
-const SIDEBAR_PHONE_ITEM_H: f32 = 56.0;
-
-pub struct SidebarLayout {
-    pub places_header: Rect,
-    pub place_items: Vec<Rect>,
-    pub favorites_header: Rect,
-    pub favorites_plus: Rect,
-    pub favorite_items: Vec<Rect>,
-    pub devices_header: Rect,
-    pub drive_items: Vec<Rect>,
-    pub phone_items: Vec<Rect>,
-    /// True if the Devices section was emitted at all (hidden when no
-    /// drives + no phones are present).
-    pub has_devices: bool,
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn build_sidebar_layout(
-    s: f32,
-    num_places: usize,
-    num_favorites: usize,
-    num_drives: usize,
-    num_phones: usize,
-    places_collapsed: bool,
-    favorites_collapsed: bool,
-    devices_collapsed: bool,
-) -> SidebarLayout {
-    let item_x = 4.0 * s;
-    let item_w = (SIDEBAR_W - 12.0) * s;
-    let header_h = SIDEBAR_HEADER_H * s;
-    let header_gap = SIDEBAR_HEADER_GAP * s;
-    let place_h = SIDEBAR_PLACE_ITEM_H * s;
-    let drive_h = SIDEBAR_DRIVE_ITEM_H * s;
-    let phone_h = SIDEBAR_PHONE_ITEM_H * s;
-
-    let mut y = nav_bar_y(s) + header_gap;
-
-    // ── PLACES ───────────────────────────────────────────────────────
-    let places_header = Rect::new(0.0, y, SIDEBAR_W * s, header_h);
-    y += header_h;
-    let mut place_items = Vec::with_capacity(num_places);
-    if !places_collapsed {
-        for _ in 0..num_places {
-            place_items.push(Rect::new(item_x, y, item_w, place_h));
-            y += place_h;
-        }
-    }
-
-    // ── FAVORITES ────────────────────────────────────────────────────
-    y += header_gap;
-    let favorites_header = Rect::new(0.0, y, SIDEBAR_W * s, header_h);
-    // Plus button on the right side of the header.
-    let plus_sz = 24.0 * s;
-    let favorites_plus = Rect::new(
-        SIDEBAR_W * s - plus_sz - 12.0 * s,
-        y + (header_h - plus_sz) * 0.5,
-        plus_sz,
-        plus_sz,
-    );
-    y += header_h;
-    let mut favorite_items = Vec::with_capacity(num_favorites);
-    if !favorites_collapsed {
-        for _ in 0..num_favorites {
-            favorite_items.push(Rect::new(item_x, y, item_w, place_h));
-            y += place_h;
-        }
-    }
-
-    // ── DEVICES ──────────────────────────────────────────────────────
-    let has_devices = num_drives > 0 || num_phones > 0;
-    let devices_header;
-    let mut drive_items = Vec::with_capacity(num_drives);
-    let mut phone_items = Vec::with_capacity(num_phones);
-    if has_devices {
-        y += header_gap;
-        devices_header = Rect::new(0.0, y, SIDEBAR_W * s, header_h);
-        y += header_h;
-        if !devices_collapsed {
-            for _ in 0..num_drives {
-                drive_items.push(Rect::new(item_x, y, item_w, drive_h));
-                y += drive_h;
-            }
-            for _ in 0..num_phones {
-                phone_items.push(Rect::new(item_x, y, item_w, phone_h));
-                y += phone_h;
-            }
-        }
-    } else {
-        devices_header = Rect::new(0.0, 0.0, 0.0, 0.0);
-    }
-
-    SidebarLayout {
-        places_header,
-        place_items,
-        favorites_header,
-        favorites_plus,
-        favorite_items,
-        devices_header,
-        drive_items,
-        phone_items,
-        has_devices,
-    }
-}
-
 pub fn content_rect(width: f32, height: f32, s: f32) -> Rect {
     let top = content_top(s);
     let bottom = content_bottom(height, s);
@@ -321,15 +225,42 @@ pub const SPLIT_HANDLE_W: f32 = 8.0;
 /// Divider ratio bounds (fraction of the content area given to the left pane).
 pub const SPLIT_RATIO_MIN: f32 = 0.2;
 pub const SPLIT_RATIO_MAX: f32 = 0.8;
+/// Narrowest a pane gets (logical px): its nav buttons and a path strip
+/// worth reading side by side (see `pane_nav`).
+pub const SPLIT_PANE_MIN_W: f32 = 400.0;
+
+/// Width of the left pane out of `avail` (both panes, without the handle).
+/// The ratio alone let a pane shrink to a fifth of a narrow window, where
+/// its right-aligned buttons sat on top of Back/Forward/Up and took their
+/// clicks. Each pane now keeps `SPLIT_PANE_MIN_W`; a window too narrow for
+/// two of those is shared evenly.
+fn split_left_w(avail: f32, ratio: f32, s: f32) -> f32 {
+    let ratio = if ratio.is_finite() { ratio } else { 0.5 };
+    let lw = avail * ratio.clamp(SPLIT_RATIO_MIN, SPLIT_RATIO_MAX);
+    let floor = (SPLIT_PANE_MIN_W * s).min(avail * 0.5);
+    lw.clamp(floor, avail - floor)
+}
 
 /// Horizontal columns of the two panes: (left_x, left_w, right_x, right_w).
 pub fn split_pane_cols(width: f32, ratio: f32, s: f32) -> (f32, f32, f32, f32) {
     let x0 = SIDEBAR_W * s;
     let handle = SPLIT_HANDLE_W * s;
     let avail = (width - x0 - handle).max(0.0);
-    let lw = avail * ratio.clamp(SPLIT_RATIO_MIN, SPLIT_RATIO_MAX);
+    let lw = split_left_w(avail, ratio, s);
     let rx = x0 + lw + handle;
     (x0, lw, rx, (width - rx).max(0.0))
+}
+
+/// The divider ratio for a divider dragged to `cursor_x`: where the panes
+/// will actually be, so the ratio that is saved is the one that was shown.
+/// `None` when there is no room for panes at all.
+pub fn split_ratio_at(cursor_x: f32, width: f32, s: f32) -> Option<f32> {
+    let x0 = SIDEBAR_W * s;
+    let avail = width - x0 - SPLIT_HANDLE_W * s;
+    if avail <= 0.0 {
+        return None;
+    }
+    Some(split_left_w(avail, (cursor_x - x0) / avail, s) / avail)
 }
 
 /// The divider handle, spanning nav bar through content.
@@ -347,66 +278,6 @@ pub fn split_divider_rect(width: f32, height: f32, ratio: f32, s: f32) -> Rect {
 /// Per-pane nav bar strip.
 pub fn pane_nav_bar_rect(pane_x: f32, pane_w: f32, s: f32) -> Rect {
     Rect::new(pane_x, nav_bar_y(s), pane_w, NAV_BAR_H * s)
-}
-
-fn pane_nav_button(pane_x: f32, offset: f32, s: f32) -> Rect {
-    Rect::new(
-        pane_x + offset * s,
-        nav_bar_y(s) + 6.0 * s,
-        36.0 * s,
-        36.0 * s,
-    )
-}
-
-/// Pane nav buttons, left-aligned. Split mode drops the cloud button — it
-/// stays a sidebar/single-pane affordance — so the row is tighter than the
-/// single-pane layout.
-pub fn pane_view_toggle_rect(pane_x: f32, s: f32) -> Rect {
-    pane_nav_button(pane_x, 6.0, s)
-}
-pub fn pane_back_rect(pane_x: f32, s: f32) -> Rect {
-    pane_nav_button(pane_x, 48.0, s)
-}
-pub fn pane_forward_rect(pane_x: f32, s: f32) -> Rect {
-    pane_nav_button(pane_x, 86.0, s)
-}
-pub fn pane_up_rect(pane_x: f32, s: f32) -> Rect {
-    pane_nav_button(pane_x, 124.0, s)
-}
-
-fn pane_nav_button_right(pane_x: f32, pane_w: f32, from_right: f32, s: f32) -> Rect {
-    Rect::new(
-        pane_x + pane_w - from_right * s,
-        nav_bar_y(s) + 6.0 * s,
-        36.0 * s,
-        36.0 * s,
-    )
-}
-
-/// Pane nav buttons, right-aligned.
-pub fn pane_search_rect(pane_x: f32, pane_w: f32, s: f32) -> Rect {
-    pane_nav_button_right(pane_x, pane_w, 42.0, s)
-}
-pub fn pane_sort_rect(pane_x: f32, pane_w: f32, s: f32) -> Rect {
-    pane_nav_button_right(pane_x, pane_w, 84.0, s)
-}
-/// Split-close toggle — rendered on the right pane only, keeping the button
-/// at the window's top-right where the user opened the split from.
-pub fn pane_split_toggle_rect(pane_x: f32, pane_w: f32, s: f32) -> Rect {
-    pane_nav_button_right(pane_x, pane_w, 126.0, s)
-}
-
-/// Pane path/breadcrumb strip. `reserve_split_btn` is true for the right
-/// pane, whose trailing button row also holds the split-close toggle.
-pub fn pane_path_rect(pane_x: f32, pane_w: f32, reserve_split_btn: bool, s: f32) -> Rect {
-    let px = pane_x + 168.0 * s;
-    let trailing = if reserve_split_btn { 134.0 } else { 92.0 } * s;
-    Rect::new(
-        px,
-        nav_bar_y(s) + 5.0 * s,
-        (pane_x + pane_w - trailing - px).max(40.0 * s),
-        38.0 * s,
-    )
 }
 
 /// Left-pane tab bar (right pane has no tabs).
@@ -574,3 +445,6 @@ pub fn item_hit_rect(cell: Rect, s: f32, zoom: f32) -> Rect {
         h,
     )
 }
+
+#[cfg(test)]
+mod tests;

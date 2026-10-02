@@ -5,12 +5,16 @@
 //! and drains finished RGBA buffers each frame (`IconCache::poll_thumbs`).
 //! Workers check `~/.cache/lntrn-file-manager/thumbs/` first — cache files
 //! are keyed by hash(path, mtime, size) so edited files regenerate and
-//! revisited folders load near-instantly across app restarts.
+//! revisited folders load near-instantly across app restarts. The queue
+//! follows what is on screen (pool.rs); the cache folder is kept within
+//! bounds (prune.rs).
 
-use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
-use std::sync::{Arc, Condvar, Mutex};
+
+mod pool;
+mod prune;
+
+pub use pool::ThumbPool;
 
 /// Max dimension of generated thumbnails (matches icons::ICON_RENDER_SIZE).
 pub const THUMB_SIZE: u32 = 192;
@@ -30,123 +34,6 @@ pub enum ThumbKind {
     Video,
     /// WAV / MP3 — embedded cover art via `audio_tags`.
     Audio,
-}
-
-/// Finished job delivered back to the render thread.
-pub struct ThumbResult {
-    pub key: String,
-    /// `None` means generation failed (corrupt, oversized, unsupported) —
-    /// the caller records the key so the file isn't retried every frame.
-    pub rgba: Option<(Vec<u8>, u32, u32)>,
-}
-
-struct ThumbJob {
-    key: String,
-    path: PathBuf,
-    kind: ThumbKind,
-}
-
-/// Fixed-size worker pool. Workers block on a condvar when idle and live for
-/// the process lifetime.
-pub struct ThumbPool {
-    queue: Arc<(Mutex<VecDeque<ThumbJob>>, Condvar)>,
-    /// Single-worker lane for slow mounts (MTP phones, sshfs). jmtpfs pulls
-    /// the whole file on the first read under a global device lock, so
-    /// running those on the main pool would queue four full downloads ahead
-    /// of every readdir/stat the render thread needs from the phone.
-    slow_queue: Arc<(Mutex<VecDeque<ThumbJob>>, Condvar)>,
-    rx: mpsc::Receiver<ThumbResult>,
-}
-
-impl ThumbPool {
-    pub fn new() -> Self {
-        let queue = Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
-        let (tx, rx) = mpsc::channel();
-        // 2–4 workers: enough to hide decode latency, few enough that
-        // concurrent decode allocations stay bounded.
-        let workers = std::thread::available_parallelism()
-            .map(|n| (n.get() / 2).clamp(2, 4))
-            .unwrap_or(2);
-        for _ in 0..workers {
-            let queue = Arc::clone(&queue);
-            let tx = tx.clone();
-            std::thread::spawn(move || worker_loop(queue, tx));
-        }
-        let slow_queue = Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
-        {
-            let queue = Arc::clone(&slow_queue);
-            let tx = tx.clone();
-            std::thread::spawn(move || worker_loop(queue, tx));
-        }
-        Self {
-            queue,
-            slow_queue,
-            rx,
-        }
-    }
-
-    pub fn submit(&self, key: String, path: PathBuf, kind: ThumbKind) {
-        Self::push(&self.queue, ThumbJob { key, path, kind });
-    }
-
-    /// Queue on the slow lane: one job at a time, never competing with the
-    /// main pool. For files on MTP / network mounts.
-    pub fn submit_slow(&self, key: String, path: PathBuf, kind: ThumbKind) {
-        Self::push(&self.slow_queue, ThumbJob { key, path, kind });
-    }
-
-    fn push(queue: &(Mutex<VecDeque<ThumbJob>>, Condvar), job: ThumbJob) {
-        let (lock, cv) = queue;
-        lock.lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push_back(job);
-        cv.notify_one();
-    }
-
-    /// Drop all queued (not yet started) jobs on both lanes, returning their
-    /// keys so the caller can clear its pending set. In-flight jobs finish
-    /// normally.
-    pub fn clear_queue(&self) -> Vec<String> {
-        let mut keys = Vec::new();
-        for (lock, _) in [&*self.queue, &*self.slow_queue] {
-            keys.extend(
-                lock.lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .drain(..)
-                    .map(|j| j.key),
-            );
-        }
-        keys
-    }
-
-    pub fn try_recv(&self) -> Option<ThumbResult> {
-        self.rx.try_recv().ok()
-    }
-}
-
-fn worker_loop(queue: Arc<(Mutex<VecDeque<ThumbJob>>, Condvar)>, tx: mpsc::Sender<ThumbResult>) {
-    loop {
-        let job = {
-            let (lock, cv) = &*queue;
-            let mut q = lock.lock().unwrap_or_else(|e| e.into_inner());
-            loop {
-                if let Some(job) = q.pop_front() {
-                    break job;
-                }
-                q = cv.wait(q).unwrap_or_else(|e| e.into_inner());
-            }
-        };
-        // A decoder panicking on a corrupt file must still produce a result:
-        // otherwise the key sits in `pending` forever (the window redraws at
-        // 60 fps waiting for it) and this worker is gone for good.
-        let rgba = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            generate(&job.path, job.kind)
-        }))
-        .unwrap_or(None);
-        if tx.send(ThumbResult { key: job.key, rgba }).is_err() {
-            return; // IconCache dropped — shutting down
-        }
-    }
 }
 
 // ── Disk cache ───────────────────────────────────────────────────────────────
@@ -177,24 +64,8 @@ fn cache_file(path: &Path) -> PathBuf {
 /// Prefix of the current generation of cache files. Bump it when the pixels
 /// a given source produces change (v2: EXIF orientation applied, SVG alpha
 /// no longer premultiplied twice); files of older generations are removed
-/// the first time a thumbnail is generated.
+/// when the cache is pruned (prune.rs).
 const CACHE_GEN: &str = "v2-";
-
-fn prune_old_generations() {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        let Ok(rd) = std::fs::read_dir(thumb_cache_dir()) else {
-            return;
-        };
-        for entry in rd.flatten() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if name.ends_with(".png") && !name.starts_with(CACHE_GEN) {
-                let _ = std::fs::remove_file(entry.path());
-            }
-        }
-    });
-}
 
 // ── Generation ───────────────────────────────────────────────────────────────
 
@@ -207,9 +78,12 @@ pub fn generate(path: &Path, kind: ThumbKind) -> Option<(Vec<u8>, u32, u32)> {
     if !std::fs::metadata(path).is_ok_and(|m| m.is_file()) {
         return None;
     }
-    prune_old_generations();
+    // Once per run, on a thread of its own: this may be the render thread
+    // (a custom folder icon), and the cache folder holds thousands of files.
+    prune::start_once(thumb_cache_dir(), CACHE_GEN);
     let cached = cache_file(path);
     if let Ok(img) = image::open(&cached) {
+        prune::mark_used(&cached);
         let rgba = img.to_rgba8();
         let (w, h) = rgba.dimensions();
         return Some((rgba.into_raw(), w, h));
@@ -373,13 +247,21 @@ pub fn ffmpeg_frame_png(path: &Path, fit: Option<u32>) -> Option<Vec<u8>> {
             "error",
             "pipe:1",
         ]);
-        let output = cmd.output().ok()?;
-        if output.status.success() && !output.stdout.is_empty() {
-            return Some(output.stdout);
+        cmd.stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        // A video that makes ffmpeg hang (a FIFO named x.mp4, a broken
+        // stream) must not hold its worker, or Quick Look's one loader, for
+        // good.
+        let (status, png) = crate::bg::output_with_deadline(&mut cmd, FFMPEG_DEADLINE)?;
+        if status.success() && !png.is_empty() {
+            return Some(png);
         }
     }
     None
 }
+
+/// How long ffmpeg gets for one frame.
+const FFMPEG_DEADLINE: std::time::Duration = std::time::Duration::from_secs(20);
 
 #[cfg(test)]
 mod tests {

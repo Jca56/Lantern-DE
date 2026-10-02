@@ -3,20 +3,36 @@
 // Paste into: Firebase Console -> Storage -> Rules -> Publish.
 //
 // Rule: an authenticated user can only read/write blobs under their own
-// /users/{uid}/** prefix. Optional size cap of 1 GiB per object — bump if you
-// want to back up larger files.
+// /users/{uid}/** prefix. Uploads are capped at 1 GiB per object. Fox does
+// not even try to upload a file that big (MAX_BLOB_BYTES in
+// src/cloud/storage.rs): to back up larger files, raise both together.
+//
+// What sync needs from these rules:
+//   read            download a blob (get), and list the blobs when it cleans
+//                   up the ones no file refers to any more (list)
+//   create, update  upload a blob, size-capped
+//   delete          that clean-up
+//
+// The cap is on create/update only. `write` also covers delete, and on a
+// delete `request.resource` is null, so a size condition on `write` made
+// every delete fail (blobs could never be cleaned up). Until this version is
+// published, Fox notes once in its log that it may not delete and carries on
+// syncing; nothing else depends on it.
 
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
 
-    // Per-user blob store — content-addressed by sha256 under blobs/.
+    // Per-user blob store: content-addressed by sha256 under blobs2/
+    // (builds before 2026-10 used blobs/; the rule covers both).
     match /users/{uid}/{allPaths=**} {
       allow read: if request.auth != null
                    && request.auth.uid == uid;
-      allow write: if request.auth != null
-                    && request.auth.uid == uid
-                    && request.resource.size < 1024 * 1024 * 1024;
+      allow create, update: if request.auth != null
+                             && request.auth.uid == uid
+                             && request.resource.size < 1024 * 1024 * 1024;
+      allow delete: if request.auth != null
+                     && request.auth.uid == uid;
     }
 
     // Everything else denied by default.

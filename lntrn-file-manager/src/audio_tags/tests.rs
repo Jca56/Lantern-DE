@@ -1,6 +1,11 @@
 use super::*;
 use std::path::PathBuf;
 
+mod id3_layouts;
+mod safety;
+mod unchanged;
+mod wav_layouts;
+
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join("lntrn-audio-tags-tests");
     std::fs::create_dir_all(&dir).unwrap();
@@ -45,7 +50,7 @@ fn id3_round_trip_latin1_and_utf16() {
     t.title = "Ünïcödé — 🎵".into();
     let mut tag = id3::Id3Tag::new();
     tag.apply(&t);
-    let bytes = tag.build(0);
+    let bytes = tag.build(0).unwrap();
     let parsed = id3::parse(&bytes).unwrap();
     assert_eq!(parsed.total_len, bytes.len());
     assert_eq!(parsed.to_tags(), t);
@@ -55,9 +60,9 @@ fn id3_round_trip_latin1_and_utf16() {
 fn id3_pads_to_requested_total() {
     let mut tag = id3::Id3Tag::new();
     tag.apply(&sample_tags());
-    let first = tag.build(0);
-    assert_eq!(tag.build(first.len()).len(), first.len());
-    assert!(tag.build(1).len() > 1);
+    let first = tag.build(0).unwrap();
+    assert_eq!(tag.build(first.len()).unwrap().len(), first.len());
+    assert!(tag.build(1).unwrap().len() > 1);
 }
 
 #[test]
@@ -65,38 +70,16 @@ fn id3_preserves_unknown_frames() {
     let mut tag = id3::Id3Tag::new();
     let mut d = vec![0u8];
     d.extend_from_slice(b"SERATO_ANALYSIS\0v2");
-    tag.frames.push(id3::Frame { id: *b"TXXX", data: d });
+    tag.frames.push(id3::Frame::new(b"TXXX", d.clone()));
     tag.apply(&sample_tags());
-    let parsed = id3::parse(&tag.build(0)).unwrap();
-    assert!(parsed.frames.iter().any(|f| &f.id == b"TXXX"));
-}
-
-#[test]
-fn id3v24_utf8_is_reencoded_for_v23() {
-    let title = "Naïve";
-    let mut data = vec![3u8]; // UTF-8
-    data.extend_from_slice(title.as_bytes());
-    let mut body = b"TIT2".to_vec();
-    body.extend_from_slice(&syncsafe_bytes(data.len()));
-    body.extend_from_slice(&[0, 0]);
-    body.extend_from_slice(&data);
-    let mut tag = b"ID3\x04\x00\x00".to_vec();
-    tag.extend_from_slice(&syncsafe_bytes(body.len()));
-    tag.extend_from_slice(&body);
-
-    let parsed = id3::parse(&tag).unwrap();
-    assert_eq!(parsed.version, 4);
-    assert_eq!(parsed.to_tags().title, title);
-    let rebuilt = id3::parse(&parsed.build(0)).unwrap();
-    assert_eq!(rebuilt.version, 3);
-    assert_eq!(rebuilt.to_tags().title, title);
-    assert!(rebuilt.frames[0].data[0] < 2, "v2.3 must use Latin-1/UTF-16");
+    let parsed = id3::parse(&tag.build(0).unwrap()).unwrap();
+    assert!(parsed.frames.iter().any(|f| f.is(b"TXXX") && f.data == d));
 }
 
 #[test]
 fn id3v1_round_trip() {
     let t = sample_tags();
-    let block = id3v1::build(&t, None);
+    let block = id3v1::update(&id3v1::blank(), &AudioTags::default(), &t);
     let back = id3v1::parse(&block).unwrap();
     assert_eq!(back.title, "INFERNO");
     assert_eq!(back.artist, "Alva");
@@ -316,11 +299,11 @@ fn id3_keeps_every_picture_when_art_is_untouched() {
     back.push(4);
     back.push(0);
     back.extend_from_slice(b"\x89PNG\r\n\x1a\nbackcover");
-    tag.frames.push(id3::Frame { id: *b"APIC", data: back });
+    tag.frames.push(id3::Frame::new(b"APIC", back));
     let before: Vec<Vec<u8>> = tag
         .frames
         .iter()
-        .filter(|f| &f.id == b"APIC")
+        .filter(|f| f.is(b"APIC"))
         .map(|f| f.data.clone())
         .collect();
     assert_eq!(before.len(), 2);
@@ -332,7 +315,7 @@ fn id3_keeps_every_picture_when_art_is_untouched() {
     let after: Vec<Vec<u8>> = tag
         .frames
         .iter()
-        .filter(|f| &f.id == b"APIC")
+        .filter(|f| f.is(b"APIC"))
         .map(|f| f.data.clone())
         .collect();
     assert_eq!(after, before);
@@ -340,16 +323,17 @@ fn id3_keeps_every_picture_when_art_is_untouched() {
     // Removing the art still removes it.
     t.artwork = None;
     tag.apply(&t);
-    assert!(!tag.frames.iter().any(|f| &f.id == b"APIC"));
+    assert!(!tag.frames.iter().any(|f| f.is(b"APIC")));
 }
 
 #[test]
 fn id3v1_clearing_the_track_clears_it() {
     let mut t = sample_tags();
-    let block = id3v1::build(&t, None);
+    let block = id3v1::update(&id3v1::blank(), &AudioTags::default(), &t);
     assert_eq!(block[126], 3);
+    let before = t.clone();
     t.track.clear();
-    let cleared = id3v1::build(&t, Some(&block));
+    let cleared = id3v1::update(&block, &before, &t);
     assert_eq!((cleared[125], cleared[126]), (0, 0));
     assert!(id3v1::parse(&cleared).unwrap().track.is_empty());
 }

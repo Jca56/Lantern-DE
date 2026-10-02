@@ -1,115 +1,37 @@
-//! Tab management, view-mode cycling, tree-view rebuild.
+//! Tab management. (View modes and the tree view live in app/tree.rs.)
 
-use std::path::PathBuf;
-
-use crate::fs;
-
-use super::{App, DirectoryTab, TreeEntry, ViewMode};
+use super::{App, DirectoryTab};
 
 impl App {
-    // ── View mode & tree ──────────────────────────────────────────────
-
-    pub fn cycle_view_mode(&mut self) {
-        self.view_mode = self.view_mode.cycle();
-        if self.view_mode == ViewMode::Tree {
-            self.rebuild_tree();
-        } else {
-            // Stale rows must not stay addressable from another view.
-            self.tree_entries.clear();
-            self.pending_tree_open = None;
-            self.drag_tree_item = None;
-        }
-    }
-
-    pub fn toggle_tree_expand(&mut self, path: PathBuf) {
-        if self.tree_expanded.contains(&path) {
-            self.tree_expanded.remove(&path);
-        } else {
-            self.tree_expanded.insert(path);
-        }
-        self.rebuild_tree();
-    }
-
-    pub fn rebuild_tree(&mut self) {
-        // Row indices held across the rebuild (a press waiting for its
-        // release, a drag in flight) follow their path, like `apply_listing`
-        // does for `entries` indices.
-        let path_at = |idx: Option<usize>| {
-            idx.and_then(|i| self.tree_entries.get(i))
-                .map(|te| te.entry.path.clone())
-        };
-        let pending_path = path_at(self.pending_tree_open);
-        let drag_path = path_at(self.drag_tree_item);
-
-        self.tree_entries.clear();
-        let root = self
-            .tree_root
-            .clone()
-            .unwrap_or_else(|| self.current_dir.clone());
-        self.build_tree_recursive(&root, 0);
-
-        let index_of = |p: Option<PathBuf>| {
-            p.and_then(|p| self.tree_entries.iter().position(|te| te.entry.path == p))
-        };
-        let pending = index_of(pending_path);
-        let drag = index_of(drag_path);
-        self.pending_tree_open = pending;
-        self.drag_tree_item = drag;
-    }
-
-    fn build_tree_recursive(&mut self, dir: &PathBuf, depth: usize) {
-        let entries = fs::list_directory(dir, self.show_hidden, self.sort_by, self.sort_dir);
-        // The picker's file-type filter, same rule as `apply_listing`: folders
-        // always show, files only when they match the active filter.
-        let patterns = self.pick.as_ref().and_then(|pick| {
-            pick.filters
-                .get(pick.active_filter)
-                .map(|f| f.patterns.clone())
-        });
-        for entry in entries {
-            if let Some(patterns) = &patterns {
-                if !entry.is_dir && !super::matches_filter(&entry.name, patterns) {
-                    continue;
-                }
-            }
-            let is_expanded = entry.is_dir && self.tree_expanded.contains(&entry.path);
-            let child_path = entry.path.clone();
-            self.tree_entries.push(TreeEntry {
-                entry,
-                depth,
-                is_expanded,
-            });
-            if is_expanded {
-                self.build_tree_recursive(&child_path, depth + 1);
-            }
-        }
-    }
-
     // ── Tab management ────────────────────────────────────────────────
 
     pub fn new_tab(&mut self) {
         // Tabs belong to the left pane — pull focus there first so the tab
         // swap doesn't capture the right pane's state.
         self.focus_pane(super::PaneSide::Left);
+        // Root mode does not outlive the tab it was switched on in.
+        self.leave_root_mode();
         self.sync_to_tab();
-        let home = super::dirs_home();
-        let mut tab = DirectoryTab::new(home.clone());
-        tab.entries = fs::list_directory(&tab.path, self.show_hidden, self.sort_by, self.sort_dir);
-        self.tabs.push(tab);
+        // Listed by `after_tab_change`, like any tab that comes into view.
+        self.tabs.push(DirectoryTab::new(super::dirs_home()));
         self.current_tab = self.tabs.len() - 1;
         self.sync_from_tab();
         self.after_tab_change();
     }
 
     /// The flat fields now describe another tab's directory: drop the indices
-    /// that pointed into the previous tab's listing and rebuild the tree,
-    /// which is not stored per tab.
+    /// that pointed into the previous tab's listing, and list the folder
+    /// again. What the tab holds is a snapshot from when it was last shown;
+    /// nothing watched its folder while it was in the background, so files
+    /// that came or went since would be missing or still clickable. The
+    /// reload is synchronous on a local disk and goes to the off-thread
+    /// loader on a slow mount (which also re-requests a listing that was
+    /// still loading when the tab was left). It rebuilds the tree, which is
+    /// not stored per tab.
     fn after_tab_change(&mut self) {
         self.selection_anchor = None;
         self.last_click_idx = None;
-        if self.view_mode == ViewMode::Tree {
-            self.rebuild_tree();
-        }
+        self.reload();
     }
 
     pub fn switch_tab(&mut self, index: usize) {
@@ -117,6 +39,7 @@ impl App {
         if index >= self.tabs.len() || index == self.current_tab {
             return;
         }
+        self.leave_root_mode();
         self.sync_to_tab();
         self.current_tab = index;
         self.sync_from_tab();
@@ -135,6 +58,38 @@ impl App {
         }
     }
 
+    /// The pinned tabs as the settings file holds them, in tab order,
+    /// followed by the pins that got no tab this time (see
+    /// `keep_absent_pin`).
+    pub fn pinned_tab_paths(&self) -> Vec<String> {
+        let mut pins: Vec<String> = self
+            .tabs
+            .iter()
+            .filter(|t| t.pinned)
+            .map(|t| {
+                t.pinned_path
+                    .as_ref()
+                    .unwrap_or(&t.path)
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect();
+        for pin in &self.absent_pins {
+            if !pins.contains(pin) {
+                pins.push(pin.clone());
+            }
+        }
+        pins
+    }
+
+    /// A pinned tab whose folder was not there at startup (its drive is
+    /// unplugged). It gets no tab, and it stays pinned in the settings.
+    pub fn keep_absent_pin(&mut self, path: String) {
+        if !self.absent_pins.contains(&path) {
+            self.absent_pins.push(path);
+        }
+    }
+
     pub fn close_tab(&mut self, index: usize) {
         if self.tabs.len() <= 1 || index >= self.tabs.len() {
             return;
@@ -144,6 +99,11 @@ impl App {
             return;
         }
         self.focus_pane(super::PaneSide::Left);
+        // Closing the tab that is shown lands in another one: root mode
+        // stays behind. Closing a background tab leaves nothing.
+        if index == self.current_tab {
+            self.leave_root_mode();
+        }
         self.sync_to_tab();
         self.tabs.remove(index);
         if self.current_tab >= self.tabs.len() {

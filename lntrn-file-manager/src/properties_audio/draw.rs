@@ -24,10 +24,27 @@ const TOP_PAD: f32 = 6.0;
 const BTN_H: f32 = 40.0;
 const BTN_W: f32 = 110.0;
 const CHIP_W: f32 = 50.0;
+/// Status text and the notice under the action bar. The notice is what
+/// says why a save was refused, so it is sized to be read.
+const STATUS_FONT: f32 = 18.0;
+const NOTICE_LINE_H: f32 = 26.0;
+const NOTICE_PAD: f32 = 12.0;
+const NOTICE_GAP: f32 = 4.0;
 
 impl AudioEdit {
     pub fn body_height(&self, s: f32) -> f32 {
         (TOP_PAD + ROWS * (FIELD_H + ROW_GAP) + LABEL_FONT + 10.0 + BTN_H + 8.0) * s
+            + self.notice_height(s)
+    }
+
+    /// Height of the error notice under the action bar, 0 without one.
+    fn notice_height(&self, s: f32) -> f32 {
+        match &self.status {
+            Some(st) if st.is_err && !st.lines.is_empty() => {
+                (NOTICE_GAP + 2.0 * NOTICE_PAD + st.lines.len() as f32 * NOTICE_LINE_H + 8.0) * s
+            }
+            _ => 0.0,
+        }
     }
 
     /// Draw the section body at (x, y) spanning `w`; returns the height used.
@@ -81,7 +98,62 @@ impl AudioEdit {
 
         self.draw_action_bar(painter, text, ix, fox, x, fy, w, s, sw, sh);
         fy += BTN_H * s + 8.0 * s;
+        fy += self.draw_notice(painter, text, fox, x, fy, w, s, sw, sh);
         fy - y
+    }
+
+    /// An error, in full: a refused save says why, and that takes a few
+    /// lines. (It used to be one clipped line beside the buttons.) Returns
+    /// the height used, which is what `notice_height` promised.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_notice(
+        &mut self,
+        painter: &mut Painter,
+        text: &mut TextRenderer,
+        fox: &FoxPalette,
+        x: f32,
+        y: f32,
+        w: f32,
+        s: f32,
+        sw: u32,
+        sh: u32,
+    ) -> f32 {
+        let height = self.notice_height(s);
+        let Some(st) = self.status.as_mut().filter(|st| st.is_err) else {
+            return 0.0;
+        };
+        if height == 0.0 {
+            return 0.0;
+        }
+        let font = STATUS_FONT * s;
+        let pad = NOTICE_PAD * s;
+        let bar = 5.0 * s;
+        // The slack keeps the text renderer from wrapping a line that
+        // measures exactly as wide as its box.
+        let avail = w - bar - 2.0 * pad - 4.0 * s;
+        if st.lines.iter().any(|l| text.measure_width(l, font) > avail) {
+            // The first break was by character count; this text is wider
+            // than that allows for. Break it by its real width. The height
+            // reserved for this frame was for the old line count, so ask
+            // for one more frame (once: a single word wider than the panel
+            // stays too wide however often it is re-broken).
+            let before = st.lines.len();
+            st.rewrap(|l| text.measure_width(l, font) <= avail);
+            if st.lines.len() != before {
+                self.relayout.set(true);
+            }
+        }
+        let top = y + NOTICE_GAP * s;
+        let lines_h = st.lines.len() as f32 * NOTICE_LINE_H * s;
+        let panel = Rect::new(x, top, w, lines_h + 2.0 * pad);
+        painter.rect_filled(panel, 8.0 * s, fox.danger.with_alpha(0.14));
+        painter.rect_filled(Rect::new(x, top, bar, panel.h), 2.0 * s, fox.danger);
+        let line_h = NOTICE_LINE_H * s;
+        for (i, line) in st.lines.iter().enumerate() {
+            let ly = top + pad + i as f32 * line_h + (line_h - font) / 2.0;
+            text.queue(line, font, x + bar + pad, ly, fox.text, avail + 4.0 * s, sw, sh);
+        }
+        height
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -271,15 +343,15 @@ impl AudioEdit {
     ) {
         let btn_h = BTN_H * s;
         let btn_w = BTN_W * s;
-        let font = LABEL_FONT * s;
+        let font = STATUS_FONT * s;
         let ty = y + (btn_h - font) / 2.0;
         if self.saving {
-            text.queue("Saving…", font, x, ty, fox.muted, w, sw, sh);
+            text.queue("Saving…", font, x, ty, fox.text_secondary, w, sw, sh);
             return;
         }
-        if let Some((msg, is_err, _)) = &self.status {
-            let color = if *is_err { fox.danger } else { fox.success };
-            text.queue(msg, font, x, ty, color, w * 0.6, sw, sh);
+        // Errors get the notice below the bar; this is for "Saved".
+        if let Some(st) = self.status.as_ref().filter(|st| !st.is_err) {
+            text.queue(&st.lines.join(" "), font, x, ty, fox.success, w * 0.6, sw, sh);
         }
         if !self.is_dirty() {
             return;

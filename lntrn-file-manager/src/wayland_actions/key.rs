@@ -1,14 +1,15 @@
 use lntrn_ui::gpu::{ContextMenu, WaylandPopupBackend};
 
 use crate::app::{floor_boundary, next_boundary, prev_boundary, App};
+use crate::keyboard::{code, KeyPress};
 use crate::settings::Settings;
 use crate::wayland::State;
 
-// Linux keycodes
-const KEY_ESC: u32 = 1;
-const KEY_BACKSPACE: u32 = 14;
-const KEY_TAB: u32 = 15;
-const KEY_ENTER: u32 = 28;
+// Layout-independent key codes (see keyboard.rs): what a `KeyPress` names.
+const KEY_ESC: u32 = code::ESC;
+const KEY_BACKSPACE: u32 = code::BACKSPACE;
+const KEY_TAB: u32 = code::TAB;
+const KEY_ENTER: u32 = code::ENTER;
 const KEY_A: u32 = 30;
 const KEY_C: u32 = 46;
 const KEY_V: u32 = 47;
@@ -16,133 +17,42 @@ const KEY_X: u32 = 45;
 const KEY_T: u32 = 20;
 const KEY_W: u32 = 17;
 const KEY_Z: u32 = 44;
-const KEY_F2: u32 = 60;
-const KEY_DELETE: u32 = 111;
-const KEY_HOME: u32 = 102;
-const KEY_END: u32 = 107;
-const KEY_LEFT: u32 = 105;
-const KEY_RIGHT: u32 = 106;
-const KEY_SPACE: u32 = 57;
+const KEY_F2: u32 = code::F2;
+const KEY_DELETE: u32 = code::DELETE;
+const KEY_HOME: u32 = code::HOME;
+const KEY_END: u32 = code::END;
+const KEY_LEFT: u32 = code::LEFT;
+const KEY_RIGHT: u32 = code::RIGHT;
+const KEY_SPACE: u32 = code::SPACE;
 
-/// Map an evdev keycode to a character for filename entry.
-fn keycode_to_char(key: u32, shift: bool) -> Option<char> {
-    // Number row: keycodes 2=1, 3=2, ..., 10=9, 11=0
-    let ch = match key {
-        2..=11 => {
-            let base = b"1234567890"[(key - 2) as usize];
-            if shift {
-                b"!@#$%^&*()"[(key - 2) as usize]
-            } else {
-                base
-            }
-        }
-        12 => {
-            if shift {
-                b'_'
-            } else {
-                b'-'
-            }
-        }
-        13 => {
-            if shift {
-                b'+'
-            } else {
-                b'='
-            }
-        }
-        // Letters (a=30..z)
-        16..=25 => {
-            let base = b"qwertyuiop"[(key - 16) as usize];
-            if shift {
-                base.to_ascii_uppercase()
-            } else {
-                base
-            }
-        }
-        30..=38 => {
-            let base = b"asdfghjkl"[(key - 30) as usize];
-            if shift {
-                base.to_ascii_uppercase()
-            } else {
-                base
-            }
-        }
-        44..=50 => {
-            let base = b"zxcvbnm"[(key - 44) as usize];
-            if shift {
-                base.to_ascii_uppercase()
-            } else {
-                base
-            }
-        }
-        // Punctuation
-        26 => {
-            if shift {
-                b'{'
-            } else {
-                b'['
-            }
-        }
-        27 => {
-            if shift {
-                b'}'
-            } else {
-                b']'
-            }
-        }
-        39 => {
-            if shift {
-                b':'
-            } else {
-                b';'
-            }
-        }
-        40 => {
-            if shift {
-                b'"'
-            } else {
-                b'\''
-            }
-        }
-        41 => {
-            if shift {
-                b'~'
-            } else {
-                b'`'
-            }
-        }
-        43 => {
-            if shift {
-                b'|'
-            } else {
-                b'\\'
-            }
-        }
-        51 => {
-            if shift {
-                b'<'
-            } else {
-                b','
-            }
-        }
-        52 => {
-            if shift {
-                b'>'
-            } else {
-                b'.'
-            }
-        }
-        53 => {
-            if shift {
-                b'?'
-            } else {
-                b'/'
-            }
-        }
-        57 => b' ', // space
-        _ => return None,
-    };
-    Some(ch as char)
+/// A text field has the keyboard: a held key repeats into it.
+pub(crate) fn text_entry_active(app: &App) -> bool {
+    // A question over the field has the keyboard instead (`handle_key`),
+    // and nothing repeats into it: Enter held a moment too long in a Save
+    // picker would answer its "Replace?" (with Cancel) before it was read.
+    if app.op_dialog_open() && app.quick_look.is_none() {
+        return false;
+    }
+    app.renaming.is_some()
+        || app.path_editing
+        || app.save_name_editing
+        || app.searching
+        || app.sudo_prompt.is_some()
+        || app.cloud_login.is_some()
+        || app
+            .properties
+            .as_ref()
+            .and_then(|p| p.audio.as_ref())
+            .is_some_and(|a| a.focused.is_some())
+}
+
+/// Byte offset of the `char_idx`-th character of `s` (its length past the
+/// end). The search, path, password and login cursors count characters.
+fn byte_at(s: &str, char_idx: usize) -> usize {
+    s.char_indices()
+        .nth(char_idx)
+        .map(|(i, _)| i)
+        .unwrap_or(s.len())
 }
 
 pub(crate) fn handle_key(
@@ -150,39 +60,61 @@ pub(crate) fn handle_key(
     _settings: &mut Settings,
     context_menu: &mut ContextMenu,
     popup_backend: &mut Option<WaylandPopupBackend<State>>,
-    key: u32,
-    ctrl: bool,
-    shift: bool,
+    press: KeyPress,
     running: &mut bool,
 ) {
-    // Conflict dialog — ESC = cancel, Enter = Replace. Dispatches to the
-    // rename branch when a rename is pending; otherwise the paste branch.
-    if app.conflict_dialog.is_some() {
-        let _ = ctrl;
-        let _ = shift;
-        let is_rename = app.pending_rename.is_some();
+    // `ch` is what the press types in the user's layout; `key` names it for
+    // shortcuts and editing commands.
+    let KeyPress {
+        key,
+        ch: typed,
+        ctrl,
+        shift,
+        ..
+    } = press;
+    // File-operation dialogs — Esc is the safe answer; Enter too, except
+    // that it never confirms a permanent delete. (Quick Look, when open,
+    // sits on top and keeps the keys.)
+    if app.op_dialog_open() && app.quick_look.is_none() {
         match key {
-            KEY_ESC => {
-                if is_rename {
-                    app.cancel_rename_conflict();
-                } else {
-                    app.cancel_paste();
-                }
+            KEY_ESC => app.op_dialog_choose(false),
+            KEY_ENTER => app.op_dialog_enter(),
+            // The arrow and page keys move a long list in the dialog.
+            _ => {
+                app.cloud_list_key(key);
             }
-            KEY_ENTER => {
-                if is_rename {
-                    app.resolve_rename_conflict(crate::conflict::ConflictAction::Replace);
-                } else {
-                    app.resolve_conflict(crate::conflict::ConflictAction::Replace);
-                }
-            }
-            _ => {}
         }
         return;
     }
 
-    // Sudo password modal — captures keys until dismissed.
+    // Conflict dialog — ESC = cancel. Enter does nothing: Replace takes an
+    // existing item out of its place and must be a deliberate click.
+    // Dispatches to the rename branch when a rename is pending; otherwise
+    // the paste branch.
+    if app.conflict_dialog.is_some() {
+        let _ = ctrl;
+        let _ = shift;
+        if key == KEY_ESC {
+            if app.pending_rename.is_some() {
+                app.cancel_rename_conflict();
+            } else {
+                app.cancel_paste();
+            }
+        }
+        return;
+    }
+
+    // Privileged-operation modal — captures keys until it is gone. Only
+    // its password phase has a field to type into; on the delete question
+    // Enter does nothing (a permanent delete is a deliberate click), and
+    // while the commands run even Esc waits.
     if app.sudo_prompt.is_some() {
+        if !app.sudo_wants_text() {
+            if key == KEY_ESC {
+                app.cancel_sudo_prompt();
+            }
+            return;
+        }
         match key {
             KEY_ESC => app.cancel_sudo_prompt(),
             KEY_ENTER => app.submit_sudo_prompt(),
@@ -241,7 +173,7 @@ pub(crate) fn handle_key(
             // Ctrl+V / Ctrl+A are chords, not letters to type.
             _ if ctrl => {}
             _ => {
-                if let Some(ch) = keycode_to_char(key, shift) {
+                if let Some(ch) = typed {
                     if let Some(p) = app.sudo_prompt.as_mut() {
                         let byte_pos = p
                             .password
@@ -261,9 +193,7 @@ pub(crate) fn handle_key(
     // Cloud login dialog — captures keys until dismissed.
     if app.cloud_login.is_some() {
         match key {
-            KEY_ESC => {
-                app.cloud_login = None;
-            }
+            KEY_ESC => app.cancel_cloud_login(),
             KEY_ENTER => app.submit_cloud_login(),
             KEY_TAB => {
                 if let Some(d) = app.cloud_login.as_mut() {
@@ -328,7 +258,7 @@ pub(crate) fn handle_key(
             }
             _ if ctrl => {}
             _ => {
-                if let Some(ch) = keycode_to_char(key, shift) {
+                if let Some(ch) = typed {
                     if let Some(d) = app.cloud_login.as_mut() {
                         let (buf, cur) = d.focused_buf_mut();
                         let byte_pos = buf
@@ -348,8 +278,7 @@ pub(crate) fn handle_key(
     // Properties dialog — swallows everything so shortcuts don't leak to the
     // file view underneath. ESC closes; WAV/MP3 tag fields get text editing.
     if let Some(props) = app.properties.as_mut() {
-        let ch = keycode_to_char(key, shift);
-        if crate::properties_audio::handle_dialog_key(props, key, ch, ctrl, shift) {
+        if crate::properties_audio::handle_dialog_key(props, key, typed, ctrl, shift) {
             app.properties = None;
         }
         return;
@@ -404,7 +333,15 @@ pub(crate) fn handle_key(
             KEY_BACKSPACE => {
                 if app.search_cursor > 0 {
                     app.search_cursor -= 1;
-                    app.search_buf.remove(app.search_cursor);
+                    let at = byte_at(&app.search_buf, app.search_cursor);
+                    app.search_buf.remove(at);
+                    app.run_search();
+                }
+            }
+            KEY_DELETE => {
+                let at = byte_at(&app.search_buf, app.search_cursor);
+                if at < app.search_buf.len() {
+                    app.search_buf.remove(at);
                     app.run_search();
                 }
             }
@@ -414,16 +351,17 @@ pub(crate) fn handle_key(
                 }
             }
             KEY_RIGHT => {
-                if app.search_cursor < app.search_buf.len() {
+                if app.search_cursor < app.search_buf.chars().count() {
                     app.search_cursor += 1;
                 }
             }
             KEY_HOME => app.search_cursor = 0,
-            KEY_END => app.search_cursor = app.search_buf.len(),
+            KEY_END => app.search_cursor = app.search_buf.chars().count(),
             _ if ctrl => {}
             _ => {
-                if let Some(ch) = keycode_to_char(key, shift) {
-                    app.search_buf.insert(app.search_cursor, ch);
+                if let Some(ch) = typed {
+                    let at = byte_at(&app.search_buf, app.search_cursor);
+                    app.search_buf.insert(at, ch);
                     app.search_cursor += 1;
                     app.run_search();
                 }
@@ -530,7 +468,7 @@ pub(crate) fn handle_key(
                 app.path_selection = None;
             }
             _ => {
-                if let Some(ch) = keycode_to_char(key, shift) {
+                if let Some(ch) = typed {
                     delete_selection(app);
                     let byte_pos = app
                         .path_buf
@@ -602,7 +540,7 @@ pub(crate) fn handle_key(
                 app.rename_selection = None;
             }
             _ => {
-                if let Some(ch) = keycode_to_char(key, shift) {
+                if let Some(ch) = typed {
                     app.rename_delete_selection();
                     app.rename_cursor = floor_boundary(&app.rename_buf, app.rename_cursor);
                     app.rename_buf.insert(app.rename_cursor, ch);
@@ -676,7 +614,7 @@ pub(crate) fn handle_key(
                 app.save_name_selection = None;
             }
             _ => {
-                if let Some(ch) = keycode_to_char(key, shift) {
+                if let Some(ch) = typed {
                     app.save_name_delete_selection();
                     app.save_name_cursor = floor_boundary(&app.save_name_buf, app.save_name_cursor);
                     app.save_name_buf.insert(app.save_name_cursor, ch);
@@ -703,12 +641,9 @@ pub(crate) fn handle_key(
                     let mut i = cur as isize + step;
                     while i >= 0 && (i as usize) < app.entries.len() {
                         if !app.entries[i as usize].is_dir {
-                            for e in app.entries.iter_mut() {
-                                e.selected = false;
-                            }
-                            app.entries[i as usize].selected = true;
+                            app.select_only(i as usize);
                             app.quick_look = Some(crate::quick_look::QuickLook::open(
-                                &app.entries[i as usize].path,
+                                &app.entries[i as usize],
                             ));
                             break;
                         }
@@ -725,7 +660,7 @@ pub(crate) fn handle_key(
     // every text-entry mode already returned above).
     if key == KEY_SPACE && !ctrl {
         if let Some(entry) = app.entries.iter().find(|e| e.selected && !e.is_dir) {
-            app.quick_look = Some(crate::quick_look::QuickLook::open(&entry.path));
+            app.quick_look = Some(crate::quick_look::QuickLook::open(entry));
         }
         return;
     }
@@ -736,14 +671,13 @@ pub(crate) fn handle_key(
             KEY_C => app.copy_selected(),
             KEY_X => app.cut_selected(),
             KEY_V => app.paste(),
-            KEY_Z => {
-                if shift {
-                    let _ = app.undo_stack.redo(app.root_mode);
-                } else {
-                    let _ = app.undo_stack.undo(app.root_mode);
-                }
-                app.reload();
-            }
+            // Only asks: the work runs on the ops worker, and its result
+            // (and the reload) arrive when it ends.
+            KEY_Z => app.request_history(if shift {
+                crate::undo::Direction::Redo
+            } else {
+                crate::undo::Direction::Undo
+            }),
             KEY_T if app.pick.is_none() => app.new_tab(),
             KEY_W if app.pick.is_none() => app.close_tab(app.current_tab),
             _ => {}
@@ -772,5 +706,24 @@ pub(crate) fn handle_key(
             KEY_DELETE if app.pick.is_none() => app.trash_selected(),
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::byte_at;
+
+    #[test]
+    fn a_character_cursor_finds_its_byte_in_text_that_is_not_ascii() {
+        let s = "a\u{e9}\u{1F44D}z";
+        assert_eq!(byte_at(s, 0), 0);
+        assert_eq!(byte_at(s, 1), 1);
+        assert_eq!(byte_at(s, 2), 3);
+        assert_eq!(byte_at(s, 3), 7);
+        // At and past the end: the place to append.
+        assert_eq!(byte_at(s, 4), s.len());
+        assert_eq!(byte_at(s, 9), s.len());
+        // Every answer is a place a character can be inserted or removed.
+        assert!((0..6).all(|i| s.is_char_boundary(byte_at(s, i))));
     }
 }

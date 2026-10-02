@@ -117,14 +117,11 @@ impl App {
                     // Pop the shared conflict dialog if we'd clobber a real
                     // existing entry (case-insensitive renames on the same
                     // file are allowed through — fs::rename handles those).
-                    if new_path.exists() && !self.root_mode && !is_same_entry(&old, &new_path) {
-                        let dialog = crate::conflict::ConflictDialog {
-                            target: new_path.clone(),
-                            source_meta: crate::conflict::ConflictMeta::read(&old),
-                            target_meta: crate::conflict::ConflictMeta::read(&new_path),
-                            apply_to_all: false,
-                            remaining_count: 0,
-                        };
+                    // Root mode asks the same question. lstat: a dangling
+                    // link holds the name too.
+                    let taken = std::fs::symlink_metadata(&new_path).is_ok();
+                    if taken && !is_same_entry(&old, &new_path) {
+                        let dialog = crate::conflict::ConflictDialog::new(&old, &new_path, 0);
                         self.pending_rename = Some(crate::conflict::PendingRename {
                             from: old,
                             to: new_path,
@@ -146,21 +143,38 @@ impl App {
     }
 
     /// Execute a rename + push an Undo entry. Used by both the normal commit
-    /// path and the conflict-resolved Replace / Keep Both paths.
+    /// path and the conflict-resolved Replace / Keep Both paths. Never onto
+    /// another item: the callers have settled that, and the root-mode
+    /// command refuses a target that exists.
     pub(crate) fn perform_rename(&mut self, from: std::path::PathBuf, to: std::path::PathBuf) {
-        if self.root_mode {
-            let from_cmd = from.clone();
-            let to_cmd = to.clone();
-            std::thread::spawn(move || {
-                let _ = std::process::Command::new("pkexec")
-                    .args(["mv", "--"])
-                    .arg(&from_cmd)
-                    .arg(&to_cmd)
-                    .status();
+        if self.root_covers_item(&from) {
+            // Through the sudo flow, off this thread. Its undo entry is
+            // recorded when the rename is seen to have happened.
+            let case_only = is_same_entry(&from, &to);
+            self.priv_run(crate::sudo::PendingPrivOp::Rename {
+                item: crate::sudo::PrivItem {
+                    src: from,
+                    target: to,
+                    old_to_trash: None,
+                },
+                case_only,
             });
-        } else if let Err(e) = std::fs::rename(&from, &to) {
+            return;
+        }
+        if let Err(e) = std::fs::rename(&from, &to) {
             // No undo entry for a rename that never happened.
             eprintln!("[fox] rename {} failed: {e}", from.display());
+            let name = from
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            self.show_notice(
+                "Not renamed",
+                vec![format!(
+                    "\u{201C}{name}\u{201D} could not be renamed: {}.",
+                    crate::copy_tree::reason_of(&e)
+                )],
+            );
             return;
         }
         self.undo_stack
@@ -218,7 +232,9 @@ impl App {
 
     pub fn commit_path_edit(&mut self) {
         let path = self.resolve_typed_path(&self.path_buf);
-        if path.is_dir() {
+        // On a slow mount the question "is it a folder?" is itself a trip
+        // to the device: go there and let the off-thread listing answer.
+        if crate::fs::is_slow_path(&path) || path.is_dir() {
             self.navigate_to(path);
         }
         self.path_editing = false;
