@@ -29,7 +29,13 @@ pub struct DirWatcher {
     dirty: Arc<AtomicBool>,
     eventfd: RawFd,
     pending_since: Option<Instant>,
+    /// Last directory a watch could not be placed on, and when. `watch` is
+    /// called every frame; a folder that can't be watched is retried once a
+    /// second, not sixty times.
+    failed: Option<(PathBuf, Instant)>,
 }
+
+const RETRY_FAILED_WATCH: Duration = Duration::from_secs(1);
 
 impl DirWatcher {
     pub fn new() -> Self {
@@ -38,10 +44,13 @@ impl DirWatcher {
         let flag = Arc::clone(&dirty);
         let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             let Ok(event) = res else { return };
-            if matches!(
-                event.kind,
-                EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(_)
-            ) {
+            // need_rescan: the kernel queue overflowed and events were lost.
+            if event.need_rescan()
+                || matches!(
+                    event.kind,
+                    EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(_)
+                )
+            {
                 flag.store(true, Ordering::Release);
                 let one: u64 = 1;
                 unsafe {
@@ -56,6 +65,7 @@ impl DirWatcher {
             dirty,
             eventfd,
             pending_since: None,
+            failed: None,
         }
     }
 
@@ -63,6 +73,13 @@ impl DirWatcher {
     /// it, so it's safe to call every frame.
     pub fn watch(&mut self, dir: &Path) {
         if self.watched.as_deref() == Some(dir) {
+            return;
+        }
+        if self
+            .failed
+            .as_ref()
+            .is_some_and(|(p, t)| p == dir && t.elapsed() < RETRY_FAILED_WATCH)
+        {
             return;
         }
         if let Some(w) = &mut self.watcher {
@@ -73,6 +90,9 @@ impl DirWatcher {
             // the mtime poll fallback still refreshes eventually.
             if w.watch(dir, RecursiveMode::NonRecursive).is_ok() {
                 self.watched = Some(dir.to_path_buf());
+                self.failed = None;
+            } else {
+                self.failed = Some((dir.to_path_buf(), Instant::now()));
             }
         }
         // Navigation reloads anyway — drop stale events from the old dir.
@@ -113,6 +133,20 @@ impl DirWatcher {
         match self.pending_since {
             Some(t) if t.elapsed() >= DEBOUNCE => {
                 self.pending_since = None;
+                // The watch sits on an inode. If the folder was deleted and
+                // recreated (a build's output dir, a re-extract), the kernel
+                // dropped it; placing it again is a no-op when it is still
+                // there and re-arms it when it is not.
+                if let (Some(w), Some(dir)) = (&mut self.watcher, self.watched.clone()) {
+                    // Unwatch first: after a rename of the folder, the old
+                    // watch still sits on the moved inode and would keep
+                    // reporting changes from wherever it went.
+                    let _ = w.unwatch(&dir);
+                    if w.watch(&dir, RecursiveMode::NonRecursive).is_err() {
+                        self.watched = None;
+                        self.failed = Some((dir, Instant::now()));
+                    }
+                }
                 true
             }
             _ => false,

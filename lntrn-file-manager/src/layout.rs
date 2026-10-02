@@ -431,11 +431,19 @@ pub const PREVIEW_HANDLE_W: f32 = 6.0;
 /// Min/max bounds for the preview pane width (logical px, pre-scale).
 pub const PREVIEW_MIN_W: f32 = 220.0;
 pub const PREVIEW_MAX_FRACTION: f32 = 0.6; // never more than 60% of content area
+/// Narrowest file list the preview pane may leave beside it (logical px).
+pub const PREVIEW_MIN_LIST_W: f32 = 200.0;
 
 /// Effective preview width in physical px, clamped to bounds for the current
 /// content area. Returns 0 if the preview is closed or would not fit.
 pub fn preview_effective_w(content_w_px: f32, preview_w_logical: f32, open: bool, s: f32) -> f32 {
     if !open {
+        return 0.0;
+    }
+    // Not enough room for the pane AND a usable list beside it: no pane.
+    // (It used to keep its minimum width regardless, leaving the list a
+    // negative width and drawing itself over the sidebar.)
+    if content_w_px - PREVIEW_MIN_W * s < PREVIEW_MIN_LIST_W * s {
         return 0.0;
     }
     let min = PREVIEW_MIN_W * s;

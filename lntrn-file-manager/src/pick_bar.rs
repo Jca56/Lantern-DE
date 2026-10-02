@@ -70,14 +70,37 @@ pub fn draw_pick_bar(
     // ── Filter dropdown (if filters exist) ──────────────────────────────
     if !pick.filters.is_empty() {
         let filter = &pick.filters[pick.active_filter];
-        let filter_label = format!("{} \u{25BC}", filter.name); // ▼
-        let filter_w = (filter_label.len() as f32 * 10.0 * s).max(120.0 * s);
+        // Bounded: a long filter name must not push the filename field out
+        // or slide under Cancel (and steal its clicks).
+        let max_filter_w = (cancel_x - gap - pad - 220.0 * s).max(120.0 * s);
+        // Sized and centred by the label's measured width. Button places
+        // its own label by a per-byte estimate, which for these names is
+        // off by enough to wrap the arrow away or start left of the button;
+        // so the button draws the background only and the label goes on top.
+        let font = 20.0 * s; // the size Button draws its labels at
+        let arrow = " \u{25BC}"; // ▼
+        let side_pad = 24.0 * s;
+        let name_room = max_filter_w - side_pad - text.measure_width(arrow, font);
+        let name = crate::sections::truncate_to_width(text, &filter.name, name_room, font);
+        let filter_label = format!("{name}{arrow}");
+        let label_w = text.measure_width(&filter_label, font);
+        let filter_w = (label_w + side_pad).max(120.0 * s).min(max_filter_w);
         let filter_rect = Rect::new(left_x, btn_y, filter_w, btn_h);
         let filter_state = input.add_zone(ZONE_PICK_FILTER, filter_rect);
-        Button::new(filter_rect, &filter_label)
+        Button::new(filter_rect, "")
             .hovered(filter_state.is_hovered())
             .scale(s)
             .draw(painter, text, palette, screen.0, screen.1);
+        text.queue(
+            &filter_label,
+            font,
+            filter_rect.x + (filter_w - label_w) * 0.5,
+            btn_y + (btn_h - font) * 0.5,
+            palette.text,
+            label_w + 4.0 * s,
+            screen.0,
+            screen.1,
+        );
         left_x += filter_w + gap;
     }
 
@@ -89,8 +112,8 @@ pub fn draw_pick_bar(
             input.add_zone(ZONE_PICK_FILENAME, input_rect);
             TextInput::new(input_rect)
                 .text(&app.save_name_buf)
-                .cursor_pos(app.save_name_cursor)
-                .selection(app.save_name_selection)
+                .cursor_pos(app.save_name_cursor_chars())
+                .selection(app.save_name_selection_chars())
                 .focused(app.save_name_editing)
                 .placeholder("filename.ext")
                 .scale(s)

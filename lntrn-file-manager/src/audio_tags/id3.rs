@@ -485,7 +485,12 @@ impl Id3Tag {
         self.set_text(b"TRCK", &t.track);
         self.set_text(b"TBPM", &t.bpm);
         self.set_text(b"TKEY", &t.key);
-        self.set_artwork(t.artwork.as_ref());
+        // Only when the picture really changed. Rebuilding it on every save
+        // collapsed all pictures into one retyped "front cover" even when
+        // the user only fixed a title.
+        if t.artwork != self.artwork() {
+            self.set_artwork(t.artwork.as_ref());
+        }
     }
 
     /// Serialise as ID3v2.3. Pads up to `min_total` bytes when the content

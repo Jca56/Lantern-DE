@@ -35,7 +35,8 @@ enum Loaded {
         src_w: u32,
         src_h: u32,
     },
-    Text(Vec<String>),
+    /// Lines, plus whether the file had more than was read.
+    Text(Vec<String>, bool),
     Failed(String),
 }
 
@@ -48,6 +49,8 @@ pub struct QuickLook {
     /// Source dimensions before any downscale-for-VRAM (shown in the meta line).
     source_dims: Option<(u32, u32)>,
     text_lines: Option<Vec<String>>,
+    /// The file is longer than `text_lines` (line or byte cap hit).
+    text_truncated: bool,
     error: Option<String>,
 }
 
@@ -57,8 +60,11 @@ impl QuickLook {
         let slot = Arc::clone(&pending);
         let bg_path = path.to_path_buf();
         std::thread::spawn(move || {
-            let loaded = load(&bg_path);
-            *slot.lock().unwrap() = Some(loaded);
+            // Always deliver something: a panicking decoder would otherwise
+            // leave the overlay on "Loading…" (and the loop at 60 fps).
+            let loaded = std::panic::catch_unwind(|| load(&bg_path))
+                .unwrap_or_else(|_| Loaded::Failed("Could not load this file".into()));
+            *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(loaded);
         });
         Self {
             path: path.to_path_buf(),
@@ -70,6 +76,7 @@ impl QuickLook {
             texture: None,
             source_dims: None,
             text_lines: None,
+            text_truncated: false,
             error: None,
         }
     }
@@ -85,7 +92,12 @@ impl QuickLook {
         if !self.loading() {
             return;
         }
-        let Some(loaded) = self.pending.lock().unwrap().take() else {
+        let Some(loaded) = self
+            .pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        else {
             return;
         };
         match loaded {
@@ -99,7 +111,10 @@ impl QuickLook {
                 self.texture = Some(tex.upload(gpu, &rgba, w, h));
                 self.source_dims = Some((src_w, src_h));
             }
-            Loaded::Text(lines) => self.text_lines = Some(lines),
+            Loaded::Text(lines, truncated) => {
+                self.text_lines = Some(lines);
+                self.text_truncated = truncated;
+            }
             Loaded::Failed(reason) => self.error = Some(reason),
         }
     }
@@ -130,14 +145,9 @@ fn load_image(path: &Path) -> Loaded {
         Ok(r) => r,
         Err(_) => return Loaded::Failed("Unreadable file".into()),
     };
-    let mut reader = reader;
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(MAX_DECODE_DIM);
-    limits.max_image_height = Some(MAX_DECODE_DIM);
-    limits.max_alloc = Some(MAX_DECODE_BYTES);
-    reader.limits(limits);
-    match reader.decode() {
-        Ok(img) => {
+    // Oriented first, so the dimensions shown are the ones the user sees.
+    match crate::thumbs::decode_oriented(reader, MAX_DECODE_DIM, MAX_DECODE_BYTES) {
+        Some(img) => {
             let (src_w, src_h) = (img.width(), img.height());
             let img = if src_w > MAX_TEX_DIM || src_h > MAX_TEX_DIM {
                 img.thumbnail(MAX_TEX_DIM, MAX_TEX_DIM)
@@ -154,12 +164,12 @@ fn load_image(path: &Path) -> Loaded {
                 src_h,
             }
         }
-        Err(_) => Loaded::Failed("Could not decode image (corrupt or too large)".into()),
+        None => Loaded::Failed("Could not decode image (corrupt or too large)".into()),
     }
 }
 
 fn load_svg(path: &Path) -> Loaded {
-    let Ok(data) = std::fs::read(path) else {
+    let Some(data) = crate::thumbs::read_svg_capped(path) else {
         return Loaded::Failed("Unreadable file".into());
     };
     let Ok(tree) = resvg::usvg::Tree::from_data(&data, &resvg::usvg::Options::default()) else {
@@ -176,7 +186,7 @@ fn load_svg(path: &Path) -> Loaded {
     let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
     resvg::render(&tree, transform, &mut pixmap.as_mut());
     Loaded::Image {
-        rgba: pixmap.take(),
+        rgba: pixmap.take_demultiplied(),
         w,
         h,
         src_w: w,
@@ -186,29 +196,10 @@ fn load_svg(path: &Path) -> Loaded {
 
 /// Full-resolution single frame via ffmpeg — placeholder until real playback.
 fn load_video_still(path: &Path) -> Loaded {
-    use std::process::Command;
-    let output = Command::new("ffmpeg")
-        .args(["-ss", "1", "-i"])
-        .arg(path)
-        .args([
-            "-frames:v",
-            "1",
-            "-f",
-            "image2pipe",
-            "-vcodec",
-            "png",
-            "-loglevel",
-            "error",
-            "pipe:1",
-        ])
-        .output();
-    let Ok(output) = output else {
-        return Loaded::Failed("ffmpeg not available".into());
-    };
-    if !output.status.success() || output.stdout.is_empty() {
+    let Some(png) = crate::thumbs::ffmpeg_frame_png(path, None) else {
         return Loaded::Failed("Could not extract video frame".into());
-    }
-    match image::load_from_memory(&output.stdout) {
+    };
+    match image::load_from_memory(&png) {
         Ok(img) => {
             let (src_w, src_h) = (img.width(), img.height());
             let img = if src_w > MAX_TEX_DIM || src_h > MAX_TEX_DIM {
@@ -244,15 +235,18 @@ fn load_text(path: &Path) -> Loaded {
             Err(_) => return Loaded::Failed("Unreadable file".into()),
         }
     }
+    // Filled to the brim: there is (almost certainly) more file than buffer.
+    let mut truncated = filled == buf.len();
     buf.truncate(filled);
     if buf.is_empty() {
-        return Loaded::Text(vec!["(empty file)".to_string()]);
+        return Loaded::Text(vec!["(empty file)".to_string()], false);
     }
     // NUL in the head = binary; don't dump garbage glyphs on the screen.
     if buf.iter().take(8192).any(|&b| b == 0) {
         return Loaded::Failed("No preview available for this file type".into());
     }
     let text = String::from_utf8_lossy(&buf);
+    truncated |= text.lines().nth(TEXT_MAX_LINES).is_some();
     let lines: Vec<String> = text
         .lines()
         .take(TEXT_MAX_LINES)
@@ -266,7 +260,7 @@ fn load_text(path: &Path) -> Loaded {
             }
         })
         .collect();
-    Loaded::Text(lines)
+    Loaded::Text(lines, truncated)
 }
 
 // ── Drawing (layer 1 / modal) ────────────────────────────────────────────────
@@ -351,7 +345,16 @@ pub fn draw_quick_look<'a>(
         let pad = 18.0 * s;
         let line_font = 16.0 * s;
         let line_h = line_font * 1.45;
-        let max_lines = (((panel.h - pad * 2.0) / line_h).floor() as usize).min(lines.len());
+        // Rows that fit. When there is more text than rows (or more file
+        // than was loaded) the last row is given to the "… more" footer
+        // instead of having the footer drawn on top of a line of text.
+        let fit = ((panel.h - pad * 2.0) / line_h).floor().max(1.0) as usize;
+        let overflow = lines.len() > fit || ql.text_truncated;
+        let max_lines = if overflow {
+            fit.saturating_sub(1).min(lines.len())
+        } else {
+            lines.len()
+        };
         let mut ly = panel.y + pad;
         for line in lines.iter().take(max_lines) {
             if !line.is_empty() {
@@ -363,9 +366,15 @@ pub fn draw_quick_look<'a>(
             }
             ly += line_h;
         }
-        if lines.len() > max_lines {
-            let more = format!("… {} more lines", lines.len() - max_lines);
-            TextLabel::new(&more, panel.x + pad, panel.y + panel.h - pad - line_font)
+        if overflow {
+            // The loaded lines are capped, so past the cap the real count is
+            // unknown: say "more" without a number.
+            let more = if ql.text_truncated {
+                "… more".to_string()
+            } else {
+                format!("… {} more lines", lines.len() - max_lines)
+            };
+            TextLabel::new(&more, panel.x + pad, panel.y + pad + max_lines as f32 * line_h)
                 .size(FontSize::Custom(line_font))
                 .color(palette.muted)
                 .draw(text, sw, sh);

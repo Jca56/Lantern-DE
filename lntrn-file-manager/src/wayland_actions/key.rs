@@ -1,6 +1,6 @@
 use lntrn_ui::gpu::{ContextMenu, WaylandPopupBackend};
 
-use crate::app::App;
+use crate::app::{floor_boundary, next_boundary, prev_boundary, App};
 use crate::settings::Settings;
 use crate::wayland::State;
 
@@ -183,7 +183,6 @@ pub(crate) fn handle_key(
 
     // Sudo password modal — captures keys until dismissed.
     if app.sudo_prompt.is_some() {
-        let _ = ctrl;
         match key {
             KEY_ESC => app.cancel_sudo_prompt(),
             KEY_ENTER => app.submit_sudo_prompt(),
@@ -239,6 +238,8 @@ pub(crate) fn handle_key(
                     p.cursor = p.password.chars().count();
                 }
             }
+            // Ctrl+V / Ctrl+A are chords, not letters to type.
+            _ if ctrl => {}
             _ => {
                 if let Some(ch) = keycode_to_char(key, shift) {
                     if let Some(p) = app.sudo_prompt.as_mut() {
@@ -259,7 +260,6 @@ pub(crate) fn handle_key(
 
     // Cloud login dialog — captures keys until dismissed.
     if app.cloud_login.is_some() {
-        let _ = ctrl;
         match key {
             KEY_ESC => {
                 app.cloud_login = None;
@@ -326,6 +326,7 @@ pub(crate) fn handle_key(
                     *cur = buf.chars().count();
                 }
             }
+            _ if ctrl => {}
             _ => {
                 if let Some(ch) = keycode_to_char(key, shift) {
                     if let Some(d) = app.cloud_login.as_mut() {
@@ -385,13 +386,19 @@ pub(crate) fn handle_key(
         if key == KEY_ESC {
             if let Some(backend) = popup_backend {
                 context_menu.close_popups(backend);
+            } else {
+                // Desktop mode draws the menu inline, with no popup backend.
+                context_menu.close();
             }
         }
         return;
     }
 
     // ── Search mode ──────────────────────────────────────────────────
-    if app.searching {
+    // A rename (or the path bar / Save name) started while the search bar is
+    // open owns the keyboard; those branches follow below.
+    let other_text_field = app.renaming.is_some() || app.path_editing || app.save_name_editing;
+    if app.searching && !other_text_field {
         match key {
             KEY_ESC => app.close_search(),
             KEY_BACKSPACE => {
@@ -413,6 +420,7 @@ pub(crate) fn handle_key(
             }
             KEY_HOME => app.search_cursor = 0,
             KEY_END => app.search_cursor = app.search_buf.len(),
+            _ if ctrl => {}
             _ => {
                 if let Some(ch) = keycode_to_char(key, shift) {
                     app.search_buf.insert(app.search_cursor, ch);
@@ -557,29 +565,32 @@ pub(crate) fn handle_key(
             KEY_ESC => app.cancel_rename(),
             KEY_BACKSPACE => {
                 if !app.rename_delete_selection() && app.rename_cursor > 0 {
-                    app.rename_cursor -= 1;
+                    app.rename_cursor = prev_boundary(&app.rename_buf, app.rename_cursor);
                     app.rename_buf.remove(app.rename_cursor);
                 }
                 app.rename_selection = None;
             }
             KEY_DELETE => {
-                if !app.rename_delete_selection() && app.rename_cursor < app.rename_buf.len() {
-                    app.rename_buf.remove(app.rename_cursor);
+                if !app.rename_delete_selection() {
+                    app.rename_cursor = floor_boundary(&app.rename_buf, app.rename_cursor);
+                    if app.rename_cursor < app.rename_buf.len() {
+                        app.rename_buf.remove(app.rename_cursor);
+                    }
                 }
                 app.rename_selection = None;
             }
             KEY_LEFT => {
                 if let Some((a, b)) = app.rename_selection.take() {
                     app.rename_cursor = a.min(b);
-                } else if app.rename_cursor > 0 {
-                    app.rename_cursor -= 1;
+                } else {
+                    app.rename_cursor = prev_boundary(&app.rename_buf, app.rename_cursor);
                 }
             }
             KEY_RIGHT => {
                 if let Some((a, b)) = app.rename_selection.take() {
                     app.rename_cursor = a.max(b).min(app.rename_buf.len());
-                } else if app.rename_cursor < app.rename_buf.len() {
-                    app.rename_cursor += 1;
+                } else {
+                    app.rename_cursor = next_boundary(&app.rename_buf, app.rename_cursor);
                 }
             }
             KEY_HOME => {
@@ -593,6 +604,7 @@ pub(crate) fn handle_key(
             _ => {
                 if let Some(ch) = keycode_to_char(key, shift) {
                     app.rename_delete_selection();
+                    app.rename_cursor = floor_boundary(&app.rename_buf, app.rename_cursor);
                     app.rename_buf.insert(app.rename_cursor, ch);
                     app.rename_cursor += ch.len_utf8();
                     app.rename_selection = None;
@@ -614,9 +626,12 @@ pub(crate) fn handle_key(
         }
         match key {
             KEY_ENTER => {
-                app.save_name_editing = false;
+                // An empty or invalid name produces no result: keep typing.
                 app.confirm_pick();
-                *running = false;
+                if app.pick_result.is_some() {
+                    app.save_name_editing = false;
+                    *running = false;
+                }
             }
             KEY_ESC => {
                 app.save_name_editing = false;
@@ -624,31 +639,32 @@ pub(crate) fn handle_key(
             }
             KEY_BACKSPACE => {
                 if !app.save_name_delete_selection() && app.save_name_cursor > 0 {
-                    app.save_name_cursor -= 1;
+                    app.save_name_cursor = prev_boundary(&app.save_name_buf, app.save_name_cursor);
                     app.save_name_buf.remove(app.save_name_cursor);
                 }
                 app.save_name_selection = None;
             }
             KEY_DELETE => {
-                if !app.save_name_delete_selection()
-                    && app.save_name_cursor < app.save_name_buf.len()
-                {
-                    app.save_name_buf.remove(app.save_name_cursor);
+                if !app.save_name_delete_selection() {
+                    app.save_name_cursor = floor_boundary(&app.save_name_buf, app.save_name_cursor);
+                    if app.save_name_cursor < app.save_name_buf.len() {
+                        app.save_name_buf.remove(app.save_name_cursor);
+                    }
                 }
                 app.save_name_selection = None;
             }
             KEY_LEFT => {
                 if let Some((a, b)) = app.save_name_selection.take() {
                     app.save_name_cursor = a.min(b);
-                } else if app.save_name_cursor > 0 {
-                    app.save_name_cursor -= 1;
+                } else {
+                    app.save_name_cursor = prev_boundary(&app.save_name_buf, app.save_name_cursor);
                 }
             }
             KEY_RIGHT => {
                 if let Some((a, b)) = app.save_name_selection.take() {
                     app.save_name_cursor = a.max(b).min(app.save_name_buf.len());
-                } else if app.save_name_cursor < app.save_name_buf.len() {
-                    app.save_name_cursor += 1;
+                } else {
+                    app.save_name_cursor = next_boundary(&app.save_name_buf, app.save_name_cursor);
                 }
             }
             KEY_HOME => {
@@ -662,6 +678,7 @@ pub(crate) fn handle_key(
             _ => {
                 if let Some(ch) = keycode_to_char(key, shift) {
                     app.save_name_delete_selection();
+                    app.save_name_cursor = floor_boundary(&app.save_name_buf, app.save_name_cursor);
                     app.save_name_buf.insert(app.save_name_cursor, ch);
                     app.save_name_cursor += ch.len_utf8();
                     app.save_name_selection = None;
@@ -740,8 +757,12 @@ pub(crate) fn handle_key(
             }
             KEY_ESC => app.clear_selection(),
             KEY_ENTER if app.pick.is_some() => {
+                // Nothing eligible selected: stay open instead of exiting as
+                // "cancelled".
                 app.confirm_pick();
-                *running = false;
+                if app.pick_result.is_some() {
+                    *running = false;
+                }
             }
             KEY_F2 if app.pick.is_none() => {
                 if let Some(idx) = app.entries.iter().position(|e| e.selected) {

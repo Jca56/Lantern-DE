@@ -29,7 +29,17 @@ pub struct Manifest {
     /// manifest.json files (and older builds re-saving) compatible.
     #[serde(default)]
     pub meta: HashMap<String, FileMeta>,
+    /// Changed since load or the last save. A quiet poll changes nothing, and
+    /// rewriting the file every 30 seconds is pointless disk churn.
+    #[serde(skip)]
+    dirty: bool,
 }
+
+/// A file whose mtime is this close to the moment it was stat'ed can be
+/// rewritten again inside the same mtime second with the same size, and the
+/// stat cache could not tell. Such a file is simply hashed again on the next
+/// scan.
+const RACY_WINDOW_SECS: u64 = 2;
 
 impl Manifest {
     pub fn path() -> PathBuf {
@@ -46,12 +56,17 @@ impl Manifest {
         }
     }
 
-    pub fn save(&self) -> anyhow::Result<()> {
+    /// Write the manifest if anything changed since the last save.
+    pub fn save(&mut self) -> anyhow::Result<()> {
+        if !self.dirty {
+            return Ok(());
+        }
         let path = Self::path();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&path, serde_json::to_string_pretty(self)?)?;
+        super::write_atomic(&path, serde_json::to_string_pretty(self)?.as_bytes(), 0o644)?;
+        self.dirty = false;
         Ok(())
     }
 
@@ -60,11 +75,33 @@ impl Manifest {
     }
 
     pub fn set(&mut self, rel: String, sha: String) {
-        self.entries.insert(rel, sha);
+        if self.entries.get(&rel) != Some(&sha) {
+            self.entries.insert(rel, sha);
+            self.dirty = true;
+        }
     }
 
-    pub fn set_meta(&mut self, rel: String, size: u64, mtime: u64) {
-        self.meta.insert(rel, FileMeta { size, mtime });
+    /// Record the stat snapshot that goes with `entries[rel]`. `as_of` is
+    /// when that snapshot was taken (unix seconds) — the scan time, not the
+    /// time of this call, which can be a whole upload later. Two-sided on
+    /// purpose: a file dated in the future is not "fresh", and treating it
+    /// as such would re-hash it on every pass.
+    pub fn set_meta(&mut self, rel: String, size: u64, mtime: u64, as_of: u64) {
+        if as_of.abs_diff(mtime) <= RACY_WINDOW_SECS {
+            // Too fresh to trust (see RACY_WINDOW_SECS): no cache entry.
+            if self.meta.remove(&rel).is_some() {
+                self.dirty = true;
+            }
+            return;
+        }
+        let unchanged = self
+            .meta
+            .get(&rel)
+            .is_some_and(|m| m.size == size && m.mtime == mtime);
+        if !unchanged {
+            self.meta.insert(rel, FileMeta { size, mtime });
+            self.dirty = true;
+        }
     }
 
     /// Stat-cache lookup: the last-synced sha for `rel`, valid only if the
@@ -79,7 +116,8 @@ impl Manifest {
     }
 
     pub fn remove(&mut self, rel: &str) {
-        self.entries.remove(rel);
-        self.meta.remove(rel);
+        let had_entry = self.entries.remove(rel).is_some();
+        let had_meta = self.meta.remove(rel).is_some();
+        self.dirty |= had_entry || had_meta;
     }
 }

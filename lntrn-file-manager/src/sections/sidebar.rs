@@ -413,7 +413,7 @@ fn draw_phone_row(
         .max_width(sw - 56.0 * s)
         .draw(text, screen.0, screen.1);
 
-    let status = if crate::fs::is_path_mounted(&phone.mount_point) {
+    let status = if phone.mounted {
         "Connected"
     } else {
         "Tap to open"

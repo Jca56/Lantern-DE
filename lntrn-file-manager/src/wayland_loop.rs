@@ -53,8 +53,19 @@ pub(crate) fn run_loop(
 ) -> Result<()> {
     let mut last_frame = Instant::now();
     let mut needs_anim = false;
-    let mut last_theme_variant = lntrn_theme::active_variant();
+    // Palette and window opacity come out of lantern.toml. Resolving them
+    // re-reads and re-parses that file four times, which used to happen on
+    // every rendered frame; now it happens when the file's stamp changes.
+    let theme_stamp = || {
+        lntrn_theme::lantern_config_path()
+            .and_then(|p| std::fs::metadata(p).ok())
+            .map(|m| (m.modified().ok(), m.len()))
+    };
+    let mut last_theme_stamp = theme_stamp();
+    let mut bg_opacity = lntrn_theme::background_opacity();
+    *palette = FoxPalette::current();
     let mut last_theme_poll = Instant::now();
+    let mut last_cloud_status = app.cloud_sync.as_ref().map(|c| c.status());
     let mut last_dir_check = Instant::now();
     let mut last_dir_mtime: Option<std::time::SystemTime> = None;
     let mut last_dir_path = app.current_dir.clone();
@@ -90,9 +101,16 @@ pub(crate) fn run_loop(
         // fd instead of thread::sleep so input events wake the loop
         // immediately — sleeping made every click/scroll feel ~500ms laggy.
         let timeout_ms: i32 = if needs_anim { 16 } else { 500 };
-        if let Err(e) = event_queue.flush() {
-            eprintln!("[fox] flush error: {e}");
-            break;
+        match event_queue.flush() {
+            Ok(()) => {}
+            // A full socket is not a dead connection: the rest goes out on a
+            // later flush, once the compositor has drained its end.
+            Err(wayland_client::backend::WaylandError::Io(e))
+                if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(e) => {
+                eprintln!("[fox] flush error: {e}");
+                break;
+            }
         }
         if let Some(guard) = event_queue.prepare_read() {
             let fd = guard.connection_fd().as_raw_fd();
@@ -146,16 +164,24 @@ pub(crate) fn run_loop(
             state.frame_done = true;
         }
 
-        // Theme live-reload poll. The palette is re-resolved every frame
-        // already (see `*palette = FoxPalette::current()` below), but we
-        // still want a redraw kick when the variant flips so the change is
-        // visible even when the user isn't actively interacting.
+        // Theme live-reload poll: a change in System Settings → Appearance
+        // (variant, accent, background, opacity) lands within half a second,
+        // with a redraw kick so it shows even on an untouched window.
         if last_theme_poll.elapsed() >= Duration::from_millis(500) {
             last_theme_poll = Instant::now();
-            let v = lntrn_theme::active_variant();
-            if v != last_theme_variant {
-                last_theme_variant = v;
+            let stamp = theme_stamp();
+            if stamp != last_theme_stamp {
+                last_theme_stamp = stamp;
+                *palette = FoxPalette::current();
+                bg_opacity = lntrn_theme::background_opacity();
                 state.frame_done = true; // force a render this iteration
+            }
+            // The sync thread changes the cloud status pill on its own
+            // schedule; nothing else would redraw an idle window for it.
+            let cloud_status = app.cloud_sync.as_ref().map(|c| c.status());
+            if cloud_status != last_cloud_status {
+                last_cloud_status = cloud_status;
+                state.frame_done = true;
             }
         }
         if !state.frame_done {
@@ -248,7 +274,8 @@ pub(crate) fn run_loop(
                     };
                     let pw = crate::layout::preview_effective_w(full.w, app.preview_width, true, s);
                     let h_rect = crate::layout::preview_handle_rect(full, pw, s);
-                    h_rect.contains(cx, cy)
+                    // pw == 0: the pane doesn't fit and isn't drawn.
+                    pw > 0.0 && h_rect.contains(cx, cy)
                 } else {
                     false
                 }
@@ -328,7 +355,9 @@ pub(crate) fn run_loop(
                         let cols = grid_columns(cr.w, s, zoom);
                         grid_content_height(app.entries.len(), cols, s, zoom)
                     }
-                    crate::app::ViewMode::List => list_content_height(app.entries.len(), s, zoom),
+                    crate::app::ViewMode::List => {
+                        list_content_height(app.entries.len(), s, zoom) + list_header_h(s, zoom)
+                    }
                     crate::app::ViewMode::Tree => {
                         tree_content_height(app.tree_entries.len(), s, zoom)
                     }
@@ -390,14 +419,24 @@ pub(crate) fn run_loop(
                         app.press_pos = None;
 
                         // Prepare DnD paths (Wayland DnD starts when cursor leaves window)
-                        let paths: Vec<std::path::PathBuf> = {
-                            let selected = app.selected_paths();
-                            if selected.is_empty() || !app.entries[idx].selected {
-                                vec![app.entries[idx].path.clone()]
-                            } else {
-                                selected
+                        // `get`: a reload between press and this frame can
+                        // have shrunk the list under the index.
+                        let paths: Vec<std::path::PathBuf> = match app.entries.get(idx) {
+                            Some(entry) if !entry.selected => vec![entry.path.clone()],
+                            Some(entry) => {
+                                let selected = app.selected_paths();
+                                if selected.is_empty() {
+                                    vec![entry.path.clone()]
+                                } else {
+                                    selected
+                                }
                             }
+                            None => Vec::new(),
                         };
+                        if paths.is_empty() {
+                            app.drag_item = None;
+                            app.drag_pos = None;
+                        }
                         state.dnd_paths = paths;
                         state.dnd_serial = state.pointer_serial;
                     }
@@ -480,6 +519,14 @@ pub(crate) fn run_loop(
                     app.drag_item = None;
                     app.drag_tree_item = None;
                     app.drag_pos = None;
+                    // …and its grab swallows the button release, so finish
+                    // the press here or the zone capture (and with it all
+                    // hover feedback) stays stuck until the next click.
+                    input.on_left_released();
+                    app.press_shift = false;
+                    app.press_ctrl = false;
+                    app.press_pos = None;
+                    app.suppress_rubber_band = false;
                 }
             }
         }
@@ -495,7 +542,16 @@ pub(crate) fn run_loop(
             app.drag_pos = None;
         }
 
+        // A nested tree row's right-click overrides `selected_paths()` for
+        // the menu's actions. Once the menu is gone — action taken, Esc,
+        // click outside, compositor dismissal — the override is stale, and
+        // Ctrl+C / Ctrl+X / a drag must go back to the real selection.
+        if !context_menu.is_open() {
+            app.context_override_paths.clear();
+        }
+
         // ── Keyboard ────────────────────────────────────────────────────
+        let key_handled = state.key_pressed.is_some();
         if let Some(key) = state.key_pressed.take() {
             // Super+F11: "rice mode" — hide/show the title bar (window mode
             // only). The compositor deliberately lets Super+F11 fall through;
@@ -524,8 +580,15 @@ pub(crate) fn run_loop(
             }
         }
 
-        // Key repeat (for text editing modes)
-        if let Some(key) = state.held_key {
+        // Key repeat (for text editing modes). Never in the frame that handled
+        // the press itself: a handler that blocked (cloud sign-in) would
+        // otherwise find the deadline already passed and fire a second time.
+        // And never for keys that commit or dismiss.
+        if key_handled {
+            state.repeat_deadline = Instant::now() + Duration::from_millis(300);
+        }
+        const NO_REPEAT: [u32; 3] = [1, 15, 28]; // Esc, Tab, Enter
+        if let Some(key) = state.held_key.filter(|k| !key_handled && !NO_REPEAT.contains(k)) {
             if (app.renaming.is_some()
                 || app.path_editing
                 || app.save_name_editing
@@ -556,6 +619,10 @@ pub(crate) fn run_loop(
         // Wheel detents move a boosted distance and ease toward the target
         // instead of the old rigid 1:1 jump per event.
         const SCROLL_STEP_MULT: f32 = 4.0;
+        if app.quick_look.is_some() {
+            // Quick Look covers the window; the view underneath stays put.
+            state.scroll_delta = 0.0;
+        }
         if state.scroll_delta.abs() > 0.01 {
             let scroll = state.scroll_delta * s * SCROLL_STEP_MULT;
             input.on_scroll(scroll);
@@ -605,8 +672,14 @@ pub(crate) fn run_loop(
                         ctx.interaction.on_left_pressed();
                     }
                 }
-            } else if app.pending_drop.is_some() {
-                // Drop confirmation modal — handle buttons
+            } else if app.pending_drop.is_some()
+                && app.sudo_prompt.is_none()
+                && app.conflict_dialog.is_none()
+                && app.cloud_login.is_none()
+                && app.drive_dialog.is_none()
+            {
+                // Drop confirmation modal — handle buttons (unless a modal
+                // raised later is drawn on top of it; that one gets the click)
                 if let Some(zone) = input.on_left_pressed() {
                     match zone {
                         ZONE_DROP_MOVE => {
@@ -635,8 +708,15 @@ pub(crate) fn run_loop(
                         _ => {}
                     }
                 }
-            } else if app.properties.is_some() {
-                // Properties dialog is open
+            } else if app.properties.is_some()
+                && app.sudo_prompt.is_none()
+                && app.conflict_dialog.is_none()
+                && app.cloud_login.is_none()
+                && app.drive_dialog.is_none()
+            {
+                // Properties dialog is open (and nothing is stacked on top of
+                // it — a sudo prompt raised by a finishing copy is drawn over
+                // Properties and must get its own clicks, via handle_click)
                 if let Some(zone) = input.on_left_pressed() {
                     if zone == 800 || zone == 801 {
                         // Close button or backdrop
@@ -685,7 +765,9 @@ pub(crate) fn run_loop(
                 // inside the resize border) and the rubber band.
                 let mut handled_scrollbar = false;
                 if input.zone_at(cx, cy) == Some(crate::ZONE_SCROLLBAR) {
-                    let content = content_rect(wf, hf, s);
+                    // Same rect the bar was drawn from and the drag uses
+                    // (split pane / pick bar / preview aware).
+                    let content = active_content_rect(app, wf, hf, s);
                     let total_h = view_content_height(app, content.w, s);
                     let bar = Scrollbar::new(&content, total_h, app.scroll_offset);
                     let grab_dy = if cy >= bar.thumb.y && cy <= bar.thumb.y + bar.thumb.h {
@@ -705,7 +787,9 @@ pub(crate) fn run_loop(
                 // Edge resize (window mode only)
                 let mut handled_resize = false;
                 if let Some(toplevel) = toplevel {
-                    if !handled_scrollbar {
+                    // Not when maximized: the edges are ordinary UI there
+                    // (same rule as the cursor shape above).
+                    if !handled_scrollbar && !state.maximized {
                         let border = 10.0 * s;
                         if let Some(edge) = edge_resize(cx, cy, wf, hf, border) {
                             if let Some(seat) = &state.seat {
@@ -733,7 +817,7 @@ pub(crate) fn run_loop(
                         &mut fav_drag_press,
                         wf,
                         s,
-                        lntrn_theme::background_opacity(),
+                        bg_opacity,
                         "",
                         state.ctrl,
                         state.shift,
@@ -802,6 +886,9 @@ pub(crate) fn run_loop(
                                 }
                             }
                         }
+                        // A modal took the press: no window move, no rubber
+                        // band, no deselect underneath it.
+                        ClickAction::Consumed => {}
                         ClickAction::Close => {
                             state.running = false;
                         }
@@ -913,33 +1000,21 @@ pub(crate) fn run_loop(
                             }
                         }
                     }
-                } else if app.drag_item.is_some() || app.drag_tree_item.is_some() {
-                    // Internal drop — sources from whichever drag kind is
-                    // live. Grabbing a selected item drags the whole
-                    // selection; anything else drags solo.
-                    let sources: Vec<std::path::PathBuf> =
-                        if let Some(drag_idx) = app.drag_item.take() {
-                            let selected = app.selected_paths();
-                            if selected.is_empty() || !app.entries[drag_idx].selected {
-                                vec![app.entries[drag_idx].path.clone()]
-                            } else {
-                                selected
-                            }
-                        } else if let Some(ti) = app.drag_tree_item.take() {
-                            if ti < app.tree_entries.len() {
-                                let path = app.tree_entries[ti].entry.path.clone();
-                                let selected = app.selected_paths();
-                                if selected.iter().any(|p| p == &path) {
-                                    selected
-                                } else {
-                                    vec![path]
-                                }
-                            } else {
-                                Vec::new()
-                            }
-                        } else {
-                            Vec::new()
-                        };
+                } else if app.drag_item.is_some()
+                    || app.drag_tree_item.is_some()
+                    || (!state.dnd_active && !state.dnd_paths.is_empty())
+                {
+                    // A live in-window drag always drops. The third clause
+                    // is for a drag whose row index was cleared by a re-list:
+                    // its snapshot is still pending — unless a Wayland drag
+                    // owns it (then the paths are for the receiver).
+                    // Internal drop. The sources are the paths captured when
+                    // the drag started, not a fresh look-up by row index: the
+                    // watcher may have re-listed the folder mid-drag, and the
+                    // index would then name a different file (or none).
+                    app.drag_item = None;
+                    app.drag_tree_item = None;
+                    let sources = std::mem::take(&mut state.dnd_paths);
                     if !sources.is_empty() {
                         let prev_fav_len = app.sidebar_favorites().len();
                         handle_drop(app, input, wf, hf, s, sources);
@@ -969,10 +1044,7 @@ pub(crate) fn run_loop(
                             if let Some(a) = crate::desktop::default_app_for_extension(&ext) {
                                 crate::desktop::launch_app(&a.exec, &path);
                             } else {
-                                std::thread::spawn(move || {
-                                    let _ =
-                                        std::process::Command::new("xdg-open").arg(&path).spawn();
-                                });
+                                crate::desktop::xdg_open(path);
                             }
                         }
                     }
@@ -998,7 +1070,28 @@ pub(crate) fn run_loop(
             }
         }
 
+        // A picker with a result is done. Double-click and Enter both go
+        // through confirm_pick; before this the double-click only latched the
+        // result and the dialog stayed open.
+        if app.pick.is_some()
+            && matches!(app.pick_result, Some(crate::PickResult::Selected(_)))
+        {
+            state.running = false;
+        }
+
         // ── Right click ─────────────────────────────────────────────────
+        let modal_open = app.quick_look.is_some()
+            || app.conflict_dialog.is_some()
+            || app.sudo_prompt.is_some()
+            || app.cloud_login.is_some()
+            || app.drive_dialog.is_some()
+            || app.properties.is_some()
+            || app.pending_drop.is_some();
+        if state.right_clicked && modal_open {
+            // A context menu must not open over a modal and act on the view
+            // hidden behind it.
+            state.right_clicked = false;
+        }
         if state.right_clicked {
             state.right_clicked = false;
             // Close existing menus first
@@ -1054,11 +1147,9 @@ pub(crate) fn run_loop(
         let opacity = if state.desktop_mode {
             settings.desktop_bg_opacity
         } else {
-            lntrn_theme::background_opacity()
+            bg_opacity
         };
-        // Re-resolve every frame so System Settings → Appearance changes
-        // (theme variant + accent) take effect without relaunching.
-        *palette = FoxPalette::current();
+        // `palette` is kept current by the theme poll at the top of the loop.
         let render_palette = palette.with_bg_opacity(opacity);
         let inline_evt = crate::render::render_frame(
             gpu,
@@ -1376,7 +1467,15 @@ pub(crate) fn run_loop(
                 .properties
                 .as_ref()
                 .and_then(|p| p.audio.as_ref())
-                .is_some_and(|a| a.busy());
+                .is_some_and(|a| a.busy())
+            // The checksum lands on a worker thread and is only noticed by a
+            // drawn frame; without this the row sat on "Computing…" until
+            // the mouse moved.
+            || app
+                .properties
+                .as_ref()
+                .and_then(|p| p.checksum_job.as_ref())
+                .is_some_and(|j| j.is_running());
     }
 
     Ok(())
@@ -1396,27 +1495,27 @@ fn view_content_height(app: &App, content_w: f32, s: f32) -> f32 {
             let cols = grid_columns(content_w, s, zoom);
             grid_content_height(app.entries.len(), cols, s, zoom)
         }
-        crate::app::ViewMode::List => list_content_height(app.entries.len(), s, zoom),
+        crate::app::ViewMode::List => {
+            list_content_height(app.entries.len(), s, zoom) + list_header_h(s, zoom)
+        }
         crate::app::ViewMode::Tree => tree_content_height(app.tree_entries.len(), s, zoom),
     }
+}
+
+/// Height of the List view's fixed "Name / Size / Modified" header. The rows
+/// start below it, so it is part of the scrollable height — leaving it out
+/// kept the last row out of reach.
+fn list_header_h(s: f32, zoom: f32) -> f32 {
+    32.0 * crate::layout::list_zoom_multiplier(zoom) * s
 }
 
 /// Apply a live icon-zoom change (View menu or right-click menu slider):
 /// set the zoom and re-clamp the scroll offset against the new grid height.
 fn apply_icon_zoom(app: &mut App, value: f32, wf: f32, hf: f32, s: f32) {
     app.icon_zoom = value;
-    let content = content_rect(wf, hf, s);
-    ScrollArea::apply_scroll(
-        &mut app.scroll_offset,
-        0.0,
-        grid_content_height(
-            app.entries.len(),
-            grid_columns(content.w, s, value),
-            s,
-            value,
-        ),
-        content.h,
-    );
+    let content = active_content_rect(app, wf, hf, s);
+    let total_h = view_content_height(app, content.w, s);
+    ScrollArea::apply_scroll(&mut app.scroll_offset, 0.0, total_h, content.h);
 }
 
 /// The focused pane's content rect (split/pick aware) with the preview pane

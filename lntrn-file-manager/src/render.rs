@@ -55,6 +55,10 @@ pub fn render_frame(
     let s = scale;
 
     painter.clear();
+    // Normally the text queue empties itself when the last layer renders.
+    // After a frame that failed to begin (surface lost), it did not: the
+    // stale text and layer state would be replayed into this frame.
+    text.clear();
     input.begin_frame();
 
     // ── Compute content geometry per view mode ─────────────────────────
@@ -708,17 +712,13 @@ pub fn render_frame(
                     let top_pad = (ir.h - content_h) * 0.5;
                     let input_y = ir.y + top_pad + icsz;
                     let input_h = 36.0 * s;
-                    let input_w = (ir.w + 80.0 * s).min(content.x + content.w - (ir.x - 40.0 * s));
-                    let input_x = ir.x - 40.0 * s;
+                    // Wider than the cell, but never past the content
+                    // column: the first grid column used to put 32px of
+                    // the box inside the sidebar.
+                    let input_x = (ir.x - 40.0 * s).max(content.x);
+                    let input_w = (ir.w + 80.0 * s).min(content.x + content.w - input_x);
                     let input_rect = Rect::new(input_x, input_y, input_w, input_h);
-                    input.add_zone(ZONE_RENAME_INPUT, input_rect);
-                    TextInput::new(input_rect)
-                        .text(&app.rename_buf)
-                        .cursor_pos(app.rename_cursor)
-                        .selection(app.rename_selection)
-                        .focused(true)
-                        .scale(s)
-                        .draw(painter, text, pal, w, h);
+                    draw_rename_input(painter, text, input, pal, app, input_rect, content, s, w, h);
                 }
             }
         }
@@ -788,14 +788,7 @@ pub fn render_frame(
                     let input_h = (row_h - 4.0 * s).max(28.0 * s);
                     let input_y = y + (row_h - input_h) * 0.5;
                     let input_rect = Rect::new(input_x, input_y, input_w, input_h);
-                    input.add_zone(ZONE_RENAME_INPUT, input_rect);
-                    TextInput::new(input_rect)
-                        .text(&app.rename_buf)
-                        .cursor_pos(app.rename_cursor)
-                        .selection(app.rename_selection)
-                        .focused(true)
-                        .scale(s)
-                        .draw(painter, text, pal, w, h);
+                    draw_rename_input(painter, text, input, pal, app, input_rect, content, s, w, h);
                 }
             }
         }
@@ -886,14 +879,7 @@ pub fn render_frame(
                     let input_h = (row_h - 4.0 * s).max(28.0 * s);
                     let input_y = y + (row_h - input_h) * 0.5;
                     let input_rect = Rect::new(input_x, input_y, input_w, input_h);
-                    input.add_zone(ZONE_RENAME_INPUT, input_rect);
-                    TextInput::new(input_rect)
-                        .text(&app.rename_buf)
-                        .cursor_pos(app.rename_cursor)
-                        .selection(app.rename_selection)
-                        .focused(true)
-                        .scale(s)
-                        .draw(painter, text, pal, w, h);
+                    draw_rename_input(painter, text, input, pal, app, input_rect, content, s, w, h);
                 }
             }
         }
@@ -1245,9 +1231,9 @@ pub fn render_frame(
     // Recompute the drawn icon rect for any video entry that has a real
     // thumbnail, so we can stamp a play glyph on top after the textures
     // render. Mirrors the geometry of the tex_draws collection above.
-    let mut video_overlays: Vec<(f32, f32, f32, f32)> = match view_mode {
+    let video_overlays: Vec<(f32, f32, f32, f32)> = match view_mode {
         ViewMode::Grid => (0..entries.len())
-            .filter(|&i| has_icon[i] && icons::is_video_file(&entries[i].name))
+            .filter(|&i| has_icon[i] && is_video_entry(&entries[i]))
             .filter_map(|i| {
                 let ir = file_item_rect(i, cols, content.x, base_y, s, zoom);
                 let icon_x = ir.x + (ir.w - icsz) * 0.5;
@@ -1269,7 +1255,7 @@ pub fn render_frame(
             let hdr_h = 32.0 * m * s;
             let list_icon_sz = 28.0 * m * s;
             (0..entries.len())
-                .filter(|&i| has_icon[i] && icons::is_video_file(&entries[i].name))
+                .filter(|&i| has_icon[i] && is_video_entry(&entries[i]))
                 .filter_map(|i| {
                     let y = base_y + hdr_h + i as f32 * row_h;
                     let icon_x = content.x + 8.0 * m * s;
@@ -1292,7 +1278,7 @@ pub fn render_frame(
             let tree_icon_sz = 24.0 * m * s;
             let tree_entries = &app.tree_entries;
             (0..tree_entries.len())
-                .filter(|&i| has_icon[i] && icons::is_video_file(&tree_entries[i].entry.name))
+                .filter(|&i| has_icon[i] && is_video_entry(&tree_entries[i].entry))
                 .filter_map(|i| {
                     let te = &tree_entries[i];
                     let y = base_y + i as f32 * row_h;
@@ -1311,11 +1297,14 @@ pub fn render_frame(
                 .collect()
         }
     };
-    // Preview pane: a play badge on the large video thumbnail too.
+    // Preview pane: a play badge on the large video thumbnail too. Kept
+    // apart from the list's badges: those are clipped to the content area,
+    // this one sits outside it.
+    let mut preview_overlay: Option<(f32, f32, f32, f32)> = None;
     if let (Some(thumb), Some(entry)) = (preview_thumb_rect, preview_thumb_entry.as_ref()) {
-        if icons::is_video_file(&entry.name) {
+        if is_video_entry(entry) {
             if let Some(tex) = icon_cache.get(entry) {
-                video_overlays.push(icons::fit_in_box(tex, thumb.x, thumb.y, thumb.w, thumb.h));
+                preview_overlay = Some(icons::fit_in_box(tex, thumb.x, thumb.y, thumb.w, thumb.h));
             }
         }
     }
@@ -1352,25 +1341,16 @@ pub fn render_frame(
 
     // Play-button overlays sit on layer 1 so they paint over the video
     // thumbnail textures (which render after layer-0 painter shapes).
-    for (dx, dy, dw, dh) in &video_overlays {
-        let cx = dx + dw * 0.5;
-        let cy = dy + dh * 0.5;
-        // Circle scales with the thumbnail, clamped so tiny list icons
-        // still get a legible badge.
-        let r = (dw.min(*dh) * 0.28).clamp(7.0 * s, 26.0 * s);
-        painter.circle_filled(cx, cy, r, Color::rgba(0.0, 0.0, 0.0, 0.55));
-        // White right-pointing triangle, inset within the circle.
-        let t = r * 0.5;
-        let off = r * 0.12; // nudge right so it looks optically centered
-        painter.triangle(
-            cx - t * 0.7 + off,
-            cy - t,
-            cx - t * 0.7 + off,
-            cy + t,
-            cx + t + off,
-            cy,
-            Color::rgba(1.0, 1.0, 1.0, 0.95),
-        );
+    // set_layer dropped the clip stack, so the list's badges get the
+    // content clip back: a row scrolled half under the nav bar must not
+    // paint its badge over the chrome.
+    painter.push_clip(content);
+    for rect in &video_overlays {
+        draw_play_badge(painter, *rect, s);
+    }
+    painter.pop_clip();
+    if let Some(rect) = preview_overlay {
+        draw_play_badge(painter, rect, s);
     }
 
     let mut props_tex_draws = Vec::new();
@@ -1382,6 +1362,12 @@ pub fn render_frame(
     let mut props_copy_text: Option<String> = None;
     let mut props_icon_rect_data: Option<(crate::fs::FileEntry, (f32, f32, f32, f32))> = None;
     if let Some(ref mut props) = app.properties {
+        // The probe for this file may not have landed when the dialog
+        // opened (tree rows, search results, favourites are never probed
+        // beforehand). Until it has, keep asking the cache — a map lookup.
+        if !props.is_dir && props.image_dimensions.is_none() && props.media_duration.is_none() {
+            props.populate_media_info(file_info);
+        }
         let evt = crate::properties::draw_properties_dialog(
             props, painter, text, input, pal, wf, hf, s, w, h,
         );
@@ -1407,8 +1393,10 @@ pub fn render_frame(
                 name: props.name.clone(),
                 path: props.path.clone(),
                 is_dir: props.is_dir,
-                size: props.size_bytes,
-                modified: None,
+                // The stamp the directory listing saw, so the thumbnail
+                // cache key matches the one the listing stored it under.
+                size: props.listing_size,
+                modified: props.listing_modified,
                 selected: false,
             };
             props_icon_rect_data = Some((entry, (ix, iy, iw, ih)));
@@ -1512,8 +1500,17 @@ pub fn render_frame(
                 &view,
                 Some(Color::rgba(0.0, 0.0, 0.0, 0.0)),
             );
-            if !tex_draws.is_empty() {
-                tex_pass.render_pass(ctx, frame.encoder_mut(), &view, &tex_draws, None);
+            // The texture pass draws at most TEX_BATCH instances per call
+            // and silently drops the rest (a maximised 4K grid has more
+            // icons than that: the overflow showed as blank cells). Each
+            // call rewrites the shared instance buffer, so batches are
+            // separated by a flush.
+            let mut batches = tex_draws.chunks(TEX_BATCH).peekable();
+            while let Some(batch) = batches.next() {
+                tex_pass.render_pass(ctx, frame.encoder_mut(), &view, batch, None);
+                if batches.peek().is_some() {
+                    frame.flush(ctx);
+                }
             }
             text.render_layer(0, ctx, frame.encoder_mut(), &view);
 
@@ -1522,8 +1519,12 @@ pub fn render_frame(
 
             // Layer 1: modal overlay shapes + textures + text
             painter.render_layer(1, ctx, frame.encoder_mut(), &view, None);
-            if !props_tex_draws.is_empty() {
-                tex_pass.render_pass(ctx, frame.encoder_mut(), &view, &props_tex_draws, None);
+            let mut batches = props_tex_draws.chunks(TEX_BATCH).peekable();
+            while let Some(batch) = batches.next() {
+                tex_pass.render_pass(ctx, frame.encoder_mut(), &view, batch, None);
+                if batches.peek().is_some() {
+                    frame.flush(ctx);
+                }
             }
             text.render_layer(1, ctx, frame.encoder_mut(), &view);
 
@@ -1533,6 +1534,71 @@ pub fn render_frame(
     }
 
     inline_menu_event
+}
+
+/// Instances one `TexturePass::render_pass` call can draw (lntrn-render's
+/// MAX_TEX_INSTANCES).
+const TEX_BATCH: usize = 256;
+
+/// A folder named "clips.mkv" is not a video.
+fn is_video_entry(entry: &crate::fs::FileEntry) -> bool {
+    !entry.is_dir && icons::is_video_file(&entry.name)
+}
+
+/// Play glyph centred on a video thumbnail's drawn rect `(x, y, w, h)`.
+fn draw_play_badge(painter: &mut lntrn_render::Painter, rect: (f32, f32, f32, f32), s: f32) {
+    let (dx, dy, dw, dh) = rect;
+    let cx = dx + dw * 0.5;
+    let cy = dy + dh * 0.5;
+    // Circle scales with the thumbnail, clamped so tiny list icons
+    // still get a legible badge.
+    let r = (dw.min(dh) * 0.28).clamp(7.0 * s, 26.0 * s);
+    painter.circle_filled(cx, cy, r, Color::rgba(0.0, 0.0, 0.0, 0.55));
+    // White right-pointing triangle, inset within the circle.
+    let t = r * 0.5;
+    let off = r * 0.12; // nudge right so it looks optically centered
+    painter.triangle(
+        cx - t * 0.7 + off,
+        cy - t,
+        cx - t * 0.7 + off,
+        cy + t,
+        cx + t + off,
+        cy,
+        Color::rgba(1.0, 1.0, 1.0, 0.95),
+    );
+}
+
+/// The inline rename box. It follows its row, and the rows scroll, so it is
+/// clipped to the content area like they are — unclipped it slid over the
+/// nav and tab bars, zone and all.
+#[allow(clippy::too_many_arguments)]
+fn draw_rename_input(
+    painter: &mut lntrn_render::Painter,
+    text: &mut lntrn_render::TextRenderer,
+    input: &mut InteractionContext,
+    pal: &FoxPalette,
+    app: &App,
+    rect: Rect,
+    content: Rect,
+    s: f32,
+    sw: u32,
+    sh: u32,
+) {
+    let Some(visible) = rect.intersect(&content) else {
+        return;
+    };
+    input.add_zone(ZONE_RENAME_INPUT, visible);
+    painter.push_clip(content);
+    text.push_clip([content.x, content.y, content.w, content.h]);
+    TextInput::new(rect)
+        .text(&app.rename_buf)
+        .cursor_pos(app.rename_cursor_chars())
+        .selection(app.rename_selection_chars())
+        .focused(true)
+        .scale(s)
+        .draw(painter, text, pal, sw, sh);
+    text.pop_clip();
+    painter.pop_clip();
 }
 
 fn draw_drop_modal(

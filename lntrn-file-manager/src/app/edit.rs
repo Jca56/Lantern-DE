@@ -2,7 +2,84 @@
 
 use super::App;
 
+/// A typed name must be exactly one ordinary path component. ".", ".." and
+/// anything holding a '/' would make `parent.join(name)` point at another
+/// folder (or the parent itself), and the conflict dialog's Replace would
+/// then delete that.
+pub(crate) fn is_plain_file_name(name: &str) -> bool {
+    !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\0'])
+}
+
+/// True when both paths are the same directory entry on disk — a rename that
+/// only changes letter case on a case-insensitive filesystem (vfat, exfat).
+/// `symlink_metadata` on purpose: a link and its target are different entries.
+pub(crate) fn is_same_entry(a: &std::path::Path, b: &std::path::Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::symlink_metadata(a), std::fs::symlink_metadata(b)) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
+    }
+}
+
+/// The rename and save-name buffers keep BYTE cursors (start_rename's
+/// `rfind('.')` and `len()` are bytes). Every step must land on a char
+/// boundary or `String::remove`/`insert` panics on a name like "Café.txt".
+pub(crate) fn floor_boundary(buf: &str, cursor: usize) -> usize {
+    let mut i = cursor.min(buf.len());
+    while !buf.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Byte offset of the char that ends at `cursor` (0 at the start).
+pub(crate) fn prev_boundary(buf: &str, cursor: usize) -> usize {
+    let cursor = floor_boundary(buf, cursor);
+    buf[..cursor]
+        .char_indices()
+        .next_back()
+        .map_or(0, |(i, _)| i)
+}
+
+/// Byte offset just past the char that starts at `cursor` (len at the end).
+pub(crate) fn next_boundary(buf: &str, cursor: usize) -> usize {
+    let cursor = floor_boundary(buf, cursor);
+    buf[cursor..]
+        .chars()
+        .next()
+        .map_or(buf.len(), |c| cursor + c.len_utf8())
+}
+
+/// The text widget counts in chars; convert a byte offset for it.
+fn char_offset(buf: &str, byte: usize) -> usize {
+    buf[..floor_boundary(buf, byte)].chars().count()
+}
+
 impl App {
+    /// Rename cursor and selection in chars, for the text widget.
+    pub fn rename_cursor_chars(&self) -> usize {
+        char_offset(&self.rename_buf, self.rename_cursor)
+    }
+
+    pub fn rename_selection_chars(&self) -> Option<(usize, usize)> {
+        self.rename_selection
+            .map(|(a, b)| (char_offset(&self.rename_buf, a), char_offset(&self.rename_buf, b)))
+    }
+
+    /// Save-name cursor and selection in chars, for the text widget.
+    pub fn save_name_cursor_chars(&self) -> usize {
+        char_offset(&self.save_name_buf, self.save_name_cursor)
+    }
+
+    pub fn save_name_selection_chars(&self) -> Option<(usize, usize)> {
+        self.save_name_selection.map(|(a, b)| {
+            (
+                char_offset(&self.save_name_buf, a),
+                char_offset(&self.save_name_buf, b),
+            )
+        })
+    }
+
     // ── Rename ────────────────────────────────────────────────────────
 
     pub fn start_rename(&mut self, index: usize) {
@@ -33,14 +110,14 @@ impl App {
 
     pub fn commit_rename(&mut self) {
         if let Some(idx) = self.renaming.take() {
-            if idx < self.entries.len() && !self.rename_buf.is_empty() {
+            if idx < self.entries.len() && is_plain_file_name(&self.rename_buf) {
                 let old = self.entries[idx].path.clone();
                 let new_path = old.parent().unwrap_or(&old).join(&self.rename_buf);
                 if new_path != old {
                     // Pop the shared conflict dialog if we'd clobber a real
                     // existing entry (case-insensitive renames on the same
                     // file are allowed through — fs::rename handles those).
-                    if new_path.exists() && !self.root_mode {
+                    if new_path.exists() && !self.root_mode && !is_same_entry(&old, &new_path) {
                         let dialog = crate::conflict::ConflictDialog {
                             target: new_path.clone(),
                             source_meta: crate::conflict::ConflictMeta::read(&old),
@@ -81,8 +158,10 @@ impl App {
                     .arg(&to_cmd)
                     .status();
             });
-        } else {
-            let _ = std::fs::rename(&from, &to);
+        } else if let Err(e) = std::fs::rename(&from, &to) {
+            // No undo entry for a rename that never happened.
+            eprintln!("[fox] rename {} failed: {e}", from.display());
+            return;
         }
         self.undo_stack
             .push(crate::undo::UndoAction::Rename { from, to });
@@ -101,8 +180,8 @@ impl App {
         let Some((a, b)) = self.save_name_selection.take() else {
             return false;
         };
-        let start = a.min(b).min(self.save_name_buf.len());
-        let end = a.max(b).min(self.save_name_buf.len());
+        let start = floor_boundary(&self.save_name_buf, a.min(b));
+        let end = floor_boundary(&self.save_name_buf, a.max(b));
         if start == end {
             return false;
         }
@@ -118,8 +197,8 @@ impl App {
         let Some((a, b)) = self.rename_selection.take() else {
             return false;
         };
-        let start = a.min(b).min(self.rename_buf.len());
-        let end = a.max(b).min(self.rename_buf.len());
+        let start = floor_boundary(&self.rename_buf, a.min(b));
+        let end = floor_boundary(&self.rename_buf, a.max(b));
         if start == end {
             return false;
         }
@@ -138,7 +217,7 @@ impl App {
     }
 
     pub fn commit_path_edit(&mut self) {
-        let path = std::path::PathBuf::from(&self.path_buf);
+        let path = self.resolve_typed_path(&self.path_buf);
         if path.is_dir() {
             self.navigate_to(path);
         }
@@ -146,6 +225,36 @@ impl App {
         self.path_buf.clear();
         self.path_cursor = 0;
         self.path_selection = None;
+    }
+
+    /// Turn what was typed into the path bar into an absolute, normalised
+    /// path: `~` is home, a relative path hangs off the shown folder, and
+    /// `.` / `..` are folded away. Lexical on purpose — `canonicalize` would
+    /// jump a symlinked folder to its real location (and block on a slow
+    /// mount). Breadcrumbs, Up and the slow-path checks all assume this shape.
+    fn resolve_typed_path(&self, typed: &str) -> std::path::PathBuf {
+        use std::path::{Component, Path, PathBuf};
+        let typed = typed.trim();
+        let start = if typed == "~" {
+            super::dirs_home()
+        } else if let Some(rest) = typed.strip_prefix("~/") {
+            super::dirs_home().join(rest)
+        } else if Path::new(typed).is_absolute() {
+            PathBuf::from(typed)
+        } else {
+            self.current_dir.join(typed)
+        };
+        let mut out = PathBuf::new();
+        for comp in start.components() {
+            match comp {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    out.pop();
+                }
+                other => out.push(other),
+            }
+        }
+        out
     }
 
     pub fn cancel_path_edit(&mut self) {

@@ -94,17 +94,27 @@ impl App {
         tab.scroll_offset = 0.0;
         self.current_dir = path;
         self.scroll_offset = 0.0;
+        self.after_dir_change();
+        self.reload();
+    }
+
+    /// Per-directory interaction state that must not survive a change of
+    /// directory: indices into the old listing and the pick-mode tree anchor.
+    fn after_dir_change(&mut self) {
         // In pick mode the tree is anchored at `tree_root`. Jumping to a new
-        // place (sidebar/breadcrumb/drive/favorite) must re-anchor it, otherwise
-        // `rebuild_tree` stays pinned to the start dir and the tree never
-        // reflects the new directory. Outside pick mode `tree_root` is None and
-        // `rebuild_tree` already falls back to `current_dir`.
+        // place (sidebar/breadcrumb/drive/favorite/Back/Forward) must
+        // re-anchor it, otherwise `rebuild_tree` stays pinned to the old dir
+        // and the tree never reflects the new one. Outside pick mode
+        // `tree_root` is None and `rebuild_tree` falls back to `current_dir`.
         if self.tree_root.is_some() {
             self.tree_root = Some(self.current_dir.clone());
         }
         self.pick_tree_selection.clear();
         self.last_click_path = None;
-        self.reload();
+        // A Shift+click in the new folder must not range-select from an
+        // index that belonged to the old one.
+        self.selection_anchor = None;
+        self.last_click_idx = None;
     }
 
     /// Pick-mode tree navigation: point `current_dir` at `path` and refresh
@@ -149,6 +159,11 @@ impl App {
             self.reload_inactive_pane();
             return;
         }
+        // A slow-mount listing still in flight for this pane belongs to a
+        // folder we have left. Its result would be dropped anyway; dropping
+        // the handle now stops "Loading…" (and the 60 fps polling it drives)
+        // from hanging over a local folder.
+        self.drop_focused_dir_load();
         let entries = fs::list_directory(
             &self.current_dir,
             self.show_hidden,
@@ -167,14 +182,27 @@ impl App {
         // would otherwise drop the user mid-type ~3 seconds after creating
         // a new folder. Capture the path now, re-resolve to its new index
         // after the listing is rebuilt.
-        let renaming_path = self
-            .renaming
-            .and_then(|idx| self.entries.get(idx))
-            .map(|e| e.path.clone());
+        //
+        // Every other index into `entries` gets the same treatment: the
+        // watcher can re-list at any moment (mid-drag, with a context menu
+        // open, between the two clicks of a double-click), and a raw index
+        // would then point at a different file — or past the end.
+        let path_at = |idx: Option<usize>| {
+            idx.and_then(|i| self.entries.get(i)).map(|e| e.path.clone())
+        };
+        let renaming_path = path_at(self.renaming);
+        let anchor_path = path_at(self.selection_anchor);
+        let last_click_path = path_at(self.last_click_idx);
+        let pending_open_path = path_at(self.pending_open);
+        let drag_path = path_at(self.drag_item);
+        let context_item_path = match self.context_target {
+            Some(super::ContextTarget::Item(idx)) => Some(path_at(Some(idx))),
+            _ => None,
+        };
         // Same for selection — fs-event reloads fire whenever anything
         // lands in the dir, and losing your selection to a background
         // download finishing would be infuriating.
-        let selected_paths: Vec<std::path::PathBuf> = self
+        let selected_paths: std::collections::HashSet<std::path::PathBuf> = self
             .entries
             .iter()
             .filter(|e| e.selected)
@@ -198,7 +226,24 @@ impl App {
         }
         let entries = self.entries.clone();
         self.active_nav_tab().entries = entries;
-        self.renaming = renaming_path.and_then(|p| self.entries.iter().position(|e| e.path == p));
+        let index_of = |p: Option<std::path::PathBuf>| {
+            p.and_then(|p| self.entries.iter().position(|e| e.path == p))
+        };
+        let renaming = index_of(renaming_path);
+        let anchor = index_of(anchor_path);
+        let last_click = index_of(last_click_path);
+        let pending_open = index_of(pending_open_path);
+        let drag = index_of(drag_path);
+        let context_item = context_item_path.map(index_of);
+        self.renaming = renaming;
+        self.selection_anchor = anchor;
+        self.last_click_idx = last_click;
+        self.pending_open = pending_open;
+        self.drag_item = drag;
+        if let Some(item) = context_item {
+            // Gone from the listing: the menu action has nothing to act on.
+            self.context_target = item.map(super::ContextTarget::Item);
+        }
         if self.view_mode == ViewMode::Tree {
             self.rebuild_tree();
         }
@@ -260,6 +305,7 @@ impl App {
             tab.scroll_offset = 0.0;
             self.current_dir = prev;
             self.scroll_offset = 0.0;
+            self.after_dir_change();
             self.reload();
         }
     }
@@ -273,6 +319,7 @@ impl App {
             tab.scroll_offset = 0.0;
             self.current_dir = next;
             self.scroll_offset = 0.0;
+            self.after_dir_change();
             self.reload();
         }
     }

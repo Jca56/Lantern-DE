@@ -42,7 +42,7 @@ pub(crate) fn handle_click(
             if zone_id == crate::ZONE_QUICK_LOOK {
                 app.quick_look = None;
             }
-            return ClickAction::None;
+            return ClickAction::Consumed;
         }
         // ── Conflict dialog: captures all clicks while open ─────────
         if app.conflict_dialog.is_some() {
@@ -84,7 +84,7 @@ pub(crate) fn handle_click(
                 }
                 _ => {}
             }
-            return ClickAction::None;
+            return ClickAction::Consumed;
         }
         // ── Sudo password modal: capture all clicks while open ──────
         if app.sudo_prompt.is_some() {
@@ -100,7 +100,7 @@ pub(crate) fn handle_click(
                 }
                 _ => {}
             }
-            return ClickAction::None;
+            return ClickAction::Consumed;
         }
         // ── Cloud login dialog: capture all clicks while open ───────
         if app.cloud_login.is_some() {
@@ -123,7 +123,7 @@ pub(crate) fn handle_click(
                 }
                 _ => {}
             }
-            return ClickAction::None;
+            return ClickAction::Consumed;
         }
         // ── Drive dialog: capture all clicks while open ─────────────
         if app.drive_dialog.is_some() {
@@ -134,7 +134,7 @@ pub(crate) fn handle_click(
                 }
                 _ => {}
             }
-            return ClickAction::None;
+            return ClickAction::Consumed;
         }
         // ── Split view: a press in the unfocused pane focuses it, then
         // re-dispatches as the standard zone. Zone geometry was registered
@@ -210,7 +210,13 @@ pub(crate) fn handle_click(
                 }
             }
             ZONE_PATH_INPUT => {
-                if !app.path_editing {
+                if app.searching {
+                    // The search box is what sits in this rect now: a click
+                    // here focuses it, it must not start a hidden path edit
+                    // that swallows the typing.
+                    app.save_name_editing = false;
+                    app.save_name_selection = None;
+                } else if !app.path_editing {
                     app.start_path_edit();
                 }
             }
@@ -297,7 +303,7 @@ pub(crate) fn handle_click(
                     }
                 }
             }
-            id if id >= ZONE_TREE_ITEM_BASE => {
+            id if (ZONE_TREE_ITEM_BASE..crate::ZONE_P2_FILE_BASE).contains(&id) => {
                 let idx = (id - ZONE_TREE_ITEM_BASE) as usize;
                 if idx < app.tree_entries.len() {
                     let te = &app.tree_entries[idx];
@@ -389,7 +395,7 @@ pub(crate) fn handle_click(
                             if let Some((cx, cy)) = input.cursor() {
                                 app.press_pos = Some((cx, cy));
                             }
-                            if is_double {
+                            if is_double && app.double_click_confirms_file() {
                                 app.confirm_pick();
                             }
                         }
@@ -398,7 +404,7 @@ pub(crate) fn handle_click(
                     }
                 }
             }
-            id if id >= ZONE_FILE_ITEM_BASE => {
+            id if (ZONE_FILE_ITEM_BASE..ZONE_TREE_ITEM_BASE).contains(&id) => {
                 let idx = (id - ZONE_FILE_ITEM_BASE) as usize;
                 if app.searching && !app.search_buf.is_empty() {
                     // Search result clicked — navigate to parent and highlight,
@@ -418,10 +424,7 @@ pub(crate) fn handle_click(
                             if let Some(app) = desktop::default_app_for_extension(&ext) {
                                 desktop::launch_app(&app.exec, &path);
                             } else {
-                                std::thread::spawn(move || {
-                                    let _ =
-                                        std::process::Command::new("xdg-open").arg(&path).spawn();
-                                });
+                                crate::desktop::xdg_open(path);
                             }
                         }
                     }
@@ -501,8 +504,12 @@ pub(crate) fn handle_click(
                 app.cancel_op();
             }
             crate::ZONE_PICK_CONFIRM => {
+                // Nothing eligible selected (or no file name): stay open.
+                // Closing here used to report "cancelled" to the caller.
                 app.confirm_pick();
-                return ClickAction::Close;
+                if app.pick_result.is_some() {
+                    return ClickAction::Close;
+                }
             }
             crate::ZONE_PICK_CANCEL => {
                 app.cancel_pick();

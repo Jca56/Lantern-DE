@@ -8,6 +8,11 @@ use crate::app::TreeEntry;
 use crate::fs::FileEntry;
 use crate::sections::{selection_tint, truncate_to_width};
 
+/// Extra layout width (logical px) given to a label that was already cut to
+/// fit. Text queued with exactly its own measured width as the limit can
+/// lose its last glyph to rounding and wrap it onto a hidden second line.
+const LABEL_SLACK: f32 = 4.0;
+
 // ── Row hit rects ───────────────────────────────────────────────────────────
 //
 // List/Tree rows span the full content width visually (stripes, dividers),
@@ -275,7 +280,7 @@ pub fn draw_content_list(
             TextLabel::new(&display, name_x, name_y)
                 .size(font)
                 .color(name_color)
-                .max_width(if entry.selected { 9999.0 } else { max_name_w })
+                .max_width(if entry.selected { 9999.0 } else { max_name_w + LABEL_SLACK * s })
                 .draw(text, screen.0, screen.1);
 
             // Parent path (relative to search root)
@@ -299,7 +304,7 @@ pub fn draw_content_list(
             TextLabel::new(&path_display, name_x, path_y)
                 .size(path_font)
                 .color(palette.muted.with_alpha(alpha * 0.7))
-                .max_width(max_path_w)
+                .max_width(max_path_w + LABEL_SLACK * s)
                 .draw(text, screen.0, screen.1);
         } else {
             // Normal mode: name, size, date columns
@@ -316,7 +321,7 @@ pub fn draw_content_list(
             TextLabel::new(&display, name_x, text_y)
                 .size(font)
                 .color(name_color)
-                .max_width(if entry.selected { 9999.0 } else { max_name_w })
+                .max_width(if entry.selected { 9999.0 } else { max_name_w + LABEL_SLACK * s })
                 .draw(text, screen.0, screen.1);
 
             // Size
@@ -525,7 +530,7 @@ pub fn draw_content_tree(
         TextLabel::new(&display, name_x, text_y)
             .size(font)
             .color(name_color)
-            .max_width(max_w)
+            .max_width(max_w + LABEL_SLACK * s)
             .draw(text, screen.0, screen.1);
     }
     area.end(painter, text);
@@ -550,47 +555,8 @@ fn format_bytes(size: u64) -> String {
 }
 
 fn format_date(modified: Option<SystemTime>) -> String {
-    let Some(time) = modified else {
+    let Some(t) = modified.and_then(crate::datetime::local) else {
         return "--".into();
     };
-    let Ok(dur) = time.duration_since(SystemTime::UNIX_EPOCH) else {
-        return "--".into();
-    };
-    let secs = dur.as_secs();
-    let days = secs / 86400;
-    let mut y = 1970u64;
-    let mut remaining = days;
-    loop {
-        let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-        let year_days = if leap { 366 } else { 365 };
-        if remaining < year_days {
-            break;
-        }
-        remaining -= year_days;
-        y += 1;
-    }
-    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-    let month_days = [
-        31,
-        if leap { 29 } else { 28 },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
-    let month_names = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-    let mut m = 0usize;
-    while m < 12 && remaining >= month_days[m] {
-        remaining -= month_days[m];
-        m += 1;
-    }
-    format!("{} {}, {}", month_names[m], remaining + 1, y)
+    format!("{} {}, {}", t.month_name(), t.day, t.year)
 }

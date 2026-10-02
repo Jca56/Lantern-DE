@@ -7,15 +7,14 @@ pub enum UndoAction {
     Rename { from: PathBuf, to: PathBuf },
     /// Files were moved to trash. Each entry: (original_path, trash_file_path, trash_info_path).
     Trash(Vec<(PathBuf, PathBuf, PathBuf)>),
-    /// Files were created (new file, new folder, or extracted).
-    Create(Vec<PathBuf>),
+    /// Empty files or folders were created (New File, New Folder). Each
+    /// entry: (path, is_dir) — the kind is recorded, not guessed from the name.
+    Create(Vec<(PathBuf, bool)>),
     /// Files were moved (cut+paste). Each entry: (source, destination).
     Move(Vec<(PathBuf, PathBuf)>),
-    /// Files were copied (copy+paste or duplicate). sources + created destinations.
-    Copy {
-        sources: Vec<PathBuf>,
-        created: Vec<PathBuf>,
-    },
+    /// Files were copied (copy+paste or duplicate). Each entry: (source,
+    /// created destination), only for the items that actually landed.
+    Copy(Vec<(PathBuf, PathBuf)>),
 }
 
 const MAX_UNDO: usize = 50;
@@ -100,7 +99,7 @@ fn execute_reverse(action: &UndoAction, root_mode: bool) -> String {
         }
         UndoAction::Create(paths) => {
             let mut removed = 0;
-            for path in paths {
+            for (path, _) in paths {
                 let ok = if path.is_dir() {
                     std::fs::remove_dir_all(path).is_ok()
                 } else {
@@ -133,9 +132,9 @@ fn execute_reverse(action: &UndoAction, root_mode: bool) -> String {
             }
             format!("Moved {moved} item(s) back")
         }
-        UndoAction::Copy { created, .. } => {
+        UndoAction::Copy(pairs) => {
             let mut removed = 0;
-            for path in created {
+            for (_, path) in pairs {
                 let ok = if path.is_dir() {
                     std::fs::remove_dir_all(path).is_ok()
                 } else {
@@ -179,11 +178,8 @@ fn execute_forward(action: &UndoAction, root_mode: bool) -> String {
                 }
                 if std::fs::rename(original, trash_file).is_ok() {
                     // Re-create the .trashinfo file
-                    let info_content = format!(
-                        "[Trash Info]\nPath={}\nDeletionDate={}\n",
-                        original.display(),
-                        chrono_now(),
-                    );
+                    let info_content =
+                        crate::file_ops::trashinfo_contents(original, &chrono_now());
                     let _ = std::fs::write(trash_info, info_content);
                     trashed += 1;
                 }
@@ -192,16 +188,20 @@ fn execute_forward(action: &UndoAction, root_mode: bool) -> String {
         }
         UndoAction::Create(paths) => {
             let mut created = 0;
-            for path in paths {
-                // We can only recreate empty files/folders
-                if path.extension().is_none() || path.to_string_lossy().ends_with('/') {
-                    if std::fs::create_dir_all(path).is_ok() {
-                        created += 1;
-                    }
+            for (path, is_dir) in paths {
+                // We can only recreate empty files/folders. create_new: never
+                // truncate something that took the name in the meantime.
+                let ok = if *is_dir {
+                    std::fs::create_dir(path).is_ok()
                 } else {
-                    if std::fs::write(path, "").is_ok() {
-                        created += 1;
-                    }
+                    std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(path)
+                        .is_ok()
+                };
+                if ok {
+                    created += 1;
                 }
             }
             format!("Re-created {created} item(s)")
@@ -226,13 +226,18 @@ fn execute_forward(action: &UndoAction, root_mode: bool) -> String {
             }
             format!("Re-moved {moved} item(s)")
         }
-        UndoAction::Copy { sources, created } => {
+        UndoAction::Copy(pairs) => {
             let mut copied = 0;
-            for (src, dst) in sources.iter().zip(created.iter()) {
+            for (src, dst) in pairs {
+                // Undo removed the copy; if something else has the name now,
+                // leave it alone.
+                if dst.symlink_metadata().is_ok() {
+                    continue;
+                }
                 let ok = if src.is_dir() {
                     crate::file_ops::copy_dir_recursive(src, dst).is_ok()
                 } else {
-                    std::fs::copy(src, dst).is_ok()
+                    crate::file_ops::copy_file(src, dst).is_ok()
                 };
                 if ok {
                     copied += 1;

@@ -373,6 +373,20 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                 state.shift = mods_depressed & 1 != 0;
                 state.logo = mods_depressed & 64 != 0; // Mod4 / Super
             }
+            // Focus left with a key still down (Alt+Tab, a compositor
+            // shortcut): its release goes to whoever has focus now, so the
+            // key would stay "held" here and keep the loop redrawing at
+            // 60 fps forever. The compositor re-sends modifiers on enter.
+            // `key_pressed` stays: a press and a leave can arrive in one
+            // batch and that press was ours.
+            wl_keyboard::Event::Leave { .. } => {
+                state.held_key = None;
+                state.repeat_started = false;
+                state.ctrl = false;
+                state.shift = false;
+                state.logo = false;
+                state.frame_done = true;
+            }
             _ => {}
         }
     }
@@ -427,7 +441,16 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         match event {
-            wl_data_device::Event::Enter { surface, x, y, .. } => {
+            // An offer object arrives with every selection change and every
+            // drag that enters. Nothing here reads them, so each is released
+            // as soon as it is superseded instead of piling up.
+            wl_data_device::Event::Selection { id: Some(offer) } => offer.destroy(),
+            wl_data_device::Event::Enter {
+                surface, x, y, id, ..
+            } => {
+                if let Some(old) = std::mem::replace(&mut state.dnd_offer, id) {
+                    old.destroy();
+                }
                 if state.surface.as_ref() == Some(&surface) {
                     state.dnd_over_self = true;
                     state.dnd_cursor_x = x;
@@ -443,10 +466,16 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for State {
                 }
             }
             wl_data_device::Event::Leave => {
+                if let Some(offer) = state.dnd_offer.take() {
+                    offer.destroy();
+                }
                 state.dnd_over_self = false;
                 state.frame_done = true;
             }
             wl_data_device::Event::Drop => {
+                if let Some(offer) = state.dnd_offer.take() {
+                    offer.destroy();
+                }
                 if state.dnd_over_self {
                     state.dnd_drop_on_self = true;
                     state.frame_done = true;
@@ -464,7 +493,7 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for State {
 impl Dispatch<wl_data_source::WlDataSource, ()> for State {
     fn event(
         state: &mut Self,
-        _source: &wl_data_source::WlDataSource,
+        source: &wl_data_source::WlDataSource,
         event: wl_data_source::Event,
         _: &(),
         _: &Connection,
@@ -473,19 +502,25 @@ impl Dispatch<wl_data_source::WlDataSource, ()> for State {
         match event {
             wl_data_source::Event::Send { mime_type, fd } => {
                 use std::io::Write;
+                use std::os::unix::ffi::OsStrExt;
                 let mut file = std::fs::File::from(fd);
                 if mime_type == "text/uri-list" {
+                    // RFC 3986: a raw space, '#', '%' or non-ASCII byte makes
+                    // the receiver cut or misread the path.
                     for path in &state.dnd_paths {
-                        let uri = format!("file://{}\r\n", path.display());
+                        let uri = format!(
+                            "file://{}\r\n",
+                            crate::file_ops::percent_encode_path(path)
+                        );
                         let _ = file.write_all(uri.as_bytes());
                     }
                 } else if mime_type == "text/plain" {
-                    let text: Vec<String> = state
-                        .dnd_paths
-                        .iter()
-                        .map(|p| p.display().to_string())
-                        .collect();
-                    let _ = file.write_all(text.join("\n").as_bytes());
+                    for (i, path) in state.dnd_paths.iter().enumerate() {
+                        if i > 0 {
+                            let _ = file.write_all(b"\n");
+                        }
+                        let _ = file.write_all(path.as_os_str().as_bytes());
+                    }
                 }
             }
             wl_data_source::Event::DndFinished | wl_data_source::Event::Cancelled => {
@@ -493,6 +528,8 @@ impl Dispatch<wl_data_source::WlDataSource, ()> for State {
                 state.dnd_paths.clear();
                 state.dnd_over_self = false;
                 state.frame_done = true;
+                // One source per drag; without this each drag leaks one.
+                source.destroy();
             }
             _ => {}
         }

@@ -24,9 +24,11 @@ pub enum OpProgress {
         total: usize,
         name: String,
     },
-    /// All items processed. Carries undo + sudo-fallback data.
+    /// All items processed. Carries undo + sudo-fallback data. `created` is
+    /// the (source, target) pairs that actually landed, so redo can replay
+    /// exactly those even after a skip or a failure.
     Done {
-        created: Vec<PathBuf>,
+        created: Vec<(PathBuf, PathBuf)>,
         perm_fails: Vec<PathBuf>,
         cancelled: bool,
     },
@@ -50,7 +52,10 @@ pub struct OpHandle {
     pub dest: PathBuf,
     pub mode: crate::conflict::PasteMode,
     /// Buffered Done payload — captured when the Done event arrives.
-    pub done_payload: Option<(Vec<PathBuf>, Vec<PathBuf>, bool)>,
+    pub done_payload: Option<(Vec<(PathBuf, PathBuf)>, Vec<PathBuf>, bool)>,
+    /// True when the op came from a clipboard paste, which emptied the
+    /// clipboard and gets it back when the copy finishes.
+    pub rearm_clipboard: bool,
     /// If this op started from a drag-drop onto a non-current tab, reload
     /// that tab too on completion.
     pub reload_tab: Option<usize>,
@@ -144,6 +149,7 @@ fn spawn_worker(
         dest,
         mode,
         done_payload: None,
+        rearm_clipboard: false,
         reload_tab: None,
     }
 }
@@ -177,7 +183,7 @@ fn run_copy(
         let res = if src.is_dir() {
             crate::file_ops::copy_dir_recursive(&src, &target)
         } else {
-            std::fs::copy(&src, &target).map(|_| ())
+            crate::file_ops::copy_file(&src, &target)
         };
         match res {
             Ok(()) => {
@@ -188,7 +194,7 @@ fn run_copy(
                         std::fs::remove_file(&src)
                     };
                 }
-                created.push(target);
+                created.push((src, target));
             }
             Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
                 perm_fails.push(src);

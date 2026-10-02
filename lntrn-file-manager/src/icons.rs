@@ -166,9 +166,17 @@ impl IconCache {
     /// each texture immutably to build draw calls without borrow conflicts.
     pub fn ensure_svg_path(&mut self, svg_path: &Path, gpu: &GpuContext, tex: &TexturePass) {
         let key = format!("svg:{}", svg_path.display());
-        if !self.cache.contains_key(&key) {
-            if let Some(t) = rasterize_svg(svg_path, gpu, tex) {
-                self.cache.insert(key.clone(), t);
+        if !self.cache.contains_key(&key) && !self.failed.contains(&key) {
+            match rasterize_svg(svg_path, gpu, tex) {
+                Some(t) => {
+                    self.cache.insert(key, t);
+                }
+                // Remember the failure: this is called every frame while
+                // the picker is open, and a broken SVG was re-read and
+                // re-parsed each time.
+                None => {
+                    self.failed.insert(key);
+                }
             }
         }
     }
@@ -219,7 +227,16 @@ fn cache_key(entry: &FileEntry) -> String {
         // Include xattr icon/color in cache key so custom folders get unique textures
         let icon = get_folder_icon(&entry.path).unwrap_or_default();
         let color = get_folder_color(&entry.path).unwrap_or_default();
-        format!("dir:{}:{}:{}", entry.name.to_lowercase(), icon, color)
+        // The name only matters for the seven standard folders. Keying on
+        // every folder's own name rasterised the same yellow SVG once per
+        // distinct name, on the render thread, into a texture never freed.
+        let name = entry.name.to_lowercase();
+        let standard = if STANDARD_FOLDERS.contains(&name.as_str()) {
+            name.as_str()
+        } else {
+            ""
+        };
+        format!("dir:{standard}:{icon}:{color}")
     } else if thumb_kind(&entry.name).is_some() {
         // Per-file thumbnail, keyed on size + mtime (already stat'd by the
         // listing — no syscall here) so a file that changed on disk gets a
@@ -242,6 +259,17 @@ fn cache_key(entry: &FileEntry) -> String {
         format!("type:{ext}")
     }
 }
+
+/// Folder names that have an icon of their own (see `folder_icon_embedded`).
+const STANDARD_FOLDERS: [&str; 7] = [
+    "desktop",
+    "documents",
+    "downloads",
+    "music",
+    "pictures",
+    "projects",
+    "videos",
+];
 
 // ── Loading ──────────────────────────────────────────────────────────────────
 
@@ -351,6 +379,12 @@ pub fn set_folder_color(path: &Path, color: &str) {
 
 fn read_xattr(path: &Path, attr: &str) -> Option<String> {
     use std::ffi::CString;
+    // Called for every visible folder on every frame. On a slow mount each
+    // getxattr is a device round-trip that can queue behind a whole-file
+    // download (jmtpfs), and MTP has no user xattrs to find anyway.
+    if crate::fs::is_slow_path(path) {
+        return None;
+    }
     let c_path = CString::new(path.as_os_str().as_encoded_bytes()).ok()?;
     let c_name = CString::new(attr).ok()?;
     let mut buf = [0u8; 512];
@@ -416,11 +450,13 @@ fn rasterize_svg_bytes(data: &[u8], gpu: &GpuContext, tex: &TexturePass) -> Opti
     let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
     resvg::render(&tree, transform, &mut pixmap.as_mut());
 
-    Some(tex.upload(gpu, pixmap.data(), w, h))
+    // Straight alpha for the texture shader (tiny-skia output is
+    // premultiplied; uploading it as-is darkened every soft edge).
+    Some(tex.upload(gpu, &pixmap.take_demultiplied(), w, h))
 }
 
 fn rasterize_svg(path: &Path, gpu: &GpuContext, tex: &TexturePass) -> Option<GpuTexture> {
-    let data = std::fs::read(path).ok()?;
+    let data = crate::thumbs::read_svg_capped(path)?;
     rasterize_svg_bytes(&data, gpu, tex)
 }
 

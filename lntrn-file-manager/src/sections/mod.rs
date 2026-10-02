@@ -146,24 +146,111 @@ pub fn breadcrumb_segments(path: &std::path::Path, _s: f32) -> Vec<(String, std:
 
 // ── Text helpers ────────────────────────────────────────────────────────────
 
-pub fn wrap_lines(name: &str, max_w: f32, char_w: f32) -> Vec<String> {
-    let max_chars = (max_w / char_w).floor().max(1.0) as usize;
-    let chars: Vec<char> = name.chars().collect();
-    if chars.len() <= max_chars {
+// Grid labels are cut and wrapped by measured width, which costs several
+// text-layout lookups per label. Done afresh every frame for every visible
+// label, that overflows the text engine's layout cache on a large grid and
+// every label is then re-shaped every frame. The result for a given
+// (name, width, font size) never changes, so remember it.
+type LabelKey = (String, u32, u32);
+const LABEL_MEMO_MAX: usize = 4096;
+thread_local! {
+    static LABEL_FIT: std::cell::RefCell<std::collections::HashMap<LabelKey, (String, f32)>> =
+        Default::default();
+    static LABEL_WRAP: std::cell::RefCell<std::collections::HashMap<LabelKey, Vec<(String, f32)>>> =
+        Default::default();
+}
+
+/// `name` cut to fit `max_w` (with an ellipsis if needed) and the measured
+/// width of what is left. Memoised.
+pub fn fit_label(
+    text: &mut lntrn_render::TextRenderer,
+    name: &str,
+    max_w: f32,
+    font_px: f32,
+) -> (String, f32) {
+    let key = (name.to_string(), max_w.to_bits(), font_px.to_bits());
+    if let Some(hit) = LABEL_FIT.with(|m| m.borrow().get(&key).cloned()) {
+        return hit;
+    }
+    let shown = truncate_to_width(text, name, max_w, font_px);
+    let width = text.measure_width(&shown, font_px);
+    LABEL_FIT.with(|m| {
+        let mut m = m.borrow_mut();
+        if m.len() >= LABEL_MEMO_MAX {
+            m.clear();
+        }
+        m.insert(key, (shown.clone(), width));
+    });
+    (shown, width)
+}
+
+/// `name` wrapped to lines that fit `max_w`, each with its measured width.
+/// Memoised.
+pub fn wrap_label(
+    text: &mut lntrn_render::TextRenderer,
+    name: &str,
+    max_w: f32,
+    font_px: f32,
+) -> Vec<(String, f32)> {
+    let key = (name.to_string(), max_w.to_bits(), font_px.to_bits());
+    if let Some(hit) = LABEL_WRAP.with(|m| m.borrow().get(&key).cloned()) {
+        return hit;
+    }
+    let lines: Vec<(String, f32)> = wrap_to_width(text, name, max_w, font_px)
+        .into_iter()
+        .map(|line| {
+            let width = text.measure_width(&line, font_px);
+            (line, width)
+        })
+        .collect();
+    LABEL_WRAP.with(|m| {
+        let mut m = m.borrow_mut();
+        if m.len() >= LABEL_MEMO_MAX {
+            m.clear();
+        }
+        m.insert(key, lines.clone());
+    });
+    lines
+}
+
+/// Break `name` into lines that each fit `max_w`, by MEASURED width. A
+/// fixed per-character estimate is wrong both ways: wide names overflow the
+/// line (and wrap again on their own, onto the next label), multi-byte names
+/// break early.
+pub fn wrap_to_width(
+    text: &mut lntrn_render::TextRenderer,
+    name: &str,
+    max_w: f32,
+    font_px: f32,
+) -> Vec<String> {
+    if text.measure_width(name, font_px) <= max_w {
         return vec![name.to_string()];
     }
+    let chars: Vec<char> = name.chars().collect();
     let mut lines = Vec::new();
     let mut start = 0;
     while start < chars.len() {
-        let end = (start + max_chars).min(chars.len());
-        lines.push(chars[start..end].iter().collect());
-        start = end;
+        // Longest run from `start` that fits; always at least one char.
+        let (mut lo, mut hi) = (1usize, chars.len() - start);
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2;
+            let candidate: String = chars[start..start + mid].iter().collect();
+            if text.measure_width(&candidate, font_px) <= max_w {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        lines.push(chars[start..start + lo].iter().collect());
+        start += lo;
     }
     lines
 }
 
 pub fn truncate_with_ellipsis(name: &str, max_w: f32, char_w: f32) -> String {
-    let est_w = name.len() as f32 * char_w;
+    // Chars, not bytes: a multi-byte name that fits must not get an
+    // ellipsis for nothing.
+    let est_w = name.chars().count() as f32 * char_w;
     if est_w <= max_w {
         return name.to_string();
     }

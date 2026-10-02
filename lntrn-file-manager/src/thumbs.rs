@@ -97,7 +97,9 @@ impl ThumbPool {
 
     fn push(queue: &(Mutex<VecDeque<ThumbJob>>, Condvar), job: ThumbJob) {
         let (lock, cv) = queue;
-        lock.lock().unwrap().push_back(job);
+        lock.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push_back(job);
         cv.notify_one();
     }
 
@@ -107,7 +109,12 @@ impl ThumbPool {
     pub fn clear_queue(&self) -> Vec<String> {
         let mut keys = Vec::new();
         for (lock, _) in [&*self.queue, &*self.slow_queue] {
-            keys.extend(lock.lock().unwrap().drain(..).map(|j| j.key));
+            keys.extend(
+                lock.lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .drain(..)
+                    .map(|j| j.key),
+            );
         }
         keys
     }
@@ -121,15 +128,21 @@ fn worker_loop(queue: Arc<(Mutex<VecDeque<ThumbJob>>, Condvar)>, tx: mpsc::Sende
     loop {
         let job = {
             let (lock, cv) = &*queue;
-            let mut q = lock.lock().unwrap();
+            let mut q = lock.lock().unwrap_or_else(|e| e.into_inner());
             loop {
                 if let Some(job) = q.pop_front() {
                     break job;
                 }
-                q = cv.wait(q).unwrap();
+                q = cv.wait(q).unwrap_or_else(|e| e.into_inner());
             }
         };
-        let rgba = generate(&job.path, job.kind);
+        // A decoder panicking on a corrupt file must still produce a result:
+        // otherwise the key sits in `pending` forever (the window redraws at
+        // 60 fps waiting for it) and this worker is gone for good.
+        let rgba = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            generate(&job.path, job.kind)
+        }))
+        .unwrap_or(None);
         if tx.send(ThumbResult { key: job.key, rgba }).is_err() {
             return; // IconCache dropped — shutting down
         }
@@ -158,7 +171,29 @@ fn cache_file(path: &Path) -> PathBuf {
             }
         }
     }
-    thumb_cache_dir().join(format!("{:016x}.png", h.finish()))
+    thumb_cache_dir().join(format!("{CACHE_GEN}{:016x}.png", h.finish()))
+}
+
+/// Prefix of the current generation of cache files. Bump it when the pixels
+/// a given source produces change (v2: EXIF orientation applied, SVG alpha
+/// no longer premultiplied twice); files of older generations are removed
+/// the first time a thumbnail is generated.
+const CACHE_GEN: &str = "v2-";
+
+fn prune_old_generations() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let Ok(rd) = std::fs::read_dir(thumb_cache_dir()) else {
+            return;
+        };
+        for entry in rd.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.ends_with(".png") && !name.starts_with(CACHE_GEN) {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    });
 }
 
 // ── Generation ───────────────────────────────────────────────────────────────
@@ -167,6 +202,12 @@ fn cache_file(path: &Path) -> PathBuf {
 /// worker threads (no GPU access); also used synchronously for the rare
 /// custom-folder-icon path in icons.rs.
 pub fn generate(path: &Path, kind: ThumbKind) -> Option<(Vec<u8>, u32, u32)> {
+    // Regular files only. A FIFO named *.png blocks the worker forever on
+    // open; a symlink to /dev/zero reads without end.
+    if !std::fs::metadata(path).is_ok_and(|m| m.is_file()) {
+        return None;
+    }
+    prune_old_generations();
     let cached = cache_file(path);
     if let Ok(img) = image::open(&cached) {
         let rgba = img.to_rgba8();
@@ -203,15 +244,78 @@ fn decode_image_limited(path: &Path) -> Option<image::RgbaImage> {
 }
 
 fn decode_limited<R: std::io::BufRead + std::io::Seek>(
-    mut reader: image::ImageReader<R>,
+    reader: image::ImageReader<R>,
 ) -> Option<image::RgbaImage> {
+    // Shrink first, turn second: rotating the full-size decode would need a
+    // second full-size buffer per worker. The thumbnail box is square, so
+    // the result is the same picture.
+    let (img, orientation) = decode_unrotated(reader, MAX_DECODE_DIM, MAX_DECODE_BYTES)?;
+    let mut thumb = img.thumbnail(THUMB_SIZE, THUMB_SIZE);
+    thumb.apply_orientation(orientation);
+    Some(thumb.to_rgba8())
+}
+
+/// Decode within the given limits and turn the picture the way its EXIF
+/// orientation says — phone photos are stored sideways with a tag telling
+/// the viewer to rotate them. Shared with Quick Look.
+pub fn decode_oriented<R: std::io::BufRead + std::io::Seek>(
+    reader: image::ImageReader<R>,
+    max_dim: u32,
+    max_bytes: u64,
+) -> Option<image::DynamicImage> {
+    let (mut img, orientation) = decode_unrotated(reader, max_dim, max_bytes)?;
+    img.apply_orientation(orientation);
+    Some(img)
+}
+
+/// The decode itself, with the orientation the file asks for returned
+/// beside the still-unrotated image.
+fn decode_unrotated<R: std::io::BufRead + std::io::Seek>(
+    mut reader: image::ImageReader<R>,
+    max_dim: u32,
+    max_bytes: u64,
+) -> Option<(image::DynamicImage, image::metadata::Orientation)> {
+    use image::ImageDecoder;
     let mut limits = image::Limits::default();
-    limits.max_image_width = Some(MAX_DECODE_DIM);
-    limits.max_image_height = Some(MAX_DECODE_DIM);
-    limits.max_alloc = Some(MAX_DECODE_BYTES);
+    limits.max_image_width = Some(max_dim);
+    limits.max_image_height = Some(max_dim);
+    limits.max_alloc = Some(max_bytes);
     reader.limits(limits);
-    let img = reader.decode().ok()?;
-    Some(img.thumbnail(THUMB_SIZE, THUMB_SIZE).to_rgba8())
+    let mut decoder = reader.into_decoder().ok()?;
+    // `into_decoder` hands the limits to the decoder but skips the check of
+    // the output buffer that `decode()` adds on top; repeat it here.
+    if decoder.total_bytes() > max_bytes {
+        return None;
+    }
+    let orientation = decoder
+        .orientation()
+        .unwrap_or(image::metadata::Orientation::NoTransforms);
+    let img = image::DynamicImage::from_decoder(decoder).ok()?;
+    Some((img, orientation))
+}
+
+/// An SVG file's bytes, refusing anything that is not a regular file of a
+/// sane size (the whole file is read into memory and parsed).
+pub fn read_svg_capped(path: &Path) -> Option<Vec<u8>> {
+    use std::io::Read;
+    const MAX_SVG_BYTES: u64 = 16 * 1024 * 1024;
+    use std::os::unix::fs::OpenOptionsExt;
+    // Non-blocking open: opening a writer-less FIFO named *.svg would
+    // otherwise block for good before the is_file check can reject it (this
+    // runs on the render thread for custom folder icons). No effect on
+    // regular files. NOCTTY: never adopt a terminal behind a symlink.
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+        .open(path)
+        .ok()?;
+    let meta = file.metadata().ok()?;
+    if !meta.is_file() || meta.len() > MAX_SVG_BYTES {
+        return None;
+    }
+    let mut data = Vec::with_capacity(meta.len() as usize);
+    file.take(MAX_SVG_BYTES).read_to_end(&mut data).ok()?;
+    Some(data)
 }
 
 /// Cover art embedded in a WAV (`id3 ` chunk) or MP3 (APIC frame). Files
@@ -225,7 +329,7 @@ fn audio_artwork(path: &Path) -> Option<image::RgbaImage> {
 }
 
 fn rasterize_svg_file(path: &Path) -> Option<image::RgbaImage> {
-    let data = std::fs::read(path).ok()?;
+    let data = read_svg_capped(path)?;
     let tree = resvg::usvg::Tree::from_data(&data, &resvg::usvg::Options::default()).ok()?;
     let size = tree.size();
     let scale = (THUMB_SIZE as f32 / size.width()).min(THUMB_SIZE as f32 / size.height());
@@ -234,23 +338,33 @@ fn rasterize_svg_file(path: &Path) -> Option<image::RgbaImage> {
     let mut pixmap = resvg::tiny_skia::Pixmap::new(w, h)?;
     let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
     resvg::render(&tree, transform, &mut pixmap.as_mut());
-    image::RgbaImage::from_raw(w, h, pixmap.take())
+    // tiny-skia renders premultiplied alpha; everything downstream (PNG
+    // cache, the texture shader) expects straight alpha.
+    image::RgbaImage::from_raw(w, h, pixmap.take_demultiplied())
 }
 
 /// Extract a representative frame via ffmpeg, already scaled to thumb size.
 fn video_frame(path: &Path) -> Option<image::RgbaImage> {
+    let png = ffmpeg_frame_png(path, Some(THUMB_SIZE))?;
+    Some(image::load_from_memory(&png).ok()?.to_rgba8())
+}
+
+/// One frame of a video as PNG bytes, optionally scaled to fit `fit` px.
+/// Taken one second in (past the usual black first frame); a clip shorter
+/// than that yields nothing there, so the first frame is the fallback.
+/// Shared with Quick Look. `None` covers both "no ffmpeg" and "no frame".
+pub fn ffmpeg_frame_png(path: &Path, fit: Option<u32>) -> Option<Vec<u8>> {
     use std::process::Command;
-    let output = Command::new("ffmpeg")
-        .args(["-ss", "1", "-i"])
-        .arg(path)
-        .args([
-            "-frames:v",
-            "1",
-            "-vf",
-            &format!(
-                "scale={s}:{s}:force_original_aspect_ratio=decrease",
-                s = THUMB_SIZE
-            ),
+    for seek in ["1", "0"] {
+        let mut cmd = Command::new("ffmpeg");
+        cmd.args(["-ss", seek, "-i"]).arg(path).args(["-frames:v", "1"]);
+        if let Some(s) = fit {
+            cmd.args([
+                "-vf",
+                &format!("scale={s}:{s}:force_original_aspect_ratio=decrease"),
+            ]);
+        }
+        cmd.args([
             "-f",
             "image2pipe",
             "-vcodec",
@@ -258,13 +372,13 @@ fn video_frame(path: &Path) -> Option<image::RgbaImage> {
             "-loglevel",
             "error",
             "pipe:1",
-        ])
-        .output()
-        .ok()?;
-    if !output.status.success() || output.stdout.is_empty() {
-        return None;
+        ]);
+        let output = cmd.output().ok()?;
+        if output.status.success() && !output.stdout.is_empty() {
+            return Some(output.stdout);
+        }
     }
-    Some(image::load_from_memory(&output.stdout).ok()?.to_rgba8())
+    None
 }
 
 #[cfg(test)]

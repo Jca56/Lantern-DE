@@ -29,6 +29,9 @@ pub struct RemoteIndex {
     /// Relative path → last-known remote doc (tombstones included, exactly
     /// like a live listing).
     pub docs: HashMap<String, FileDoc>,
+    /// Changed since load or the last save (a quiet delta poll changes nothing).
+    #[serde(skip)]
+    dirty: bool,
 }
 
 impl RemoteIndex {
@@ -46,23 +49,32 @@ impl RemoteIndex {
         }
     }
 
-    pub fn save(&self) -> anyhow::Result<()> {
+    /// Write the mirror if anything changed since the last save.
+    pub fn save(&mut self) -> anyhow::Result<()> {
+        if !self.dirty {
+            return Ok(());
+        }
         let path = Self::path();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&path, serde_json::to_string(self)?)?;
+        super::write_atomic(&path, serde_json::to_string(self)?.as_bytes(), 0o644)?;
+        self.dirty = false;
         Ok(())
     }
 
     fn bump_cursor(&mut self, doc: &FileDoc) {
         if let Some(ts) = doc.updated_at {
-            self.cursor_ms = self.cursor_ms.max(ts);
+            if ts > self.cursor_ms {
+                self.cursor_ms = ts;
+                self.dirty = true;
+            }
         }
     }
 
     /// Replace the whole mirror with a fresh full listing.
     pub fn seed_full(&mut self, docs: Vec<FileDoc>) {
+        self.dirty = true;
         self.docs.clear();
         for d in docs {
             self.bump_cursor(&d);
@@ -82,7 +94,12 @@ impl RemoteIndex {
             if differs {
                 changed += 1;
             }
-            self.docs.insert(d.path.clone(), d);
+            // The overlap window re-delivers the same docs on every poll;
+            // only a real difference is worth a rewrite of the mirror.
+            if self.docs.get(&d.path) != Some(&d) {
+                self.dirty = true;
+                self.docs.insert(d.path.clone(), d);
+            }
         }
         changed
     }

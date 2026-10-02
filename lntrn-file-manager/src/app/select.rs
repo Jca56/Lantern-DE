@@ -62,8 +62,11 @@ impl App {
             return;
         }
 
-        // File branch — pick mode confirms on double-click only.
-        if is_double && is_pick {
+        // File branch — pick mode confirms on double-click only. A folder
+        // picker has nothing to confirm on a file: confirming would return
+        // the current folder, which is not what was double-clicked.
+        // And a Save picker's result is the typed name, not this file.
+        if is_double && self.double_click_confirms_file() {
             for e in &mut self.entries {
                 e.selected = false;
             }
@@ -87,7 +90,11 @@ impl App {
 
     // ── Pick mode methods ──────────────────────────────────────────────
 
+    /// Resolve the current selection into `pick_result`. Leaves it `None`
+    /// when nothing eligible is selected; a `Selected` result ends the
+    /// picker (the main loop exits on it).
     pub fn confirm_pick(&mut self) {
+        self.pick_result = None;
         let Some(ref pick) = self.pick else { return };
         // Gather both entries[].selected (List/Grid + top-level Tree rows)
         // and pick_tree_selection (nested Tree rows). Dedup by path.
@@ -102,7 +109,9 @@ impl App {
         };
         match pick.mode {
             PickType::Save => {
-                if !self.save_name_buf.is_empty() {
+                // Same rule as rename: a name, not a path. "../x" or "/x"
+                // would hand the caller a file outside the shown folder.
+                if super::is_plain_file_name(&self.save_name_buf) {
                     let path = self.current_dir.join(&self.save_name_buf);
                     self.pick_result = Some(PickResult::Selected(vec![path]));
                 }
@@ -151,6 +160,14 @@ impl App {
             }
         }
         self.pick_tree_selection.clear();
+    }
+
+    /// True in the picker modes where double-clicking a file row means
+    /// "choose this one and close": Open and Mixed.
+    pub fn double_click_confirms_file(&self) -> bool {
+        self.pick
+            .as_ref()
+            .is_some_and(|p| matches!(p.mode, PickType::Open | PickType::Mixed))
     }
 
     pub fn cancel_pick(&mut self) {

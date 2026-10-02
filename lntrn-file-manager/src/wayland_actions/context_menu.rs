@@ -131,6 +131,10 @@ pub(crate) fn handle_right_click(
     let Some((cx, cy)) = input.cursor() else {
         return;
     };
+    // Quick Look covers the window; the view underneath must not react.
+    if app.quick_look.is_some() {
+        return;
+    }
 
     // Rebuild the sidebar layout so hit-tests match what's currently on
     // screen (collapsed sections, favorites count, etc.).
@@ -207,7 +211,7 @@ pub(crate) fn handle_right_click(
             if !drive.removable {
                 items = vec![MenuItem::action(CTX_DRIVE_PROPERTIES, "Properties")];
             }
-            app.context_target = Some(ContextTarget::Drive(i));
+            app.context_target = Some(ContextTarget::Drive(drive.device.clone()));
             context_menu.set_scale(s);
             if let Some(backend) = popup_backend {
                 let lx = (cx / s) as f32;
@@ -563,10 +567,7 @@ pub(crate) fn handle_ctx_event(
                                 app.close_search();
                                 app.navigate_to(path);
                             } else {
-                                std::thread::spawn(move || {
-                                    let _ =
-                                        std::process::Command::new("xdg-open").arg(&path).spawn();
-                                });
+                                crate::desktop::xdg_open(path);
                             }
                         }
                     } else if let Some(ContextTarget::Path(path)) = app.context_target.clone() {
@@ -574,9 +575,7 @@ pub(crate) fn handle_ctx_event(
                         if path.is_dir() {
                             app.navigate_to(path);
                         } else {
-                            std::thread::spawn(move || {
-                                let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
-                            });
+                            crate::desktop::xdg_open(path);
                         }
                     } else {
                         app.open_selected();
@@ -658,7 +657,9 @@ pub(crate) fn handle_ctx_event(
                         _ => None,
                     };
                     if let Some(path) = path {
-                        crate::lantern_config::set_wallpaper(&path);
+                        if let Err(why) = crate::lantern_config::set_wallpaper(&path) {
+                            app.show_message("Couldn\u{2019}t set the wallpaper", why);
+                        }
                     }
                 }
                 CTX_DUPLICATE => app.duplicate_selected(),
@@ -701,8 +702,8 @@ pub(crate) fn handle_ctx_event(
                 }
                 CTX_PROPERTIES => {
                     // Drive context → drive properties dialog
-                    if let Some(ContextTarget::Drive(idx)) = app.context_target.clone() {
-                        app.open_drive_properties(idx);
+                    if let Some(ContextTarget::Drive(device)) = app.context_target.clone() {
+                        app.open_drive_properties(&device);
                     } else {
                         let path = if let Some(ref target) = app.context_target {
                             match target {
@@ -737,22 +738,22 @@ pub(crate) fn handle_ctx_event(
                     }
                 }
                 CTX_DRIVE_EJECT => {
-                    if let Some(ContextTarget::Drive(idx)) = app.context_target.clone() {
-                        app.eject_drive(idx);
+                    if let Some(ContextTarget::Drive(device)) = app.context_target.clone() {
+                        app.eject_drive(&device);
                     }
                 }
                 CTX_DRIVE_FORMAT => {
-                    if let Some(ContextTarget::Drive(idx)) = app.context_target.clone() {
-                        app.open_drive_format_dialog(idx);
+                    if let Some(ContextTarget::Drive(device)) = app.context_target.clone() {
+                        app.open_drive_format_dialog(&device);
                     }
                 }
                 CTX_DRIVE_PROPERTIES => {
-                    if let Some(ContextTarget::Drive(idx)) = app.context_target.clone() {
-                        app.open_drive_properties(idx);
+                    if let Some(ContextTarget::Drive(device)) = app.context_target.clone() {
+                        app.open_drive_properties(&device);
                     }
                 }
                 CTX_NEW_FOLDER => {
-                    let target = app.current_dir.join("New Folder");
+                    let target = free_name(&app.current_dir, "New Folder");
                     new_folder_or_prompt(app, target, None);
                 }
                 CTX_NEW_FOLDER_PLAIN
@@ -762,7 +763,7 @@ pub(crate) fn handle_ctx_event(
                 | CTX_NEW_FOLDER_GREEN
                 | CTX_NEW_FOLDER_BLUE
                 | CTX_NEW_FOLDER_PURPLE => {
-                    let target = app.current_dir.join("New Folder");
+                    let target = free_name(&app.current_dir, "New Folder");
                     let color: Option<&'static str> = match id {
                         CTX_NEW_FOLDER_RED => Some("red"),
                         CTX_NEW_FOLDER_ORANGE => Some("orange"),
@@ -775,7 +776,7 @@ pub(crate) fn handle_ctx_event(
                     new_folder_or_prompt(app, target, color);
                 }
                 CTX_NEW_FILE => {
-                    let target = app.current_dir.join("New File");
+                    let target = free_name(&app.current_dir, "New File");
                     new_file_or_prompt(app, target);
                 }
                 CTX_ADD_FAVORITE => {
@@ -850,6 +851,18 @@ pub(crate) fn handle_ctx_event(
     }
 }
 
+/// First of `base`, `base 2`, `base 3`… that is not taken in `dir`.
+fn free_name(dir: &std::path::Path, base: &str) -> PathBuf {
+    let mut target = dir.join(base);
+    let mut n = 2u32;
+    // symlink_metadata: a dangling symlink still occupies the name.
+    while target.symlink_metadata().is_ok() && n < 10_000 {
+        target = dir.join(format!("{base} {n}"));
+        n += 1;
+    }
+    target
+}
+
 /// Create a folder at `target`. Falls back to the sudo prompt on permission
 /// denied. On direct success: push undo, reload, focus rename. On sudo
 /// fallback: the file gets created later via sudo + a reload happens then,
@@ -868,7 +881,7 @@ fn new_folder_or_prompt(app: &mut App, target: PathBuf, color: Option<&'static s
                 crate::icons::set_folder_color(&target, c);
             }
             app.undo_stack
-                .push(crate::undo::UndoAction::Create(vec![target.clone()]));
+                .push(crate::undo::UndoAction::Create(vec![(target.clone(), true)]));
             app.reload();
             if let Some(idx) = app.entries.iter().position(|e| e.path == target) {
                 app.select_item(idx);
@@ -890,10 +903,16 @@ fn new_file_or_prompt(app: &mut App, target: PathBuf) {
         app.priv_run(crate::sudo::PendingPrivOp::NewFile(target));
         return;
     }
-    match std::fs::write(&target, "") {
-        Ok(()) => {
+    // create_new: an existing file (or a symlink) with this name is never
+    // truncated, whatever raced us to it.
+    let created = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&target);
+    match created {
+        Ok(_) => {
             app.undo_stack
-                .push(crate::undo::UndoAction::Create(vec![target]));
+                .push(crate::undo::UndoAction::Create(vec![(target, false)]));
             app.reload();
         }
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {

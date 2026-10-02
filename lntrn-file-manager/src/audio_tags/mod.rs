@@ -143,7 +143,19 @@ pub fn container_for(path: &Path) -> Option<Container> {
     }
 }
 
+/// Tag code opens what it is given, and the name alone decides that. A FIFO
+/// called `x.mp3` blocks forever on open; this runs on thumbnail workers for
+/// every audio file in a folder being browsed.
+fn require_regular_file(path: &Path) -> Result<(), String> {
+    match std::fs::metadata(path) {
+        Ok(m) if m.is_file() => Ok(()),
+        Ok(_) => Err("Not a regular file".into()),
+        Err(e) => Err(io_err(e)),
+    }
+}
+
 pub fn read(path: &Path) -> Result<AudioMeta, String> {
+    require_regular_file(path)?;
     match container_for(path).ok_or("Unsupported audio format")? {
         Container::Wav => wav::read(path),
         Container::Mp3 => mp3::read(path),
@@ -151,6 +163,7 @@ pub fn read(path: &Path) -> Result<AudioMeta, String> {
 }
 
 pub fn write(path: &Path, tags: &AudioTags) -> Result<(), String> {
+    require_regular_file(path)?;
     match container_for(path).ok_or("Unsupported audio format")? {
         Container::Wav => wav::write(path, tags),
         Container::Mp3 => mp3::write(path, tags),
@@ -167,21 +180,42 @@ pub(crate) fn replace_file(
     path: &Path,
     fill: impl FnOnce(&mut File, &mut File) -> io::Result<()>,
 ) -> Result<(), String> {
-    let dir = path.parent().unwrap_or(Path::new("."));
-    let name = path
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static SEQ: AtomicU32 = AtomicU32::new(0);
+
+    // Work on the real file. Renaming the temp onto a symlink would replace
+    // the LINK with a private copy and leave the library file untouched.
+    let real = std::fs::canonicalize(path).map_err(io_err)?;
+    let dir = real.parent().unwrap_or(Path::new(".")).to_path_buf();
+    let name = real
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-    let tmp: PathBuf = dir.join(format!(".{name}.lntrn-tmp"));
+    // Unique per save: two saves of the same file (dialog closed and
+    // reopened mid-save) must not write through one temp, and a temp left
+    // by a crash must not block the next save.
+    let tmp: PathBuf = dir.join(format!(
+        ".{name}.{}.{}.lntrn-tmp",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
     let result = (|| -> io::Result<()> {
-        let mut src = File::open(path)?;
+        let mut src = File::open(&real)?;
         let perms = src.metadata()?.permissions();
-        let mut dst = File::create(&tmp)?;
+        // create_new: never follow a symlink someone planted at the temp
+        // name. The mode is set at creation, not after the data is in.
+        let mut dst = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(perms.mode())
+            .open(&tmp)?;
         fill(&mut dst, &mut src)?;
         dst.flush()?;
         dst.sync_all()?;
+        // The umask may have trimmed the creation mode.
         std::fs::set_permissions(&tmp, perms)?;
-        std::fs::rename(&tmp, path)?;
+        std::fs::rename(&tmp, &real)?;
         Ok(())
     })();
     if result.is_err() {

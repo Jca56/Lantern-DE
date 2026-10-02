@@ -117,6 +117,9 @@ pub(crate) struct State {
     pub(crate) dnd_paths: Vec<std::path::PathBuf>,
     pub(crate) dnd_serial: u32,
     pub(crate) dnd_over_self: bool,
+    /// Offer of the drag currently over our surface; destroyed when it leaves
+    /// or drops (Fox does not accept external drops yet).
+    pub(crate) dnd_offer: Option<wayland_client::protocol::wl_data_offer::WlDataOffer>,
     pub(crate) dnd_drop_on_self: bool,
     pub(crate) dnd_cursor_x: f64,
     pub(crate) dnd_cursor_y: f64,
@@ -175,6 +178,7 @@ impl State {
             dnd_paths: Vec::new(),
             dnd_serial: 0,
             dnd_over_self: false,
+            dnd_offer: None,
             dnd_drop_on_self: false,
             dnd_cursor_x: 0.0,
             dnd_cursor_y: 0.0,
@@ -205,17 +209,10 @@ fn first_filter_ext(pick: &PickConfig) -> Option<String> {
         .filters
         .get(pick.active_filter)
         .or_else(|| pick.filters.first())?;
-    for pat in &filter.patterns {
-        if pat == "*" || pat == "*.*" {
-            continue;
-        }
-        if let Some(ext) = pat.strip_prefix("*.") {
-            if !ext.is_empty() && !ext.contains('*') {
-                return Some(ext.to_string());
-            }
-        }
-    }
-    None
+    filter
+        .patterns
+        .iter()
+        .find_map(|pat| crate::app::pattern_ext(pat))
 }
 
 /// File-manager context-menu style — matches the terminal's: a black panel
@@ -440,12 +437,13 @@ pub fn run(
     }
     app.init_cloud();
     if let Some(ref p) = pick {
+        // Before the first listing, so the file-type filter applies to it.
+        app.pick = Some(p.clone());
         if let Some(ref dir) = p.start_dir {
             app.navigate_to(dir.clone());
         } else {
             app.navigate_to_home();
         }
-        app.pick = Some(p.clone());
         app.view_mode = crate::app::ViewMode::Tree;
         // Anchor the tree at the start dir so clicking folders can update
         // current_dir (path bar / save target) without re-rooting the tree.
@@ -487,11 +485,19 @@ pub fn run(
             }
         }
         if !pinned.is_empty() {
-            // Prepend pinned tabs before the home tab
+            // Prepend pinned tabs before the home tab. The flat fields still
+            // describe that home/start tab, which now sits at index `n` —
+            // say so, or the first tab switch writes the start directory
+            // over the first pinned tab.
+            let n = pinned.len();
             pinned.append(&mut app.tabs);
             app.tabs = pinned;
-            app.current_tab = 0;
-            app.switch_tab(0);
+            app.current_tab = n;
+            // An explicit start directory stays the active tab; otherwise
+            // open on the first pinned one.
+            if start_dir.is_none() {
+                app.switch_tab(0);
+            }
         }
         // Restore split view exactly as it was left.
         app.split_ratio = settings.split_ratio.clamp(

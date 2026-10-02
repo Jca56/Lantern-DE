@@ -132,9 +132,30 @@ fn placeholder(path: &Path) -> FileInfo {
 
 /// Full probe. Runs on the worker thread only.
 fn build_info(path: &Path) -> FileInfo {
+    // Regular files only: opening a FIFO blocks this (single) worker for
+    // good, and every probe queued after it then waits forever.
+    // stat() itself never blocks on those, so the creation time still comes
+    // through for folders (the preview pane shows it).
+    let meta = std::fs::metadata(path).ok();
+    if !meta.as_ref().is_some_and(|m| m.is_file()) {
+        return FileInfo {
+            created: meta.and_then(|m| m.created().ok()),
+            ..placeholder(path)
+        };
+    }
     let ext = extension_of(path);
-    let type_name = type_name_from_ext(&ext);
-    let category = file_category(&ext);
+    let mut type_name = type_name_from_ext(&ext);
+    let mut category = file_category(&ext);
+    // ".ts" is TypeScript far more often than an MPEG transport stream.
+    // Only the stream's own 0x47 sync bytes (one per 188-byte packet) make
+    // it a video; otherwise it stays source code and ffprobe is left alone.
+    if ext == "ts" {
+        if is_mpeg_ts(path) {
+            type_name = "MPEG-TS Video".to_string();
+        } else {
+            category = FileCategory::Other;
+        }
+    }
 
     let dimensions = match category {
         FileCategory::Image => read_image_dimensions(path),
@@ -147,7 +168,7 @@ fn build_info(path: &Path) -> FileInfo {
         _ => (None, None),
     };
 
-    let created = std::fs::metadata(path).ok().and_then(|m| m.created().ok());
+    let created = meta.and_then(|m| m.created().ok());
 
     FileInfo {
         type_name,
@@ -156,6 +177,15 @@ fn build_info(path: &Path) -> FileInfo {
         created,
         probing: false,
     }
+}
+
+fn is_mpeg_ts(path: &Path) -> bool {
+    let mut head = [0u8; 189];
+    std::fs::File::open(path)
+        .and_then(|mut f| f.read_exact(&mut head))
+        .is_ok()
+        && head[0] == 0x47
+        && head[188] == 0x47
 }
 
 // ── File categories ─────────────────────────────────────────────────────────
@@ -203,7 +233,6 @@ fn type_name_from_ext(ext: &str) -> String {
         "flv" => "Flash Video",
         "wmv" => "WMV Video",
         "m4v" => "M4V Video",
-        "ts" => "MPEG-TS Video",
         "mpg" | "mpeg" => "MPEG Video",
         "3gp" => "3GP Video",
         // Audio
@@ -231,7 +260,8 @@ fn type_name_from_ext(ext: &str) -> String {
         "html" | "htm" => "HTML",
         "css" => "CSS Stylesheet",
         "js" => "JavaScript",
-        // "ts" already matched above as MPEG-TS Video
+        // A transport stream (rare) is told apart by content in build_info.
+        "ts" => "TypeScript",
         "rs" => "Rust Source",
         "py" => "Python Script",
         "sh" => "Shell Script",
@@ -412,7 +442,6 @@ fn parse_video_dims(json: &str) -> Option<(u32, u32)> {
     // Look for "width": N and "height": N in video stream
     // Simple parser — find "codec_type": "video" then grab width/height
     let video_start = json.find("\"codec_type\": \"video\"")?;
-    let _chunk = &json[..video_start + 200.min(json.len() - video_start)];
     // Search backwards from codec_type to find the stream start
     let stream_start = json[..video_start].rfind('{')?;
     let stream_end = json[video_start..].find('}').map(|i| video_start + i + 1)?;

@@ -73,6 +73,10 @@ pub fn normalize(input: &str) -> Option<KeyInfo> {
     let digits: String = compact.chars().take_while(|c| c.is_ascii_digit()).collect();
     if !digits.is_empty() {
         let n: usize = digits.parse().ok()?;
+        // Wheel positions only; also keeps the arithmetic below in range.
+        if !(1..=12).contains(&n) {
+            return None;
+        }
         let suffix = compact[digits.len()..].to_ascii_lowercase();
         return match suffix.as_str() {
             "a" => from_camelot(n, true),

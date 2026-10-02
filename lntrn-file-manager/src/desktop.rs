@@ -119,6 +119,7 @@ pub fn apps_for_extension(ext: &str) -> Vec<DesktopApp> {
 fn apps_for_mime(mime: &str) -> Vec<DesktopApp> {
     let dirs = desktop_dirs();
     let mut seen = HashMap::new(); // desktop_id → DesktopApp (dedup)
+    let mut decided = std::collections::HashSet::new();
 
     for dir in &dirs {
         let Ok(entries) = std::fs::read_dir(dir) else {
@@ -127,6 +128,14 @@ fn apps_for_mime(mime: &str) -> Vec<DesktopApp> {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) != Some("desktop") {
+                continue;
+            }
+            // Dirs are in priority order: the first file with an id decides,
+            // so a user-level override with Hidden=true masks the system one.
+            let Some(id) = path.file_stem().map(|s| s.to_string_lossy().to_string()) else {
+                continue;
+            };
+            if !decided.insert(id) {
                 continue;
             }
             if let Some(app) = parse_desktop_file(&path, mime) {
@@ -245,6 +254,10 @@ pub fn launch_app(exec: &str, file_path: &Path) {
         if let Some(parent) = log_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
+        // Every launched app's stderr lands here; keep one old generation.
+        if std::fs::metadata(&log_path).is_ok_and(|m| m.len() > LAUNCH_LOG_MAX) {
+            let _ = std::fs::rename(&log_path, log_path.with_extension("log.1"));
+        }
         let stderr_dest = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -273,6 +286,31 @@ pub fn launch_app(exec: &str, file_path: &Path) {
             Err(e) => eprintln!("[fox] launch_app: failed to spawn {bin:?}: {e}"),
         }
     });
+}
+
+const LAUNCH_LOG_MAX: u64 = 4 * 1024 * 1024;
+
+/// Spawn `cmd` detached from Fox's stdio and reap it when it exits. A child
+/// that is spawned and dropped stays a `<defunct>` row under Fox for as long
+/// as Fox runs, so the wait happens on a thread of its own.
+pub fn spawn_reaped(mut cmd: std::process::Command) {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+    cmd.stdin(Stdio::null()).stdout(Stdio::null());
+    cmd.process_group(0);
+    std::thread::spawn(move || match cmd.spawn() {
+        Ok(mut child) => {
+            let _ = child.wait();
+        }
+        Err(e) => eprintln!("[fox] failed to spawn {:?}: {e}", cmd.get_program()),
+    });
+}
+
+/// Hand a path to `xdg-open` — the fallback when we know no default app.
+pub fn xdg_open(path: impl AsRef<std::ffi::OsStr>) {
+    let mut cmd = std::process::Command::new("xdg-open");
+    cmd.arg(path);
+    spawn_reaped(cmd);
 }
 
 /// Directories to scan for .desktop files, in priority order.

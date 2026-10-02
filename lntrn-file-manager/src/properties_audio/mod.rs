@@ -286,7 +286,10 @@ impl AudioEdit {
     /// Collect thread results + upload textures. Called early in
     /// render_frame, before any texture borrows are taken.
     pub fn poll(&mut self, gpu: &GpuContext, tex: &TexturePass) {
-        if self.picking {
+        // Not while a save is in flight: the save's result resets the art
+        // state, and an artwork picked meanwhile would be shown as saved
+        // without ever having been written. It is collected right after.
+        if self.picking && !self.saving {
             let res = self.pick.lock().unwrap().take();
             if let Some(res) = res {
                 self.picking = false;
@@ -345,6 +348,11 @@ impl AudioEdit {
     // ── Input ───────────────────────────────────────────────────────────
 
     pub fn on_zone_pressed(&mut self, zone: u32) {
+        // A save is in flight with a snapshot of the fields. Anything typed
+        // or picked now would be wiped when its result lands.
+        if self.saving {
+            return;
+        }
         let field_end = ZONE_PROPS_AUDIO_FIELD_BASE + FIELD_COUNT as u32;
         match zone {
             z if (ZONE_PROPS_AUDIO_FIELD_BASE..field_end).contains(&z) => {
@@ -373,6 +381,9 @@ impl AudioEdit {
     }
 
     fn edit_key(&mut self, key: u32, ch: Option<char>) {
+        if self.saving {
+            return;
+        }
         let Some(i) = self.focused else { return };
         let buf = &mut self.bufs[i];
         let cur = &mut self.cursors[i];
@@ -441,7 +452,9 @@ pub fn handle_dialog_key(
             false
         }
         KEY_TAB => {
-            a.focus_step(if shift { -1 } else { 1 });
+            if !a.saving {
+                a.focus_step(if shift { -1 } else { 1 });
+            }
             false
         }
         _ => {

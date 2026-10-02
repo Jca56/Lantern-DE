@@ -13,6 +13,10 @@ use super::{id3, io_err, AudioFormat, AudioMeta, AudioTags, Container};
 /// Sanity cap for chunks we load into memory (tags, artwork).
 const MAX_META_CHUNK: u32 = 32 * 1024 * 1024;
 
+/// A real WAV has a few dozen chunks. A file of back-to-back empty chunks
+/// would otherwise cost one read and one Vec entry per 8 bytes of file.
+const MAX_CHUNKS: usize = 65_536;
+
 #[derive(Clone, Copy, Debug)]
 struct Chunk {
     id: [u8; 4],
@@ -62,6 +66,9 @@ fn walk(f: &File) -> Result<(Vec<Chunk>, u64), String> {
         let c = Chunk { id, offset: pos, size };
         pos = c.end();
         chunks.push(c);
+        if chunks.len() > MAX_CHUNKS {
+            return Err("WAV has too many chunks".into());
+        }
     }
     Ok((chunks, len))
 }
@@ -240,9 +247,11 @@ pub fn read(path: &Path) -> Result<AudioMeta, String> {
         }
     }
     if byte_rate == 0 {
-        byte_rate = format.sample_rate
-            * format.channels as u32
-            * (format.bits_per_sample.unwrap_or(0) as u32 / 8);
+        // Header fields are untrusted: no overflow panic on a crafted one.
+        byte_rate = format
+            .sample_rate
+            .saturating_mul(format.channels as u32)
+            .saturating_mul(format.bits_per_sample.unwrap_or(0) as u32 / 8);
     }
     if byte_rate > 0 && data_size > 0 {
         format.duration_secs = Some(data_size as f64 / byte_rate as f64);
@@ -315,6 +324,11 @@ pub fn write(path: &Path, tags: &AudioTags) -> Result<(), String> {
     set_info(&mut info, b"ICRD", &tags.year);
     set_info(&mut info, b"IGNR", &tags.genre);
     set_info(&mut info, b"ITRK", &tags.track);
+    // IPRT is the read-side fallback for the track. Where a file already
+    // has one it must follow ITRK, or a cleared track comes straight back.
+    if info.iter().any(|(k, _)| k == b"IPRT") {
+        set_info(&mut info, b"IPRT", &tags.track);
+    }
     let mut tail = chunk(b"LIST", &build_info(&info));
     tail.extend_from_slice(&chunk(b"id3 ", &tag.build(0)));
 
@@ -324,26 +338,32 @@ pub fn write(path: &Path, tags: &AudioTags) -> Result<(), String> {
         .copied()
         .filter(|c| !meta.iter().any(|m| m.offset == c.offset))
         .collect();
-    let keep_end = keep
-        .iter()
-        .map(|c| c.end())
-        .max()
-        .unwrap_or(12)
-        .min(len);
+    // `end()` counts the pad byte of an odd-sized chunk. When the last kept
+    // chunk is odd and the file stops without that pad (it happens), this is
+    // `len + 1`: one past the end. That is on purpose — the new tags must
+    // start on the even boundary, and both branches below supply the missing
+    // zero byte. (Clamping to `len` wrote them one byte early, where the
+    // next read could not find them.)
+    let keep_end = keep.iter().map(|c| c.end()).max().unwrap_or(12);
+    debug_assert!(keep_end <= len + 1);
     let in_place = meta.iter().all(|m| m.offset >= keep_end);
 
     if in_place {
+        // Every check before the first byte changes.
+        let new_len = keep_end + tail.len() as u64;
+        if new_len - 8 > u32::MAX as u64 {
+            return Err("WAV would exceed 4 GB".into());
+        }
         let f = OpenOptions::new()
             .read(true)
             .write(true)
             .open(path)
             .map_err(io_err)?;
-        f.set_len(keep_end).map_err(io_err)?;
+        // New tail first, trim after: a write that fails halfway leaves the
+        // file at its old length instead of already cut down. Writing past
+        // the end zero-fills the gap, which is exactly the missing pad byte.
         f.write_all_at(&tail, keep_end).map_err(io_err)?;
-        let new_len = keep_end + tail.len() as u64;
-        if new_len - 8 > u32::MAX as u64 {
-            return Err("WAV would exceed 4 GB".into());
-        }
+        f.set_len(new_len).map_err(io_err)?;
         f.write_all_at(&((new_len - 8) as u32).to_le_bytes(), 4)
             .map_err(io_err)?;
         f.sync_all().map_err(io_err)
@@ -359,8 +379,16 @@ pub fn write(path: &Path, tags: &AudioTags) -> Result<(), String> {
             dst.write_all(b"WAVE")?;
             for c in &keep {
                 src.seek(SeekFrom::Start(c.offset))?;
-                let mut part = Read::by_ref(src).take(c.end() - c.offset);
-                std::io::copy(&mut part, dst)?;
+                let want = c.end() - c.offset;
+                let mut part = Read::by_ref(src).take(want);
+                let copied = std::io::copy(&mut part, dst)?;
+                // The source ended before an odd chunk's pad byte: supply
+                // it, so what follows stays aligned and `total` holds.
+                if copied + 1 == want {
+                    dst.write_all(&[0])?;
+                } else if copied != want {
+                    return Err(std::io::ErrorKind::UnexpectedEof.into());
+                }
             }
             dst.write_all(&tail)?;
             Ok(())

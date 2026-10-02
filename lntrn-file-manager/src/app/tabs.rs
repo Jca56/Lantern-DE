@@ -13,6 +13,11 @@ impl App {
         self.view_mode = self.view_mode.cycle();
         if self.view_mode == ViewMode::Tree {
             self.rebuild_tree();
+        } else {
+            // Stale rows must not stay addressable from another view.
+            self.tree_entries.clear();
+            self.pending_tree_open = None;
+            self.drag_tree_item = None;
         }
     }
 
@@ -26,17 +31,47 @@ impl App {
     }
 
     pub fn rebuild_tree(&mut self) {
+        // Row indices held across the rebuild (a press waiting for its
+        // release, a drag in flight) follow their path, like `apply_listing`
+        // does for `entries` indices.
+        let path_at = |idx: Option<usize>| {
+            idx.and_then(|i| self.tree_entries.get(i))
+                .map(|te| te.entry.path.clone())
+        };
+        let pending_path = path_at(self.pending_tree_open);
+        let drag_path = path_at(self.drag_tree_item);
+
         self.tree_entries.clear();
         let root = self
             .tree_root
             .clone()
             .unwrap_or_else(|| self.current_dir.clone());
         self.build_tree_recursive(&root, 0);
+
+        let index_of = |p: Option<PathBuf>| {
+            p.and_then(|p| self.tree_entries.iter().position(|te| te.entry.path == p))
+        };
+        let pending = index_of(pending_path);
+        let drag = index_of(drag_path);
+        self.pending_tree_open = pending;
+        self.drag_tree_item = drag;
     }
 
     fn build_tree_recursive(&mut self, dir: &PathBuf, depth: usize) {
         let entries = fs::list_directory(dir, self.show_hidden, self.sort_by, self.sort_dir);
+        // The picker's file-type filter, same rule as `apply_listing`: folders
+        // always show, files only when they match the active filter.
+        let patterns = self.pick.as_ref().and_then(|pick| {
+            pick.filters
+                .get(pick.active_filter)
+                .map(|f| f.patterns.clone())
+        });
         for entry in entries {
+            if let Some(patterns) = &patterns {
+                if !entry.is_dir && !super::matches_filter(&entry.name, patterns) {
+                    continue;
+                }
+            }
             let is_expanded = entry.is_dir && self.tree_expanded.contains(&entry.path);
             let child_path = entry.path.clone();
             self.tree_entries.push(TreeEntry {
@@ -63,6 +98,18 @@ impl App {
         self.tabs.push(tab);
         self.current_tab = self.tabs.len() - 1;
         self.sync_from_tab();
+        self.after_tab_change();
+    }
+
+    /// The flat fields now describe another tab's directory: drop the indices
+    /// that pointed into the previous tab's listing and rebuild the tree,
+    /// which is not stored per tab.
+    fn after_tab_change(&mut self) {
+        self.selection_anchor = None;
+        self.last_click_idx = None;
+        if self.view_mode == ViewMode::Tree {
+            self.rebuild_tree();
+        }
     }
 
     pub fn switch_tab(&mut self, index: usize) {
@@ -73,6 +120,7 @@ impl App {
         self.sync_to_tab();
         self.current_tab = index;
         self.sync_from_tab();
+        self.after_tab_change();
     }
 
     pub fn toggle_pin(&mut self, index: usize) {
@@ -108,6 +156,7 @@ impl App {
             }
         }
         self.sync_from_tab();
+        self.after_tab_change();
     }
 
     pub fn tab_labels(&self) -> Vec<String> {

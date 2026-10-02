@@ -293,6 +293,134 @@ fn mp3_write_then_edit_in_place() {
     assert_eq!(mp3::read(&p).unwrap().tags, t2);
 }
 
+#[test]
+fn mp3_refuses_a_tag_that_claims_more_than_the_file() {
+    // "ID3" header saying the tag is 1 MiB, in front of 20 real frames.
+    let p = scratch("lying-tag.mp3");
+    let mut bytes = b"ID3\x03\x00\x00".to_vec();
+    bytes.extend_from_slice(&syncsafe_bytes(1024 * 1024));
+    bytes.extend(synth_mp3(20, false));
+    std::fs::write(&p, &bytes).unwrap();
+    assert!(mp3::write(&p, &sample_tags()).is_err());
+    // Not one byte of the file was touched.
+    assert_eq!(std::fs::read(&p).unwrap(), bytes);
+}
+
+#[test]
+fn id3_keeps_every_picture_when_art_is_untouched() {
+    let mut tag = id3::Id3Tag::new();
+    tag.apply(&sample_tags());
+    // A second picture (type 4, back cover) beside the front cover.
+    let mut back = vec![0u8];
+    back.extend_from_slice(b"image/png\0");
+    back.push(4);
+    back.push(0);
+    back.extend_from_slice(b"\x89PNG\r\n\x1a\nbackcover");
+    tag.frames.push(id3::Frame { id: *b"APIC", data: back });
+    let before: Vec<Vec<u8>> = tag
+        .frames
+        .iter()
+        .filter(|f| &f.id == b"APIC")
+        .map(|f| f.data.clone())
+        .collect();
+    assert_eq!(before.len(), 2);
+
+    // Title edit only: both pictures stay byte for byte.
+    let mut t = tag.to_tags();
+    t.title = "New title".into();
+    tag.apply(&t);
+    let after: Vec<Vec<u8>> = tag
+        .frames
+        .iter()
+        .filter(|f| &f.id == b"APIC")
+        .map(|f| f.data.clone())
+        .collect();
+    assert_eq!(after, before);
+
+    // Removing the art still removes it.
+    t.artwork = None;
+    tag.apply(&t);
+    assert!(!tag.frames.iter().any(|f| &f.id == b"APIC"));
+}
+
+#[test]
+fn id3v1_clearing_the_track_clears_it() {
+    let mut t = sample_tags();
+    let block = id3v1::build(&t, None);
+    assert_eq!(block[126], 3);
+    t.track.clear();
+    let cleared = id3v1::build(&t, Some(&block));
+    assert_eq!((cleared[125], cleared[126]), (0, 0));
+    assert!(id3v1::parse(&cleared).unwrap().track.is_empty());
+}
+
+#[test]
+fn keys_reject_out_of_range_numbers() {
+    assert!(keys::normalize("99999999999999999999m").is_none());
+    assert!(keys::normalize("18446744073709551615m").is_none());
+    assert!(keys::normalize("13A").is_none());
+    assert!(keys::normalize("0B").is_none());
+}
+
+/// `synth_wav` with an odd-sized data chunk and NO pad byte after it — some
+/// recorders write files like this.
+fn synth_wav_odd_unpadded(info_before_data: bool) -> Vec<u8> {
+    let mut w = synth_wav(info_before_data);
+    assert!(!info_before_data || w.windows(4).any(|x| x == b"LIST"));
+    if !info_before_data {
+        // Drop the trailing LIST so `data` is the last chunk.
+        let pos_list = w.windows(4).rposition(|x| x == b"LIST").unwrap();
+        w.truncate(pos_list);
+    }
+    // Shrink data by one byte: size field and the byte itself.
+    let pos_data = w.windows(4).position(|x| x == b"data").unwrap();
+    let size = u32::from_le_bytes(w[pos_data + 4..pos_data + 8].try_into().unwrap()) - 1;
+    w[pos_data + 4..pos_data + 8].copy_from_slice(&size.to_le_bytes());
+    w.pop();
+    let riff = (w.len() - 8) as u32;
+    w[4..8].copy_from_slice(&riff.to_le_bytes());
+    w
+}
+
+#[test]
+fn wav_odd_data_without_pad_keeps_tags_readable() {
+    for (name, lead) in [("odd-tail.wav", false), ("odd-lead.wav", true)] {
+        let p = scratch(name);
+        let orig = synth_wav_odd_unpadded(lead);
+        std::fs::write(&p, &orig).unwrap();
+        wav::write(&p, &sample_tags()).unwrap();
+        let after = std::fs::read(&p).unwrap();
+        assert_eq!(riff_size(&after), after.len() - 8, "{name}");
+        assert_eq!(wav::read(&p).unwrap().tags, sample_tags(), "{name}");
+        // The audio bytes are intact.
+        let pos = |b: &[u8]| b.windows(4).position(|x| x == b"data").unwrap();
+        let n = 44100 * 4 - 1;
+        assert_eq!(
+            &after[pos(&after) + 8..pos(&after) + 8 + n],
+            &orig[pos(&orig) + 8..pos(&orig) + 8 + n],
+            "{name}"
+        );
+        // A second save must not stack another copy of the tags.
+        wav::write(&p, &sample_tags()).unwrap();
+        let again = std::fs::read(&p).unwrap();
+        assert_eq!(again.len(), after.len(), "{name}");
+        assert_eq!(again.windows(4).filter(|w| w == b"id3 ").count(), 1, "{name}");
+    }
+}
+
+#[test]
+fn saving_through_a_symlink_updates_the_real_file() {
+    let real = scratch("linked-real.wav");
+    let link = scratch("linked-link.wav");
+    let _ = std::fs::remove_file(&link);
+    // Metadata before the audio forces the temp-file rewrite path.
+    std::fs::write(&real, synth_wav(true)).unwrap();
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    write(&link, &sample_tags()).unwrap();
+    assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+    assert_eq!(read(&real).unwrap().tags, sample_tags());
+}
+
 /// Manual check against real files: `LNTRN_AUDIO_TEST_FILES=a.wav:b.mp3
 /// cargo test -- --ignored real_files`. Each file is copied to the scratch
 /// dir, tagged, re-read, and left behind for ffprobe to inspect.

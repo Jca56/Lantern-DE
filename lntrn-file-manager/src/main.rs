@@ -4,6 +4,7 @@ mod checksums;
 mod clipboard;
 mod cloud;
 mod conflict;
+mod datetime;
 mod desktop;
 mod dialogs;
 mod dir_watch;
@@ -71,8 +72,12 @@ pub const ZONE_TAB_CLOSE_BASE: u32 = 550;
 pub const ZONE_TAB_NEW: u32 = 599;
 pub const ZONE_RENAME_INPUT: u32 = 30;
 pub const ZONE_PATH_INPUT: u32 = 31;
-pub const ZONE_FILE_ITEM_BASE: u32 = 1000;
-pub const ZONE_TREE_ITEM_BASE: u32 = 5000;
+// One id per listed entry, so these four families (see the P2 pair below)
+// sit a million apart, far above every fixed id. They used to be 1000 and
+// 5000: entry #4000 of a big folder landed in the tree range and its clicks
+// went to an unrelated tree row.
+pub const ZONE_FILE_ITEM_BASE: u32 = 1_000_000;
+pub const ZONE_TREE_ITEM_BASE: u32 = 2_000_000;
 
 // Context menu action IDs — file items
 pub const CTX_OPEN: u32 = 50;
@@ -214,8 +219,8 @@ pub const ZONE_P2_SEARCH: u32 = 94;
 pub const ZONE_P2_PATH: u32 = 95;
 // File/tree items of the unfocused pane — far above every active range so a
 // huge directory can't collide with other zone families.
-pub const ZONE_P2_FILE_BASE: u32 = 100_000;
-pub const ZONE_P2_TREE_BASE: u32 = 200_000;
+pub const ZONE_P2_FILE_BASE: u32 = 3_000_000;
+pub const ZONE_P2_TREE_BASE: u32 = 4_000_000;
 
 // ── Shared types ────────────────────────────────────────────────────────────
 
@@ -227,7 +232,11 @@ pub struct Gpu {
 }
 
 pub enum ClickAction {
+    /// Nothing claimed the press: the loop may start a window move or a
+    /// rubber band from it.
     None,
+    /// A modal overlay took the press. Nothing underneath reacts.
+    Consumed,
     Close,
     Minimize,
     ToggleMaximize,
@@ -292,8 +301,21 @@ fn parse_filter_arg(s: &str) -> Vec<FileFilter> {
         .collect()
 }
 
+/// Command-line arguments, lossily decoded for flag matching. `std::env::args`
+/// panics on an argument that is not valid UTF-8 (a path with such a name);
+/// paths are taken from the raw `args_os` values instead.
+fn lossy_args() -> Vec<String> {
+    std::env::args_os()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect()
+}
+
 fn parse_args() -> Option<PickConfig> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let raw: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    let args: Vec<String> = raw
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
     if args.is_empty() {
         return None;
     }
@@ -319,7 +341,7 @@ fn parse_args() -> Option<PickConfig> {
             }
             "--start-dir" => {
                 i += 1;
-                start_dir = args.get(i).map(PathBuf::from);
+                start_dir = raw.get(i).map(PathBuf::from);
             }
             "--filters" => {
                 i += 1;
@@ -350,7 +372,7 @@ fn parse_args() -> Option<PickConfig> {
 // ── Main ────────────────────────────────────────────────────────────────────
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    let args = lossy_args();
     if args.iter().any(|a| a == "--cloud-login") {
         std::process::exit(run_cloud_login(&args));
     }
@@ -360,14 +382,14 @@ fn main() {
         std::process::exit(0);
     }
 
-    let desktop = std::env::args().any(|a| a == "--desktop");
+    let desktop = args.iter().any(|a| a == "--desktop");
     let pick = parse_args();
     // First positional argument that isn't a recognised flag and
     // points at an existing directory becomes the initial cwd outside
     // pick mode. Lets `lntrn-file-manager ~/Documents` open Fox there.
     let start_dir = if pick.is_none() {
-        std::env::args().skip(1).find_map(|a| {
-            if a.starts_with('-') {
+        std::env::args_os().skip(1).find_map(|a| {
+            if a.to_string_lossy().starts_with('-') {
                 return None;
             }
             let p = PathBuf::from(&a);
@@ -393,12 +415,66 @@ fn main() {
             } // parent exits
             libc::setsid(); // new session leader
         }
+        detach_stdio();
     }
 
     if let Err(e) = wayland::run(pick, desktop, start_dir) {
         eprintln!("[fox] fatal: {e}");
         std::process::exit(1);
     }
+}
+
+/// After daemonizing, stdio still points at the terminal that launched us.
+/// Once that terminal closes, the next `eprintln!` hits a dead pty and
+/// panics. Point stdin at /dev/null and stdout/stderr at a log file.
+fn detach_stdio() {
+    use std::os::fd::AsRawFd;
+    let log = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".lantern/log/fox-desktop.log"));
+    let out = log
+        .and_then(|p| {
+            if let Some(parent) = p.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            std::fs::OpenOptions::new().create(true).append(true).open(p).ok()
+        })
+        .or_else(|| std::fs::OpenOptions::new().write(true).open("/dev/null").ok());
+    let null_in = std::fs::File::open("/dev/null").ok();
+    unsafe {
+        if let Some(f) = &null_in {
+            libc::dup2(f.as_raw_fd(), 0);
+        }
+        if let Some(f) = &out {
+            libc::dup2(f.as_raw_fd(), 1);
+            libc::dup2(f.as_raw_fd(), 2);
+        }
+    }
+}
+
+/// Read one line from stdin with terminal echo off (when stdin is a
+/// terminal), restoring the terminal afterwards whatever happens.
+fn read_password_line() -> std::io::Result<String> {
+    let tty = unsafe { libc::isatty(0) } == 1;
+    let mut saved: Option<libc::termios> = None;
+    if tty {
+        unsafe {
+            let mut t: libc::termios = std::mem::zeroed();
+            if libc::tcgetattr(0, &mut t) == 0 {
+                saved = Some(t);
+                t.c_lflag &= !libc::ECHO;
+                libc::tcsetattr(0, libc::TCSANOW, &t);
+            }
+        }
+    }
+    let mut buf = String::new();
+    let read = std::io::stdin().read_line(&mut buf);
+    if let Some(t) = saved {
+        unsafe {
+            libc::tcsetattr(0, libc::TCSANOW, &t);
+        }
+        eprintln!(); // the user's Enter was not echoed
+    }
+    read?;
+    Ok(buf.trim_end_matches('\n').trim_end_matches('\r').to_string())
 }
 
 /// Headless sign-in entry point: `lntrn-file-manager --cloud-login --email me@x.com`.
@@ -427,7 +503,8 @@ fn run_cloud_login(args: &[String]) -> i32 {
         Some(e) => e,
         None => {
             eprintln!("usage: lntrn-file-manager --cloud-login --email <email> [--password <pw>]");
-            eprintln!("       (if --password is omitted, password is read from stdin)");
+            eprintln!("       (if --password is omitted, password is read from stdin;");
+            eprintln!("        --password is visible to other processes via the command line)");
             return 2;
         }
     };
@@ -435,15 +512,14 @@ fn run_cloud_login(args: &[String]) -> i32 {
     let password = match password {
         Some(p) => p,
         None => {
-            eprintln!("password (will not echo on stdin):");
-            let mut buf = String::new();
-            if std::io::stdin().read_line(&mut buf).is_err() {
-                eprintln!("[fox-cloud] failed to read password from stdin");
-                return 2;
+            eprintln!("password:");
+            match read_password_line() {
+                Ok(p) => p,
+                Err(_) => {
+                    eprintln!("[fox-cloud] failed to read password from stdin");
+                    return 2;
+                }
             }
-            buf.trim_end_matches('\n')
-                .trim_end_matches('\r')
-                .to_string()
         }
     };
 

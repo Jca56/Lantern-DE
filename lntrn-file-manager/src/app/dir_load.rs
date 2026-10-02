@@ -54,6 +54,13 @@ impl App {
         }
     }
 
+    /// Forget the focused pane's in-flight listing (its thread still runs to
+    /// the end; only the result is no longer wanted).
+    pub(super) fn drop_focused_dir_load(&mut self) {
+        self.dir_loads
+            .retain(|l| l.target != DirLoadTarget::Focused);
+    }
+
     /// True while the focused pane is waiting on a listing — drives the
     /// "Loading…" state and keeps the event loop polling.
     pub fn dir_loading(&self) -> bool {
@@ -108,7 +115,9 @@ impl App {
                 if tab.path != load.dir {
                     return false;
                 }
-                tab.entries = keep_selection(&tab.entries, entries);
+                let fresh = keep_selection(&tab.entries, entries);
+                super::remap_parked(&mut split.parked_view, &tab.entries, &fresh);
+                tab.entries = fresh;
                 true
             }
         }
@@ -117,10 +126,11 @@ impl App {
 
 /// Carry the old listing's selection over to the fresh one.
 fn keep_selection(old: &[FileEntry], mut fresh: Vec<FileEntry>) -> Vec<FileEntry> {
-    let selected: Vec<&PathBuf> = old.iter().filter(|e| e.selected).map(|e| &e.path).collect();
+    let selected: std::collections::HashSet<&PathBuf> =
+        old.iter().filter(|e| e.selected).map(|e| &e.path).collect();
     if !selected.is_empty() {
         for e in &mut fresh {
-            e.selected = selected.contains(&&e.path);
+            e.selected = selected.contains(&e.path);
         }
     }
     fresh

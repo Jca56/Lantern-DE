@@ -130,35 +130,50 @@ impl App {
         self.phones = fs::detect_phones();
     }
 
-    pub fn eject_drive(&mut self, index: usize) {
-        let Some(drive) = self.drives.get(index).cloned() else {
-            return;
-        };
-        if let Err(msg) = fs::unmount_drive(&drive) {
-            self.show_message(format!("Couldn\u{2019}t eject {}", drive.name), msg);
-            return;
-        }
-        // If we were viewing it, navigate home
-        if self.current_dir.starts_with(&drive.mount_point) {
-            if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
-                self.navigate_to(home);
-            }
-        }
-        self.refresh_drives();
+    /// The drive currently at `device`, if it is still plugged in.
+    fn drive_by_device(&self, device: &str) -> Option<fs::Drive> {
+        self.drives.iter().find(|d| d.device == device).cloned()
     }
 
-    pub fn open_drive_format_dialog(&mut self, index: usize) {
-        let Some(drive) = self.drives.get(index).cloned() else {
+    pub fn eject_drive(&mut self, device: &str) {
+        let Some(drive) = self.drive_by_device(device) else {
+            return;
+        };
+        // Eject unmounts every partition of the disk and reports the first
+        // failure, so "Err" no longer means "nothing was unmounted": tidy up
+        // first, report after.
+        let result = fs::unmount_drive(&drive);
+        // If the folder being viewed went away with it, navigate home.
+        let gone = !fs::is_slow_path(&self.current_dir)
+            && (!self.current_dir.exists()
+                || (self.current_dir.starts_with(&drive.mount_point)
+                    && !fs::is_path_mounted(&drive.mount_point)));
+        if gone {
+            self.navigate_to_home();
+        }
+        self.refresh_drives();
+        if let Err(msg) = result {
+            self.show_message(format!("Couldn\u{2019}t eject {}", drive.name), msg);
+        }
+    }
+
+    pub fn open_drive_format_dialog(&mut self, device: &str) {
+        let Some(drive) = self.drive_by_device(device) else {
             return;
         };
         if !drive.removable {
             return;
         }
-        self.drive_dialog = Some(crate::dialogs::DriveDialog::ConfirmFormat { drive, error: None });
+        let disk_size = fs::drive_disk_size(&drive);
+        self.drive_dialog = Some(crate::dialogs::DriveDialog::ConfirmFormat {
+            drive,
+            disk_size,
+            error: None,
+        });
     }
 
-    pub fn open_drive_properties(&mut self, index: usize) {
-        let Some(drive) = self.drives.get(index).cloned() else {
+    pub fn open_drive_properties(&mut self, device: &str) {
+        let Some(drive) = self.drive_by_device(device) else {
             return;
         };
         self.drive_dialog = Some(crate::dialogs::DriveDialog::Properties { drive });
@@ -171,11 +186,32 @@ impl App {
     /// Confirm the active Format dialog. Runs the format and either dismisses
     /// the dialog on success, or stores the error message into the dialog.
     pub fn confirm_drive_format(&mut self) {
-        let Some(crate::dialogs::DriveDialog::ConfirmFormat { drive, .. }) =
-            self.drive_dialog.clone()
+        let Some(crate::dialogs::DriveDialog::ConfirmFormat {
+            drive, disk_size, ..
+        }) = self.drive_dialog.clone()
         else {
             return;
         };
+        // The dialog holds a snapshot from when it opened. Before wiping
+        // anything, check that the same disk is still behind that device
+        // name: a stick swapped while the dialog sat open reuses /dev/sdX.
+        let still_there = fs::detect_drives().into_iter().any(|d| {
+            d.device == drive.device
+                && d.parent_disk == drive.parent_disk
+                && d.removable
+                && d.name == drive.name
+                && fs::drive_disk_size(&d) == disk_size
+        });
+        if !still_there {
+            if let Some(crate::dialogs::DriveDialog::ConfirmFormat { error, .. }) =
+                self.drive_dialog.as_mut()
+            {
+                *error = Some(
+                    "This drive changed or was unplugged. Close this and try again.".to_string(),
+                );
+            }
+            return;
+        }
         match fs::format_drive_ext4(&drive, "") {
             Ok(()) => {
                 self.drive_dialog = None;
@@ -199,7 +235,12 @@ impl App {
             return;
         };
         match fs::mount_phone(&phone) {
-            Ok(()) => self.navigate_to(phone.mount_point),
+            Ok(()) => {
+                // So the sidebar row says "Connected" now, not at the next
+                // two-second device poll.
+                self.refresh_phones();
+                self.navigate_to(phone.mount_point)
+            }
             Err(msg) => self.show_message(format!("Couldn\u{2019}t open {}", phone.name), msg),
         }
     }

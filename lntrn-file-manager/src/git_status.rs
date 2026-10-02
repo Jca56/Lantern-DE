@@ -105,6 +105,10 @@ fn scan(dir: &Path) -> (Option<String>, HashMap<PathBuf, GitMark>) {
         return (None, HashMap::new());
     };
     let root = PathBuf::from(root.trim_end());
+    // git reports the real path; `dir` may have been reached through a
+    // symlink. Compare against the real path, key the marks by `dir` (what
+    // the listing's entry paths are built from).
+    let real_dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
     let branch = git_stdout(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
         .map(|b| b.trim_end().to_string())
         .filter(|b| !b.is_empty());
@@ -126,11 +130,14 @@ fn scan(dir: &Path) -> (Option<String>, HashMap<PathBuf, GitMark>) {
             } else {
                 GitMark::Modified
             };
-            let abs = root.join(rel.trim_start().trim_end_matches('/'));
+            // Exactly one separator space after XY; a name may start with
+            // spaces of its own.
+            let rel = rel.strip_prefix(' ').unwrap_or(rel);
+            let abs = root.join(rel.trim_end_matches('/'));
             // Badge the entry the user can actually see: the path itself if
             // it sits directly in `dir`, else the top-level subdir of `dir`
             // that contains it. Modified outranks Untracked when both occur.
-            let Ok(below) = abs.strip_prefix(dir) else {
+            let Ok(below) = abs.strip_prefix(&real_dir) else {
                 continue;
             };
             let Some(first) = below.components().next() else {
@@ -157,6 +164,14 @@ fn scan(dir: &Path) -> (Option<String>, HashMap<PathBuf, GitMark>) {
 
 fn git_stdout(dir: &Path, args: &[&str]) -> Option<String> {
     let out = std::process::Command::new("git")
+        // A badge scan must never run a program named by the folder's own
+        // .git/config: `git status` executes core.fsmonitor as a hook.
+        // (filter.<name>.clean is not covered by this — see AUDIT fs-1.)
+        .args(["-c", "core.fsmonitor=false"])
+        // And never take the index lock: status would rewrite .git/index,
+        // which the watcher sees, which re-runs status — and it can make the
+        // user's own git command fail with "index.lock exists".
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .arg("-C")
         .arg(dir)
         .args(args)

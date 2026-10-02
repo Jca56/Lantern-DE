@@ -9,19 +9,46 @@ use std::path::Path;
 /// `wallpaper` overrides so the new image shows on every output. The
 /// compositor polls the file's mtime and live-reloads within ~500ms —
 /// no IPC or restart needed.
-pub fn set_wallpaper(image: &Path) -> bool {
-    let Some(cfg_path) = lntrn_theme::lantern_config_path() else {
-        return false;
-    };
-    let Ok(content) = std::fs::read_to_string(&cfg_path) else {
-        return false;
-    };
+pub fn set_wallpaper(image: &Path) -> Result<(), &'static str> {
+    // The compositor reads this line without unescaping it, so a name that
+    // needs escaping cannot be expressed at all. Refuse BEFORE patching:
+    // patching would already have dropped the per-monitor overrides and the
+    // compositor would fall back to its default picture.
+    let shown = image.to_string_lossy();
+    if shown.contains(['"', '\\']) || shown.chars().any(char::is_control) {
+        return Err(
+            "This file\u{2019}s name contains a quote, a backslash or a line break, \
+             which the wallpaper setting can\u{2019}t hold. Rename the file and try again.",
+        );
+    }
+    let cfg_path = lntrn_theme::lantern_config_path().ok_or("Lantern\u{2019}s config file wasn\u{2019}t found.")?;
+    let content = std::fs::read_to_string(&cfg_path)
+        .map_err(|_| "Lantern\u{2019}s config file couldn\u{2019}t be read.")?;
     let patched = patch_wallpaper_toml(&content, image);
-    std::fs::write(&cfg_path, patched).is_ok()
+    std::fs::write(&cfg_path, patched).map_err(|_| "Lantern\u{2019}s config file couldn\u{2019}t be written.")
+}
+
+/// Escape a value for a TOML basic (double-quoted) string. A file name can
+/// hold quotes, backslashes and newlines; written raw they would end the
+/// string early and let the rest of the name become config.
+fn toml_escape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            c if c.is_control() => out.push_str(&format!("\\u{:04X}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 fn patch_wallpaper_toml(content: &str, image: &Path) -> String {
-    let new_line = format!("wallpaper = \"{}\"", image.display());
+    let new_line = format!(
+        "wallpaper = \"{}\"",
+        toml_escape(&image.to_string_lossy())
+    );
     let mut out: Vec<String> = Vec::new();
     let mut section = String::new();
     let mut wrote = false;
@@ -106,6 +133,17 @@ border_width = 2
         assert!(got.contains("border_width = 2"));
         // Only the [appearance] occurrence remains.
         assert_eq!(got.matches("wallpaper =").count(), 1);
+    }
+
+    #[test]
+    fn escapes_names_that_would_break_out_of_the_string() {
+        let evil = PathBuf::from("/p/a\"\nevil = \"x\\.png");
+        let got = patch_wallpaper_toml("[appearance]\n", &evil);
+        // Still exactly one line for the key, nothing injected after it.
+        assert_eq!(
+            got,
+            "[appearance]\nwallpaper = \"/p/a\\\"\\u000Aevil = \\\"x\\\\.png\"\n"
+        );
     }
 
     #[test]

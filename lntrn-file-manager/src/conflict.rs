@@ -38,9 +38,9 @@ pub struct PendingPaste {
     /// Original full source list — kept so the clipboard can be re-armed
     /// on Copy mode after the paste completes.
     pub originals: Vec<PathBuf>,
-    /// Successfully created targets (for Copy undo). Populated by the
-    /// background copy worker on completion.
-    pub created: Vec<PathBuf>,
+    /// True when this paste took the clipboard (Ctrl+V), false for a
+    /// drag-drop. Only a clipboard paste hands the clipboard back afterwards.
+    pub from_clipboard: bool,
     /// Successful (src, dst) pairs (for Cut undo). Cut runs inline since
     /// fs::rename is atomic; no worker needed.
     pub moves: Vec<(PathBuf, PathBuf)>,
@@ -66,13 +66,28 @@ impl PendingPaste {
             remaining: sources.clone(),
             apply_to_all: None,
             originals: sources,
-            created: Vec::new(),
+            from_clipboard: false,
             moves: Vec::new(),
             perm_fails: Vec::new(),
             xdev_pairs: Vec::new(),
             resolved_pairs: Vec::new(),
             reload_tab: None,
         }
+    }
+
+    /// True if an earlier item of this paste was already assigned `target`
+    /// and its copy is still deferred to the worker — the name is taken even
+    /// though nothing exists on disk yet.
+    pub fn is_reserved(&self, target: &Path) -> bool {
+        self.resolved_pairs
+            .iter()
+            .chain(&self.xdev_pairs)
+            .any(|(_, t)| t == target)
+    }
+
+    /// "Keep Both" name that is free on disk and not claimed by this paste.
+    pub fn keep_both_path(&self, target: &Path) -> PathBuf {
+        unique_keep_both_path(target, |p| self.is_reserved(p))
     }
 }
 
@@ -113,8 +128,10 @@ impl ConflictMeta {
 
 /// Generate a "Keep Both" target by suffixing the basename: foo.txt → foo (2).txt.
 /// Counts up until a free slot is found, capped at 1000 to avoid loops.
-pub fn unique_keep_both_path(target: &Path) -> PathBuf {
-    if !target.exists() {
+/// `reserved` reports names that are spoken for but not on disk yet.
+pub fn unique_keep_both_path(target: &Path, reserved: impl Fn(&Path) -> bool) -> PathBuf {
+    let taken = |p: &Path| p.exists() || reserved(p);
+    if !taken(target) {
         return target.to_path_buf();
     }
     let parent = target.parent().unwrap_or(Path::new("."));
@@ -128,7 +145,7 @@ pub fn unique_keep_both_path(target: &Path) -> PathBuf {
         .unwrap_or_default();
     for n in 2u32..1000 {
         let candidate = parent.join(format!("{stem} ({n}){ext}"));
-        if !candidate.exists() {
+        if !taken(&candidate) {
             return candidate;
         }
     }

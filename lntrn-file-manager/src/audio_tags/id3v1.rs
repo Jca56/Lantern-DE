@@ -65,7 +65,12 @@ pub fn build(t: &AudioTags, existing: Option<&[u8]>) -> [u8; LEN] {
         .next()
         .and_then(|n| n.trim().parse().ok())
         .unwrap_or(0);
-    if track > 0 {
+    // v1.1 keeps the track in the comment's last two bytes (a zero, then
+    // the number). Write it when there is one to set, and also when the
+    // block is already v1.1 — otherwise a cleared track survives here and
+    // is read back as the track on the next load. A v1.0 block's full
+    // 30-byte comment is left alone.
+    if track > 0 || out[125] == 0 {
         out[125] = 0;
         out[126] = track;
     }

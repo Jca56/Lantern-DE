@@ -4,7 +4,7 @@ use lntrn_ui::gpu::{FontSize, FoxPalette, ScrollArea, TextLabel};
 use crate::fs::FileEntry;
 use crate::layout::{icon_size, item_size};
 
-use super::{selection_tint, truncate_with_ellipsis, wrap_lines};
+use super::{fit_label, selection_tint, wrap_label};
 
 // ── Content grid ────────────────────────────────────────────────────────────
 
@@ -190,7 +190,9 @@ pub fn draw_content_grid(
         let label_y = y + top_pad + icsz + 2.0 * s;
         let min_margin = 2.0 * s;
         let max_label_w = isz - min_margin * 2.0;
-        let char_w = label_font * 0.52;
+        // Lines are cut a hair short of the limit they are queued with (see
+        // the exact-width clip note in views.rs).
+        let fit_w = (max_label_w - 2.0 * s).max(1.0);
 
         // Skip label for item being renamed (TextInput draws instead)
         if renaming == Some(index) {
@@ -201,12 +203,11 @@ pub fn draw_content_grid(
         if label_y >= content_top && label_y + label_font <= content_bottom {
             let label_color = palette.text.with_alpha(alpha);
             if entry.selected {
-                let lines = wrap_lines(&entry.name, max_label_w, char_w);
+                let lines = wrap_label(text, &entry.name, fit_w, label_font);
                 let line_h = label_font * 1.25;
-                for (li, line) in lines.iter().enumerate() {
+                for (li, (line, line_w)) in lines.iter().enumerate() {
                     let ly = label_y + li as f32 * line_h;
-                    let est_w = line.len() as f32 * char_w;
-                    let lx = (x + (isz - est_w) * 0.5).max(x + min_margin);
+                    let lx = (x + (isz - line_w) * 0.5).max(x + min_margin);
                     TextLabel::new(line, lx, ly)
                         .size(FontSize::Custom(label_font))
                         .color(label_color)
@@ -214,9 +215,8 @@ pub fn draw_content_grid(
                         .draw(text, screen.0, screen.1);
                 }
             } else {
-                let display_name = truncate_with_ellipsis(&entry.name, max_label_w, char_w);
-                let est_w = display_name.len() as f32 * char_w;
-                let label_x = (x + (isz - est_w) * 0.5).max(x + min_margin);
+                let (display_name, name_w) = fit_label(text, &entry.name, fit_w, label_font);
+                let label_x = (x + (isz - name_w) * 0.5).max(x + min_margin);
                 TextLabel::new(&display_name, label_x, label_y)
                     .size(FontSize::Custom(label_font))
                     .color(label_color)

@@ -13,6 +13,10 @@ mod split;
 mod tabs;
 
 pub use dir_load::DirLoadTarget;
+pub(crate) use split::remap_parked;
+pub(crate) use edit::{
+    floor_boundary, is_plain_file_name, is_same_entry, next_boundary, prev_boundary,
+};
 pub use split::{PaneView, SplitState};
 
 /// Which pane of the split view. `Left` is the primary pane (tabs, sidebar
@@ -97,8 +101,10 @@ pub enum ContextTarget {
     Path(PathBuf),
     /// Right-clicked on empty content area
     Empty,
-    /// Right-clicked on a sidebar drive entry (index into app.drives)
-    Drive(usize),
+    /// Right-clicked on a sidebar drive entry, by device path. The drive
+    /// list is rebuilt every two seconds, so an index would go stale while
+    /// the menu is open and Eject/Format could hit a different drive.
+    Drive(String),
     /// Right-clicked on a sidebar favorite entry (index into app.favorites)
     Favorite(usize),
 }
@@ -497,8 +503,11 @@ pub(super) fn search_recursive(
     };
 
     for entry in entries {
-        // Check cancellation
-        if cancel.try_recv().is_ok() {
+        // Check cancellation. The sender lives for the whole search and is
+        // dropped right after signalling, so a disconnected channel means
+        // "cancelled" too — that is what every parent frame of the recursion
+        // sees once the one message has been consumed.
+        if !matches!(cancel.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty)) {
             return;
         }
 
@@ -555,32 +564,90 @@ pub(super) fn first_filter_ext_of(pick: &PickConfig) -> Option<String> {
         .filters
         .get(pick.active_filter)
         .or_else(|| pick.filters.first())?;
-    for pat in &filter.patterns {
-        if pat == "*" || pat == "*.*" {
-            continue;
-        }
-        if let Some(ext) = pat.strip_prefix("*.") {
-            if !ext.is_empty() && !ext.contains('*') {
-                return Some(ext.to_string());
+    filter.patterns.iter().find_map(|pat| pattern_ext(pat))
+}
+
+/// The extension a `*.ext` filter pattern stands for, lowercased. Also reads
+/// the case-insensitive form GTK and Firefox send through the portal
+/// (`*.[pP][nN][gG]` → `png`). `None` for `*`, `*.*`, MIME types and any
+/// glob this matcher cannot evaluate.
+pub(crate) fn pattern_ext(pat: &str) -> Option<String> {
+    let chars: Vec<char> = pat.strip_prefix("*.")?.chars().collect();
+    let mut ext = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            // "[pP]": the same letter in both cases.
+            '[' => {
+                let (a, b) = (*chars.get(i + 1)?, *chars.get(i + 2)?);
+                if chars.get(i + 3) != Some(&']') || !a.to_lowercase().eq(b.to_lowercase()) {
+                    return None;
+                }
+                ext.extend(a.to_lowercase());
+                i += 4;
+            }
+            ']' | '*' | '?' | '/' => return None,
+            c => {
+                ext.extend(c.to_lowercase());
+                i += 1;
             }
         }
     }
-    None
+    (!ext.is_empty()).then_some(ext)
 }
 
+/// Does `name` pass a picker filter? A pattern this matcher cannot read (a
+/// MIME type such as `image/png`, an elaborate glob) lets everything
+/// through: showing too many files is harmless, hiding all of them leaves a
+/// picker in which nothing can be picked.
 pub(super) fn matches_filter(name: &str, patterns: &[String]) -> bool {
-    for pat in patterns {
+    let name = name.to_lowercase();
+    patterns.iter().any(|pat| {
         if pat == "*" || pat == "*.*" {
             return true;
         }
-        if let Some(ext) = pat.strip_prefix("*.") {
-            if name
-                .to_lowercase()
-                .ends_with(&format!(".{}", ext.to_lowercase()))
-            {
-                return true;
-            }
+        match pattern_ext(pat) {
+            Some(ext) => name.ends_with(&format!(".{ext}")),
+            // A bare file name ("Makefile") is an exact match.
+            None if !pat.contains(['*', '?', '[', ']', '/']) => name == pat.to_lowercase(),
+            None => true,
         }
+    })
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::*;
+
+    fn pats(p: &[&str]) -> Vec<String> {
+        p.iter().map(|s| s.to_string()).collect()
     }
-    false
+
+    #[test]
+    fn plain_and_case_class_extensions() {
+        assert_eq!(pattern_ext("*.png").as_deref(), Some("png"));
+        assert_eq!(pattern_ext("*.PNG").as_deref(), Some("png"));
+        assert_eq!(pattern_ext("*.[pP][nN][gG]").as_deref(), Some("png"));
+        assert_eq!(pattern_ext("*.tar.gz").as_deref(), Some("tar.gz"));
+        assert_eq!(pattern_ext("*"), None);
+        assert_eq!(pattern_ext("*.*"), None);
+        assert_eq!(pattern_ext("image/png"), None);
+        assert_eq!(pattern_ext("*.[ab]"), None);
+        assert_eq!(pattern_ext("*.[pP"), None);
+    }
+
+    #[test]
+    fn filters_match_what_they_can_and_fail_open_on_the_rest() {
+        assert!(matches_filter("Cat.PNG", &pats(&["*.png", "*.jpg"])));
+        assert!(!matches_filter("notes.txt", &pats(&["*.png", "*.jpg"])));
+        assert!(matches_filter("cat.png", &pats(&["*.[pP][nN][gG]"])));
+        assert!(!matches_filter("cat.jpg", &pats(&["*.[pP][nN][gG]"])));
+        // MIME types and globs we can't read must not hide every file.
+        assert!(matches_filter("cat.png", &pats(&["image/png"])));
+        assert!(matches_filter("anything", &pats(&["img_??.raw"])));
+        // A bare name is an exact match.
+        assert!(matches_filter("Makefile", &pats(&["Makefile"])));
+        assert!(!matches_filter("Makefile.bak", &pats(&["Makefile"])));
+        assert!(!matches_filter("x.png", &[]));
+    }
 }

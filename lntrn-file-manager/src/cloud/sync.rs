@@ -114,6 +114,9 @@ fn run_loop(
     // 429 backoff: first pause 10 min, doubling to a 2 h cap.
     const BACKOFF_START: Duration = Duration::from_secs(600);
     const BACKOFF_CAP: Duration = Duration::from_secs(7200);
+    // A full list that failed for a non-quota reason is retried after this
+    // long, not on the very next loop turn.
+    const FULL_RETRY: Duration = Duration::from_secs(900);
 
     let mut last_poll = std::time::Instant::now();
     let mut last_full = std::time::Instant::now();
@@ -127,7 +130,7 @@ fn run_loop(
 
     // Startup: full pull-then-reconcile so a freshly-signed-in machine (and
     // the index mirror) catch up with the cloud before the user looks at it.
-    if let Outcome::RateLimited = sync_pass(&authed, &status, &mut index, true) {
+    if let (Outcome::RateLimited, _) = sync_pass(&authed, &status, &mut index, true) {
         super::log_line(&format!(
             "quota exhausted (429) — sync paused {}s",
             backoff_len.as_secs()
@@ -168,17 +171,30 @@ fn run_loop(
         let full_due = last_full.elapsed() >= FULL_EVERY;
         let poll_due = last_poll.elapsed() >= POLL_EVERY;
         if pending_dirty || poll_due || full_due {
-            match sync_pass(&authed, &status, &mut index, full_due) {
+            let (outcome, listed) = sync_pass(&authed, &status, &mut index, full_due);
+            // A full list bills a read per document the moment it succeeds,
+            // whatever the reconcile after it does. `full_due` used to be
+            // cleared only when the whole pass succeeded, so six hours in,
+            // one file that kept failing turned every loop turn into a full
+            // list of the collection. Now: a list that went through is done
+            // for six hours (per-file retries run on the cheap delta passes);
+            // only a list that itself failed is retried, after FULL_RETRY.
+            if full_due {
+                let now = std::time::Instant::now();
+                if listed {
+                    last_full = now;
+                } else if matches!(outcome, Outcome::Err) {
+                    last_full = now.checked_sub(FULL_EVERY - FULL_RETRY).unwrap_or(now);
+                }
+            }
+            match outcome {
                 Outcome::Ok => {
                     pending_dirty = false;
                     backoff_len = BACKOFF_START;
-                    if full_due {
-                        last_full = std::time::Instant::now();
-                    }
                 }
                 Outcome::RateLimited => {
                     super::log_line(&format!(
-                        "quota exhausted (429) — sync paused {}s",
+                        "quota exhausted (429/402) — sync paused {}s",
                         backoff_len.as_secs()
                     ));
                     backoff_until = Some(std::time::Instant::now() + backoff_len);
@@ -204,13 +220,14 @@ enum Outcome {
 }
 
 /// One sync pass: refresh the remote mirror (full list or ~1-read delta
-/// query), persist it, then three-way reconcile against it.
+/// query), persist it, then three-way reconcile against it. The bool says
+/// whether the remote fetch itself went through (and was billed).
 fn sync_pass(
     authed: &Authed,
     status: &Arc<Mutex<SyncStatus>>,
     index: &mut super::remote_index::RemoteIndex,
     full: bool,
-) -> Outcome {
+) -> (Outcome, bool) {
     *status.lock().unwrap() = SyncStatus::Syncing;
 
     let fetched = if full {
@@ -226,22 +243,25 @@ fn sync_pass(
         })
     };
     if let Err(e) = fetched {
-        return classify_failure(status, &e);
+        return (classify_failure(status, &e), false);
     }
     let _ = index.save();
 
-    match super::reconcile::reconcile_with(authed, &index.docs) {
+    let outcome = match super::reconcile::reconcile_with(authed, &index.docs) {
         Ok(()) => {
             *status.lock().unwrap() = SyncStatus::Idle;
             Outcome::Ok
         }
         Err(e) => classify_failure(status, &e),
-    }
+    };
+    (outcome, true)
 }
 
 fn classify_failure(status: &Arc<Mutex<SyncStatus>>, e: &anyhow::Error) -> Outcome {
     super::log_line(&format!("reconcile failed: {e}"));
-    if format!("{e:#}").contains("429") {
+    // Matched on ureq's exact wording for an HTTP status error: a bare "429"
+    // also turns up inside URLs, sha256 hex and file names in the message.
+    if super::reconcile::is_quota_error(&format!("{e:#}")) {
         *status.lock().unwrap() = SyncStatus::RateLimited;
         Outcome::RateLimited
     } else {

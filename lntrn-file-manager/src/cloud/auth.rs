@@ -58,6 +58,37 @@ fn parse_expires_in(s: &str) -> u64 {
     s.parse::<u64>().unwrap_or(3600)
 }
 
+/// ureq prints the request URL in a transport error, and ours carries the API
+/// key as a query parameter. Keep the reason, drop the URL, so the key never
+/// reaches the log or the login dialog.
+fn transport_msg(e: &ureq::Error) -> String {
+    match e {
+        ureq::Error::Transport(t) => {
+            let mut out = match t.message() {
+                Some(m) => format!("{}: {m}", t.kind()),
+                None => t.kind().to_string(),
+            };
+            // The real cause ("timed out", "Connection refused") lives in
+            // the source; it carries no URL.
+            if let Some(source) = std::error::Error::source(t) {
+                out.push_str(&format!(": {source}"));
+            }
+            out
+        }
+        ureq::Error::Status(code, _) => format!("status code {code}"),
+    }
+}
+
+/// Firebase's answers that mean the refresh token itself is no good. Anything
+/// else (5xx, 429, a proxy hiccup) is transient and must not sign the user out.
+const REVOKED: &[&str] = &[
+    "TOKEN_EXPIRED",
+    "INVALID_REFRESH_TOKEN",
+    "USER_DISABLED",
+    "USER_NOT_FOUND",
+    "INVALID_GRANT",
+];
+
 fn map_err_body(body: &str) -> String {
     match serde_json::from_str::<FirebaseError>(body) {
         Ok(e) => e.error.message,
@@ -77,13 +108,13 @@ pub fn sign_in(cfg: &CloudConfig, email: &str, password: &str) -> anyhow::Result
         "returnSecureToken": true,
     });
 
-    let resp = match ureq::post(&url).send_json(body) {
+    let resp = match super::http::agent().post(&url).send_json(body) {
         Ok(r) => r,
         Err(ureq::Error::Status(_code, r)) => {
             let body = r.into_string().unwrap_or_default();
             anyhow::bail!("sign-in failed: {}", map_err_body(&body));
         }
-        Err(e) => anyhow::bail!("sign-in transport error: {e}"),
+        Err(e) => anyhow::bail!("sign-in transport error: {}", transport_msg(&e)),
     };
 
     let parsed: SignInResponse = resp.into_json()?;
@@ -107,20 +138,24 @@ pub fn refresh(cfg: &CloudConfig, session: &mut Session) -> anyhow::Result<()> {
         cfg.api_key
     );
 
-    let resp = match ureq::post(&url)
+    let resp = match super::http::agent()
+        .post(&url)
         .set("Content-Type", "application/x-www-form-urlencoded")
         .send_string(&format!(
             "grant_type=refresh_token&refresh_token={}",
             urlencoding::encode(&session.refresh_token)
         )) {
         Ok(r) => r,
-        Err(ureq::Error::Status(_code, r)) => {
+        Err(ureq::Error::Status(code, r)) => {
             let body = r.into_string().unwrap_or_default();
+            let msg = map_err_body(&body);
             // Refresh token revoked / invalid — drop the cached session.
-            Session::forget();
-            anyhow::bail!("token refresh failed: {}", map_err_body(&body));
+            if matches!(code, 400 | 401 | 403) && REVOKED.iter().any(|m| msg.contains(m)) {
+                Session::forget();
+            }
+            anyhow::bail!("token refresh failed: status code {code}: {msg}");
         }
-        Err(e) => anyhow::bail!("token refresh transport error: {e}"),
+        Err(e) => anyhow::bail!("token refresh transport error: {}", transport_msg(&e)),
     };
 
     let parsed: RefreshResponse = resp.into_json()?;

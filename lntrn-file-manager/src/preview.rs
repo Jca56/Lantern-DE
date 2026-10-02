@@ -87,8 +87,7 @@ pub fn draw_preview_pane(
 
     // Filename — wraps to up to two lines.
     let name_font = 22.0 * s;
-    let char_w = name_font * 0.52;
-    let lines = wrap_two_lines(&entry.name, inner_w, char_w);
+    let lines = wrap_two_lines(text, &entry.name, inner_w, name_font, 2.0 * s);
     for line in &lines {
         TextLabel::new(line, inner_x, cy)
             .size(FontSize::Custom(name_font))
@@ -163,26 +162,41 @@ pub fn draw_preview_pane(
     Some(thumb_rect)
 }
 
-fn wrap_two_lines(name: &str, max_w: f32, char_w: f32) -> Vec<String> {
-    let max_chars = (max_w / char_w).floor().max(1.0) as usize;
-    if name.chars().count() <= max_chars {
+/// Split a name over at most two lines by MEASURED width (an estimate of
+/// 0.52 em per character lost characters at the wrap point on wide names).
+/// `slack` keeps each line a hair under `max_w`: text queued with exactly its
+/// own measured width as the limit clips its last glyph.
+fn wrap_two_lines(
+    text: &mut TextRenderer,
+    name: &str,
+    max_w: f32,
+    font: f32,
+    slack: f32,
+) -> Vec<String> {
+    let fit_w = (max_w - slack).max(1.0);
+    if text.measure_width(name, font) <= fit_w {
         return vec![name.to_string()];
     }
     let chars: Vec<char> = name.chars().collect();
-    let first: String = chars[..max_chars.min(chars.len())].iter().collect();
-    let remaining = &chars[max_chars.min(chars.len())..];
-    if remaining.is_empty() {
+    // Longest prefix that fits on the first line (at least one char).
+    let (mut lo, mut hi) = (1usize, chars.len());
+    while lo < hi {
+        let mid = (lo + hi + 1) / 2;
+        let candidate: String = chars[..mid].iter().collect();
+        if text.measure_width(&candidate, font) <= fit_w {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    let first: String = chars[..lo].iter().collect();
+    let rest: String = chars[lo..].iter().collect();
+    if rest.is_empty() {
         return vec![first];
     }
-    // Second line gets ellipsis if it would itself overflow.
-    if remaining.len() <= max_chars {
-        let second: String = remaining.iter().collect();
-        vec![first, second]
-    } else {
-        let visible = max_chars.saturating_sub(1);
-        let second: String = remaining[..visible.min(remaining.len())].iter().collect();
-        vec![first, format!("{second}\u{2026}")]
-    }
+    // Second line gets an ellipsis if it would itself overflow.
+    let second = crate::sections::truncate_to_width(text, &rest, fit_w, font);
+    vec![first, second]
 }
 
 fn format_bytes(size: u64) -> String {
@@ -202,66 +216,17 @@ fn format_bytes(size: u64) -> String {
 }
 
 fn format_date(modified: Option<SystemTime>) -> String {
-    let Some(t) = modified else {
+    let Some(t) = modified.and_then(crate::datetime::local) else {
         return "—".into();
     };
-    let Ok(dur) = t.duration_since(SystemTime::UNIX_EPOCH) else {
-        return "—".into();
-    };
-    let secs = dur.as_secs();
-    let days = secs / 86400;
-    let tod = secs % 86400;
-    let hh = (tod / 3600) as u32;
-    let mm = ((tod % 3600) / 60) as u32;
-    let mut y = 1970u64;
-    let mut remaining = days;
-    loop {
-        let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-        let yd = if leap { 366 } else { 365 };
-        if remaining < yd {
-            break;
-        }
-        remaining -= yd;
-        y += 1;
-    }
-    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-    let md = [
-        31,
-        if leap { 29 } else { 28 },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
-    let mn = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-    let mut m = 0usize;
-    while m < 12 && remaining >= md[m] {
-        remaining -= md[m];
-        m += 1;
-    }
-    let h12 = if hh == 0 {
-        12
-    } else if hh > 12 {
-        hh - 12
-    } else {
-        hh
-    };
-    let ampm = if hh < 12 { "AM" } else { "PM" };
+    let (h12, ampm) = t.hour12();
     format!(
         "{} {}, {} · {:02}:{:02} {}",
-        mn[m],
-        remaining + 1,
-        y,
+        t.month_name(),
+        t.day,
+        t.year,
         h12,
-        mm,
+        t.minute,
         ampm
     )
 }

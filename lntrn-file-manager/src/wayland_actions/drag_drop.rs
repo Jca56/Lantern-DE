@@ -12,8 +12,13 @@ use crate::{
 /// inside one — moving a folder into its own subtree would swallow it.
 /// Tree view makes this reachable (a folder and its descendants are visible
 /// at the same time), but sidebar/tab targets can nest too.
+///
+/// Dropping items onto the folder they already live in (its tab, sidebar
+/// place or favorite) is not a move or a copy either: nothing to do.
 fn valid_dest(dest: &std::path::Path, sources: &[std::path::PathBuf]) -> bool {
-    !sources.iter().any(|src| dest.starts_with(src))
+    let into_own_subtree = sources.iter().any(|src| dest.starts_with(src));
+    let already_there = sources.iter().all(|src| src.parent() == Some(dest));
+    !into_own_subtree && !already_there
 }
 
 pub(crate) fn handle_drop(
@@ -143,12 +148,7 @@ pub(crate) fn handle_drop(
                 folder.unwrap_or_else(|| tab.path.clone())
             });
             if let Some(dest_dir) = dest_dir {
-                // Dropping into the directory the files already live in is
-                // a no-op, not a Move/Copy prompt.
-                let same_dir = sources
-                    .iter()
-                    .all(|src| src.parent() == Some(dest_dir.as_path()));
-                if !same_dir && valid_dest(&dest_dir, &sources) {
+                if valid_dest(&dest_dir, &sources) {
                     app.pending_drop = Some(PendingDrop {
                         sources,
                         dest_dir,

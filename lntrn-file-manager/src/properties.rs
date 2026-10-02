@@ -89,6 +89,13 @@ pub struct FileProperties {
     /// renderer; the picker body can't touch it). Cleared each frame; each
     /// tuple is (icon_path, x, y, w, h).
     pub picker_cell_rects: Vec<(PathBuf, f32, f32, f32, f32)>,
+    /// Icon list of the picker tab last shown, so the folder is read when
+    /// the tab changes and not on every frame.
+    picker_icons: Option<(IconPickerTab, Vec<PathBuf>)>,
+    /// Size and mtime as the directory listing reports them (lstat), i.e.
+    /// what the thumbnail cache keys this file's texture on.
+    pub listing_size: u64,
+    pub listing_modified: Option<SystemTime>,
 }
 
 /// Categories shown as tabs in the icon picker. The first three map to
@@ -159,8 +166,17 @@ impl FileProperties {
             None
         };
 
-        let meta = std::fs::metadata(path).ok()?;
-        let name = path.file_name()?.to_string_lossy().to_string();
+        // A dangling symlink has no target to stat: describe the link
+        // itself instead of refusing to open. "/" has no file name.
+        let meta = match std::fs::metadata(path) {
+            Ok(m) => m,
+            Err(_) if is_symlink => sym_meta.clone(),
+            Err(_) => return None,
+        };
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.display().to_string());
         let is_dir = meta.is_dir();
 
         let ext = path
@@ -275,6 +291,9 @@ impl FileProperties {
             picker_tab: IconPickerTab::Standard,
             icon_was_active: false,
             picker_cell_rects: Vec::new(),
+            picker_icons: None,
+            listing_size: sym_meta.len(),
+            listing_modified: sym_meta.modified().ok(),
         })
     }
 
@@ -328,62 +347,19 @@ fn format_size_with_bytes(bytes: u64) -> String {
 }
 
 fn format_time(time: SystemTime) -> String {
-    let secs = time
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let days = secs / 86400;
-    let time_of_day = secs % 86400;
-    let hours = time_of_day / 3600;
-    let minutes = (time_of_day % 3600) / 60;
-    let (year, month, day) = days_to_date(days);
-    let months = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-    let month_str = months.get(month as usize).unwrap_or(&"???");
-    let h12 = if hours == 0 {
-        12
-    } else if hours > 12 {
-        hours - 12
-    } else {
-        hours
+    let Some(t) = crate::datetime::local(time) else {
+        return "—".into();
     };
-    let ampm = if hours < 12 { "AM" } else { "PM" };
+    let (h12, ampm) = t.hour12();
     format!(
         "{} {} {}, {:02}:{:02} {}",
-        month_str, day, year, h12, minutes, ampm
+        t.month_name(),
+        t.day,
+        t.year,
+        h12,
+        t.minute,
+        ampm
     )
-}
-
-fn days_to_date(days: u64) -> (u64, u64, u64) {
-    let mut y = 1970;
-    let mut remaining = days;
-    loop {
-        let days_in_year = if is_leap(y) { 366 } else { 365 };
-        if remaining < days_in_year {
-            break;
-        }
-        remaining -= days_in_year;
-        y += 1;
-    }
-    let dim: [u64; 12] = if is_leap(y) {
-        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    } else {
-        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    };
-    let mut m = 0;
-    for (i, &d) in dim.iter().enumerate() {
-        if remaining < d {
-            m = i as u64;
-            break;
-        }
-        remaining -= d;
-    }
-    (y, m, remaining + 1)
-}
-
-fn is_leap(y: u64) -> bool {
-    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
 }
 
 fn format_permissions(mode: u32, is_dir: bool) -> String {
@@ -604,6 +580,12 @@ pub fn draw_properties_dialog(
     // after the picker closes (the renderer doesn't know on its own that
     // the picker isn't drawing this frame).
     props.picker_cell_rects.clear();
+    // Same for the cover art: its rect is only set while the Audio section
+    // draws, and a folded section must not leave the art painted on top of
+    // whatever moved up into its place.
+    if let Some(audio) = props.audio.as_mut() {
+        audio.art_rect = None;
+    }
 
     // Backdrop
     let backdrop = Rect::new(0.0, 0.0, screen_w, screen_h);
@@ -954,8 +936,9 @@ pub fn draw_properties_dialog(
             painter, text, fox, "Inode", &inode, inner_x, cy, inner_w, label_w, label_font, row_h,
             sw, sh,
         );
-        let dev_major = (props.device_id >> 8) & 0xFF;
-        let dev_minor = props.device_id & 0xFF;
+        // dev_t is not 8+8 bits on Linux: NVMe's major is 259.
+        let dev_major = libc::major(props.device_id as libc::dev_t);
+        let dev_minor = libc::minor(props.device_id as libc::dev_t);
         let device = format!("{}:{}", dev_major, dev_minor);
         cy = draw_row(
             painter, text, fox, "Device", &device, inner_x, cy, inner_w, label_w, label_font,
@@ -1362,8 +1345,16 @@ pub enum PropertiesEvent {
 /// Cache of icon path strings per tab so we don't hammer std::fs::read_dir
 /// every frame. Keyed by (tab, modified) — kept extremely simple: read once
 /// per dialog session (cleared on close).
-fn picker_icons_cached(props: &FileProperties) -> Vec<PathBuf> {
-    list_picker_icons(props.picker_tab)
+fn picker_icons_cached(props: &mut FileProperties) -> Vec<PathBuf> {
+    let tab = props.picker_tab;
+    match &props.picker_icons {
+        Some((cached_tab, icons)) if *cached_tab == tab => icons.clone(),
+        _ => {
+            let icons = list_picker_icons(tab);
+            props.picker_icons = Some((tab, icons.clone()));
+            icons
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -45,6 +45,19 @@ pub struct SplitState {
     pub divider_drag: Option<(f32, f32)>,
 }
 
+/// The unfocused pane's index state (range-select anchor, last-clicked row)
+/// is parked in its `PaneView` and indexes that pane's entries. When those
+/// entries are re-listed, the indices follow their files by path, as
+/// `apply_listing` does for the focused pane; `None` when the file is gone.
+pub(crate) fn remap_parked(view: &mut PaneView, old: &[fs::FileEntry], fresh: &[fs::FileEntry]) {
+    let remap = |idx: Option<usize>| {
+        idx.and_then(|i| old.get(i))
+            .and_then(|e| fresh.iter().position(|f| f.path == e.path))
+    };
+    view.selection_anchor = remap(view.selection_anchor);
+    view.last_click_idx = remap(view.last_click_idx);
+}
+
 impl App {
     pub fn split_focused(&self) -> Option<PaneSide> {
         self.split.as_ref().map(|s| s.focused)
@@ -296,15 +309,19 @@ impl App {
             self.spawn_dir_load(path, super::DirLoadTarget::Inactive, (sort_by, sort_dir));
             return;
         }
-        let selected: Vec<PathBuf> = tab
+        let selected: std::collections::HashSet<PathBuf> = tab
             .entries
             .iter()
             .filter(|e| e.selected)
             .map(|e| e.path.clone())
             .collect();
-        tab.entries = fs::list_directory(&tab.path, self.show_hidden, sort_by, sort_dir);
-        for e in &mut tab.entries {
-            e.selected = selected.contains(&e.path);
+        let mut fresh = fs::list_directory(&tab.path, self.show_hidden, sort_by, sort_dir);
+        if !selected.is_empty() {
+            for e in &mut fresh {
+                e.selected = selected.contains(&e.path);
+            }
         }
+        remap_parked(&mut split.parked_view, &tab.entries, &fresh);
+        tab.entries = fresh;
     }
 }

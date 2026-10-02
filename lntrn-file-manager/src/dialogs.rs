@@ -273,7 +273,13 @@ fn draw_overlay_with_scrim(
 #[derive(Clone, Debug)]
 pub enum DriveDialog {
     /// Confirm "Format X to ext4" — Cancel/Format buttons.
-    ConfirmFormat { drive: Drive, error: Option<String> },
+    /// `disk_size` is the whole-disk size when the dialog opened; Format
+    /// re-checks it so a swapped stick is never wiped by mistake.
+    ConfirmFormat {
+        drive: Drive,
+        disk_size: u64,
+        error: Option<String>,
+    },
     /// Read-only properties view — single OK button.
     Properties { drive: Drive },
     /// Generic message/error notice — title + wrapped body, single OK button.
@@ -290,7 +296,7 @@ pub fn draw(
     s: f32,
 ) {
     match dialog {
-        DriveDialog::ConfirmFormat { drive, error } => {
+        DriveDialog::ConfirmFormat { drive, error, .. } => {
             draw_confirm_format(
                 drive,
                 error.as_deref(),
@@ -1140,56 +1146,19 @@ pub fn draw_conflict_dialog(
 }
 
 fn format_meta_line(meta: &crate::conflict::ConflictMeta) -> String {
-    let kind = if meta.is_dir { "Folder" } else { "File" };
-    format!("{} \u{00B7} {}", kind, crate::fs::format_size(meta.size))
+    // A directory's own size is its inode size, which says nothing.
+    if meta.is_dir {
+        return "Folder".to_string();
+    }
+    format!("File \u{00B7} {}", crate::fs::format_size(meta.size))
 }
 
 fn format_mtime(meta: &crate::conflict::ConflictMeta) -> String {
-    let Some(t) = meta.mtime else {
+    let Some(t) = meta.mtime.and_then(crate::datetime::local) else {
         return "Modified: unknown".into();
     };
-    let secs = t
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let days = secs / 86400;
-    let time_of_day = secs % 86400;
-    let h = time_of_day / 3600;
-    let m = (time_of_day % 3600) / 60;
-    let mut y = 1970u64;
-    let mut remaining = days;
-    loop {
-        let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-        let yd = if leap { 366 } else { 365 };
-        if remaining < yd {
-            break;
-        }
-        remaining -= yd;
-        y += 1;
-    }
-    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-    let months = [
-        31,
-        if leap { 29 } else { 28 },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
-    let mut mo = 0usize;
-    while mo < 12 && remaining >= months[mo] as u64 {
-        remaining -= months[mo] as u64;
-        mo += 1;
-    }
     format!(
-        "Modified: {y:04}-{:02}-{:02} {h:02}:{m:02}",
-        mo + 1,
-        remaining + 1
+        "Modified: {:04}-{:02}-{:02} {:02}:{:02}",
+        t.year, t.month, t.day, t.hour, t.minute
     )
 }

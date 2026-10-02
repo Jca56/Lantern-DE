@@ -26,7 +26,7 @@ pub fn doc_id_from_path(rel: &str) -> String {
 }
 
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileDoc {
     pub path: String,
     pub sha256: String,
@@ -41,6 +41,15 @@ pub struct FileDoc {
     /// lists, so keep both machines on delta-aware builds.
     #[serde(default)]
     pub updated_at: Option<u64>,
+}
+
+/// A remote doc's `path` is joined onto ~/Cloud and written to. It must be a
+/// plain relative path: no leading '/', no empty, "." or ".." component, no
+/// NUL. Anything else could write or delete outside the sync root.
+pub fn is_safe_rel_path(rel: &str) -> bool {
+    !rel.is_empty()
+        && !rel.contains('\0')
+        && rel.split('/').all(|c| !c.is_empty() && c != "." && c != "..")
 }
 
 pub fn now_ms() -> u64 {
@@ -98,8 +107,13 @@ fn from_fields(fields: &serde_json::Value) -> Option<FileDoc> {
             .and_then(|s| s.parse::<u64>().ok())
     };
     let b = |k: &str| fields.get(k)?.get("booleanValue")?.as_bool();
+    let path = s("path")?;
+    if !is_safe_rel_path(&path) {
+        super::log_line(&format!("ignoring remote doc with unsafe path {path:?}"));
+        return None;
+    }
     Some(FileDoc {
-        path: s("path")?,
+        path,
         sha256: s("sha256")?,
         size: i("size")?,
         mtime: i("mtime")?,
@@ -188,4 +202,24 @@ pub fn list_all(authed: &Authed) -> anyhow::Result<Vec<FileDoc>> {
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_paths_that_escape_the_root() {
+        assert!(is_safe_rel_path("a.txt"));
+        assert!(is_safe_rel_path("dir/sub/a b.txt"));
+        assert!(is_safe_rel_path("..hidden/a..b"));
+        assert!(!is_safe_rel_path(""));
+        assert!(!is_safe_rel_path("/etc/passwd"));
+        assert!(!is_safe_rel_path("../.zshrc"));
+        assert!(!is_safe_rel_path("a/../../b"));
+        assert!(!is_safe_rel_path("a/./b"));
+        assert!(!is_safe_rel_path("a//b"));
+        assert!(!is_safe_rel_path("a/"));
+        assert!(!is_safe_rel_path("a\0b"));
+    }
 }

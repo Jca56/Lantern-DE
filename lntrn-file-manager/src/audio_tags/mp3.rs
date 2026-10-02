@@ -13,6 +13,11 @@ use super::{id3, id3v1, io_err, AudioFormat, AudioMeta, AudioTags, Container};
 /// Bytes read past the ID3 tag when hunting for the first frame.
 const PROBE_LEN: usize = 128 * 1024;
 
+/// Largest ID3v2 tag we will load. The header can claim up to 256 MiB in
+/// four bytes, and this is read into memory on a thumbnail worker for every
+/// MP3 in a folder being browsed. Real tags with artwork are a few MiB.
+const MAX_TAG_LEN: usize = 64 * 1024 * 1024;
+
 pub fn read(path: &Path) -> Result<AudioMeta, String> {
     let mut f = File::open(path).map_err(io_err)?;
     let len = f.metadata().map_err(io_err)?.len();
@@ -48,6 +53,12 @@ fn read_head(f: &mut File, len: u64) -> Result<Vec<u8>, String> {
     } else {
         0
     };
+    // What would actually be READ (the claim, capped by the file). A header
+    // that merely claims too much on a small file is still readable: the
+    // parser stops at the bytes that exist.
+    if tag_len.min(len as usize) > MAX_TAG_LEN {
+        return Err("ID3 tag is too large".into());
+    }
     let want = (tag_len + PROBE_LEN).min(len as usize);
     let mut buf = vec![0u8; want];
     f.seek(SeekFrom::Start(0)).map_err(io_err)?;
@@ -268,12 +279,23 @@ fn probe(buf: &[u8], audio_len: u64) -> AudioFormat {
 // ── Writing ─────────────────────────────────────────────────────────────────
 
 pub fn write(path: &Path, tags: &AudioTags) -> Result<(), String> {
+    // A file we may not write is refused up front. (The temp-file path could
+    // otherwise replace a read-only file in a writable folder and then fail
+    // on the ID3v1 step, reporting "failed" for a save that had happened.)
+    OpenOptions::new().write(true).open(path).map_err(io_err)?;
     let mut f = File::open(path).map_err(io_err)?;
     let len = f.metadata().map_err(io_err)?.len();
     let head = read_head(&mut f, len)?;
     drop(f);
     let mut tag = id3::parse(&head).unwrap_or_else(id3::Id3Tag::new);
-    let old_total = tag.total_len.min(len as usize);
+    // The header's size field is not checked against the file by the
+    // parser. A tag claiming more than the file holds would, clamped to the
+    // file length, make the in-place path below overwrite ALL of the audio
+    // with tag padding.
+    if tag.total_len as u64 > len {
+        return Err("ID3 tag is damaged (it claims more bytes than the file holds)".into());
+    }
+    let old_total = tag.total_len;
     tag.apply(tags);
     let new = tag.build(old_total);
     if old_total > 0 && new.len() == old_total {
@@ -288,7 +310,12 @@ pub fn write(path: &Path, tags: &AudioTags) -> Result<(), String> {
             Ok(())
         })?;
     }
-    sync_v1(path, tags)
+    // The v2 tag is committed. A failure keeping the old v1 trailer in step
+    // must not turn a save that happened into "Save failed".
+    if let Err(e) = sync_v1(path, tags) {
+        eprintln!("[fox] ID3v1 trailer not updated for {}: {e}", path.display());
+    }
+    Ok(())
 }
 
 /// If the file carries an ID3v1 trailer, keep it agreeing with the v2 tag.

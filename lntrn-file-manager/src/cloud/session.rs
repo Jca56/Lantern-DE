@@ -44,13 +44,8 @@ impl Session {
             std::fs::create_dir_all(parent)?;
         }
         let raw = serde_json::to_string_pretty(self)?;
-        std::fs::write(&path, raw)?;
-        // Tighten perms — this file holds a refresh token.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-        }
+        // This file holds a refresh token: private from the moment it exists.
+        super::write_atomic(&path, raw.as_bytes(), 0o600)?;
         Ok(())
     }
 

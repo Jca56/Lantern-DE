@@ -119,6 +119,9 @@ fn run_with_sudo(op: &PendingPrivOp, password: Option<&str>) -> CachedResult {
     }
     for cmd_argv in argv {
         let mut cmd = Command::new("sudo");
+        // The "does it need a password" test below matches sudo's English
+        // wording; pin the locale so it holds on a translated system.
+        cmd.env("LC_ALL", "C");
         // -S = read password from stdin (only consumed when no cached ticket).
         // -n = non-interactive: fail instead of prompting.
         // -p "" = empty prompt so sudo doesn't emit "[sudo] password:" noise.
@@ -184,12 +187,19 @@ fn build_argv(op: &PendingPrivOp) -> Vec<Vec<OsString>> {
         }
         PendingPrivOp::EmptyTrash => {
             // Use sh -c so we can glob-delete the contents (not the dirs).
-            let home = std::env::var("HOME").unwrap_or_default();
-            let script = format!(
-                "rm -rf -- {home}/.local/share/Trash/files/* {home}/.local/share/Trash/files/.[!.]* \
-                 {home}/.local/share/Trash/info/* {home}/.local/share/Trash/info/.[!.]* 2>/dev/null; true"
-            );
-            vec![vec!["sh".into(), "-c".into(), script.into()]]
+            // The trash path goes in as "$1", never spliced into the script:
+            // this runs as root, and a $HOME with a space or a shell
+            // metacharacter must stay one word.
+            let trash = crate::app::dirs_home().join(".local/share/Trash");
+            let script = "rm -rf -- \"$1\"/files/* \"$1\"/files/.[!.]* \
+                          \"$1\"/info/* \"$1\"/info/.[!.]* 2>/dev/null; true";
+            vec![vec![
+                "sh".into(),
+                "-c".into(),
+                script.into(),
+                "sh".into(),
+                trash.into_os_string(),
+            ]]
         }
         PendingPrivOp::Move { sources, dest } => sources
             .iter()

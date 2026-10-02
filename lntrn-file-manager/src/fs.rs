@@ -187,8 +187,12 @@ pub(crate) fn format_size(bytes: u64) -> String {
     let b = bytes as f64;
     if b >= GB {
         format!("{:.1} GB", b / GB)
-    } else {
+    } else if b >= MB {
         format!("{:.0} MB", b / MB)
+    } else if bytes >= 1024 {
+        format!("{:.0} KB", b / 1024.0)
+    } else {
+        format!("{bytes} B")
     }
 }
 
@@ -224,7 +228,13 @@ pub fn detect_drives() -> Vec<Drive> {
                 _ => 2,
             }
         };
-        ord(a).cmp(&ord(b)).then_with(|| a.name.cmp(&b.name))
+        // Device as the last key: two identical sticks share a name, and
+        // without it their order follows HashMap iteration and reshuffles on
+        // every refresh.
+        ord(a)
+            .cmp(&ord(b))
+            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.device.cmp(&b.device))
     });
 
     drives
@@ -277,6 +287,11 @@ fn disk_friendly_name(disk_basename: &str) -> Option<String> {
     } else {
         Some(combined)
     }
+}
+
+/// Whole-disk size of `drive`'s physical disk, 0 if it is gone.
+pub fn drive_disk_size(drive: &Drive) -> u64 {
+    disk_size_bytes(drive.parent_disk.trim_start_matches("/dev/"))
 }
 
 fn disk_size_bytes(disk_basename: &str) -> u64 {
@@ -342,7 +357,11 @@ fn detect_mounted_drives() -> Vec<Drive> {
             continue;
         }
         let device = parts[0];
-        let mount = parts[1];
+        // A mount point with a space reads `\040` here; statvfs needs the
+        // real path or the drive silently drops out of the sidebar.
+        let mount = unescape_mount(parts[1]);
+        let mount = mount.to_string_lossy();
+        let mount: &str = mount.as_ref();
         let fstype = parts[2];
 
         // Only real block devices
@@ -549,6 +568,10 @@ pub struct Phone {
     pub product_id: String,
     pub serial: String,
     pub mount_point: PathBuf,
+    /// Whether something is mounted at `mount_point`, as of the last device
+    /// refresh. The sidebar reads this instead of parsing /proc/mounts for
+    /// every phone on every frame.
+    pub mounted: bool,
 }
 
 /// Scan /sys/bus/usb/devices/ for devices that expose an MTP/PTP interface
@@ -558,6 +581,7 @@ pub fn detect_phones() -> Vec<Phone> {
         return Vec::new();
     };
     let mounts_root = mounts_root();
+    let mount_points = mount_points();
     let mut phones = Vec::new();
 
     for entry in read_dir.flatten() {
@@ -581,6 +605,7 @@ pub fn detect_phones() -> Vec<Phone> {
         let display = display_name(&manufacturer, &product);
         let slug = slugify(&display, &serial);
         let mount_point = mounts_root.join(slug);
+        let mounted = mount_points.contains(&mount_point);
 
         phones.push(Phone {
             name: display,
@@ -590,6 +615,7 @@ pub fn detect_phones() -> Vec<Phone> {
             product_id,
             serial,
             mount_point,
+            mounted,
         });
     }
 
@@ -658,11 +684,13 @@ fn slugify(name: &str, serial: &str) -> String {
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
     let trimmed = base.trim_matches('-').to_string();
-    let short = if serial.len() >= 4 {
-        &serial[..4]
-    } else {
-        serial
-    };
+    // By chars, and alphanumerics only: a byte slice panics on a non-ASCII
+    // serial, and this ends up in a directory name.
+    let short: String = serial
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(4)
+        .collect();
     if short.is_empty() {
         trimmed
     } else {
@@ -677,6 +705,16 @@ fn mounts_root() -> PathBuf {
     home.join(".lantern/mounts")
 }
 
+/// Every mount point in /proc/mounts, unescaped.
+fn mount_points() -> std::collections::HashSet<PathBuf> {
+    std::fs::read_to_string("/proc/mounts")
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| line.split_whitespace().nth(1))
+        .map(unescape_mount)
+        .collect()
+}
+
 /// Returns true when something is mounted at `path` (per /proc/mounts).
 pub fn is_path_mounted(path: &Path) -> bool {
     let Ok(target) = path.canonicalize() else {
@@ -689,7 +727,7 @@ pub fn is_path_mounted(path: &Path) -> bool {
         let mut parts = line.split_whitespace();
         let _device = parts.next();
         if let Some(mp) = parts.next() {
-            if Path::new(mp) == target {
+            if unescape_mount(mp) == target {
                 return true;
             }
         }
@@ -752,10 +790,13 @@ pub fn mount_phone(phone: &Phone) -> Result<(), String> {
     // jmtpfs returns once mount is established, but give it a beat.
     for _ in 0..20 {
         if is_path_mounted(&phone.mount_point) {
-            return Ok(());
+            break;
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
+    // The cached table predates this mount; without this the first listing
+    // of the phone would be treated as a fast local path.
+    invalidate_mount_table();
     Ok(())
 }
 
@@ -789,6 +830,7 @@ pub fn mount_drive(drive: &Drive) -> Result<PathBuf, String> {
         let tail = &stdout[at + 4..];
         let mount = tail.trim().trim_end_matches('.').trim();
         if !mount.is_empty() {
+            invalidate_mount_table();
             return Ok(PathBuf::from(mount));
         }
     }
@@ -798,7 +840,8 @@ pub fn mount_drive(drive: &Drive) -> Result<PathBuf, String> {
             let mut parts = line.split_whitespace();
             if parts.next() == Some(drive.device.as_str()) {
                 if let Some(mp) = parts.next() {
-                    return Ok(PathBuf::from(mp));
+                    invalidate_mount_table();
+                    return Ok(unescape_mount(mp));
                 }
             }
         }
@@ -920,17 +963,46 @@ pub fn relabel_drive(drive: &Drive, new_label: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Unmount a removable drive via `udisksctl unmount -b <device>`.
+/// Unmount a removable drive via `udisksctl unmount -b <device>`. The sidebar
+/// shows one row per physical disk, so ejecting a removable disk unmounts
+/// every mounted partition on it, not just the one the row represents.
 pub fn unmount_drive(drive: &Drive) -> Result<(), String> {
-    let output = std::process::Command::new("udisksctl")
-        .args(["unmount", "-b", &drive.device])
-        .output()
-        .map_err(|e| format!("spawn udisksctl: {e}"))?;
-    if !output.status.success() {
-        let msg = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("udisksctl: {}", msg.trim()));
+    let mut devices = vec![drive.device.clone()];
+    if drive.removable && !drive.parent_disk.is_empty() {
+        if let Ok(contents) = std::fs::read_to_string("/proc/mounts") {
+            for line in contents.lines() {
+                let Some(device) = line.split_whitespace().next() else {
+                    continue;
+                };
+                if device.starts_with("/dev/")
+                    && parent_disk_of(device) == drive.parent_disk
+                    && !devices.iter().any(|d| d == device)
+                {
+                    devices.push(device.to_string());
+                }
+            }
+        }
     }
-    Ok(())
+    let mut first_err = None;
+    for device in &devices {
+        let result = std::process::Command::new("udisksctl")
+            .args(["unmount", "-b", device])
+            .output()
+            .map_err(|e| format!("spawn udisksctl: {e}"))
+            .and_then(|output| {
+                if output.status.success() {
+                    Ok(())
+                } else {
+                    let msg = String::from_utf8_lossy(&output.stderr);
+                    Err(format!("udisksctl: {}", msg.trim()))
+                }
+            });
+        if let Err(e) = result {
+            first_err.get_or_insert(e);
+        }
+    }
+    invalidate_mount_table();
+    first_err.map_or(Ok(()), Err)
 }
 
 /// Unmount a phone via fusermount.
@@ -943,6 +1015,7 @@ pub fn unmount_phone(phone: &Phone) {
         .arg("-u")
         .arg(&phone.mount_point)
         .status();
+    invalidate_mount_table();
 }
 
 fn statvfs(path: &str) -> Option<StatVfs> {
@@ -1053,6 +1126,12 @@ fn slow_mount_roots() -> Vec<PathBuf> {
             is_slow_fstype(fstype).then(|| unescape_mount(mount))
         })
         .collect()
+}
+
+/// Drop the cached mount table so the next `is_slow_path` re-reads
+/// /proc/mounts. Called after every mount and unmount we perform.
+pub fn invalidate_mount_table() {
+    *MOUNT_TABLE.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 /// True when `path` lives on a slow (FUSE / network / MTP) mount. Cheap
