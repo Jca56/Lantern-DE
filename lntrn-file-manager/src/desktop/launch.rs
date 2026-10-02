@@ -2,7 +2,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -73,15 +73,7 @@ pub fn launch_app(app: &DesktopApp, files: &[PathBuf]) -> Result<(), String> {
 
     for argv in commands {
         let mut cmd = if app.terminal {
-            match in_terminal(&argv, work_dir.as_deref()) {
-                Ok(cmd) => cmd,
-                Err(e) => {
-                    return Err(format!(
-                        "\u{201c}{}\u{201d} could not be started in a terminal: {e}.",
-                        app.name
-                    ))
-                }
-            }
+            in_terminal(&argv)
         } else {
             let mut cmd = Command::new(&argv[0]);
             cmd.args(&argv[1..]);
@@ -151,122 +143,15 @@ fn spawn_logged(mut cmd: Command) {
 }
 
 // ── Terminal=true ───────────────────────────────────────────────────────────
-//
-// lntrn-terminal takes no command to run: it starts `$SHELL`, with no
-// arguments. So the command is written into a small script and the
-// terminal is started with SHELL pointing at it. The script puts the real
-// shell back into the environment first, and every run of it but the first
-// (a new tab in that terminal window) simply becomes that shell.
-//
-// When lntrn-terminal learns an `-e`, this goes and the arguments are
-// passed directly.
 
-/// `value` as one word of an `sh` script.
-fn sh_word(value: &OsStr) -> Vec<u8> {
-    let mut out = vec![b'\''];
-    for &b in value.as_bytes() {
-        if b == b'\'' {
-            out.extend_from_slice(b"'\\''");
-        } else {
-            out.push(b);
-        }
-    }
-    out.push(b'\'');
-    out
-}
-
-/// The script that runs `argv` once and is the user's shell afterwards.
-fn terminal_script(argv: &[OsString], shell: &OsStr, work_dir: Option<&Path>) -> Vec<u8> {
-    let mut script = Vec::new();
-    script.extend_from_slice(
-        b"#!/bin/sh\n\
-          # Written by the Lantern file manager to run one terminal application.\n\
-          SHELL=",
-    );
-    script.extend(sh_word(shell));
-    script.extend_from_slice(
-        // mkdir: of two tabs opening at the same moment exactly one gets
-        // to run the command.
-        b"\nexport SHELL\n\
-          if ! mkdir \"$0.ran\" 2>/dev/null; then\n\
-          \texec \"$SHELL\"\n\
-          fi\n",
-    );
-    if let Some(dir) = work_dir {
-        script.extend_from_slice(b"cd ");
-        script.extend(sh_word(dir.as_os_str()));
-        script.extend_from_slice(b" 2>/dev/null\n");
-    }
-    script.extend_from_slice(b"exec");
-    for arg in argv {
-        script.push(b' ');
-        script.extend(sh_word(arg));
-    }
-    script.push(b'\n');
-    script
-}
-
-/// Where the scripts live: Lantern's own runtime folder, on the disk the
-/// desktop's binaries run from (a per-user tmpfs may be mounted noexec).
-fn script_dir() -> PathBuf {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/tmp"));
-    home.join(".lantern/run/fox-launch")
-}
-
-/// Scripts older than this belong to terminals long closed.
-const SCRIPT_KEEP: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 3600);
-
-fn sweep_old_scripts(dir: &Path) {
-    let Ok(read_dir) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in read_dir.flatten() {
-        let old = entry
-            .metadata()
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|at| at.elapsed().ok())
-            .is_some_and(|age| age > SCRIPT_KEEP);
-        if old {
-            // A script, or the marker folder it left next to itself.
-            let path = entry.path();
-            let _ = std::fs::remove_file(&path).or_else(|_| std::fs::remove_dir(&path));
-        }
-    }
-}
-
-/// The command that runs `argv` in a terminal window.
-fn in_terminal(argv: &[OsString], work_dir: Option<&Path>) -> std::io::Result<Command> {
-    use std::io::Write;
-    static SERIAL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-
-    let dir = script_dir();
-    std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(&dir)?;
-    sweep_old_scripts(&dir);
-    let shell = std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into());
-    let serial = SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let path = dir.join(format!("run-{}-{stamp}-{serial}.sh", std::process::id()));
-    // create_new: never write through something already at that name.
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o700)
-        .open(&path)?;
-    file.write_all(&terminal_script(argv, &shell, work_dir))?;
-    drop(file);
-
+/// The command that runs `argv` in a terminal window: `lntrn-terminal -e`
+/// takes the program and its arguments as they are (no shell reads them)
+/// and runs them in the window's own tab, in the working directory the
+/// terminal is started with.
+fn in_terminal(argv: &[OsString]) -> Command {
     let mut cmd = Command::new(TERMINAL);
-    cmd.env("SHELL", &path);
-    Ok(cmd)
+    cmd.arg("-e").args(argv);
+    cmd
 }
 
 #[cfg(test)]
@@ -274,62 +159,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_terminal_script_runs_the_command_once_and_is_a_shell_after_that() {
-        let argv: Vec<OsString> = ["nvim", "--", "/home/a/it's here/notes.txt"]
+    fn a_terminal_app_is_handed_to_the_terminal_argument_by_argument() {
+        let argv: Vec<OsString> = ["nvim", "--", "/home/a/it's $(here)/notes.txt"]
             .iter()
             .map(OsString::from)
             .collect();
-        let script = terminal_script(
-            &argv,
-            OsStr::new("/bin/zsh"),
-            Some(Path::new("/home/a/it's here")),
-        );
-        let text = String::from_utf8(script).unwrap();
-        assert!(text.starts_with("#!/bin/sh\n"));
-        assert!(text.contains("\nSHELL='/bin/zsh'\nexport SHELL\n"));
-        assert!(text.contains("if ! mkdir \"$0.ran\" 2>/dev/null; then\n\texec \"$SHELL\"\nfi\n"));
-        assert!(text.contains("\ncd '/home/a/it'\\''s here' 2>/dev/null\n"));
-        assert!(text.ends_with("\nexec 'nvim' '--' '/home/a/it'\\''s here/notes.txt'\n"));
-    }
-
-    #[test]
-    fn the_script_does_what_it_says_when_sh_runs_it() {
-        let dir = std::env::temp_dir().join(format!("fox-term-script-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let out = dir.join("out put.txt");
-        // The "application": writes its arguments, one per line.
-        let argv: Vec<OsString> = vec![
-            "sh".into(),
-            "-c".into(),
-            "printf '%s\\n' \"$@\" > \"$0\"".into(),
-            out.clone().into_os_string(),
-            "a b".into(),
-            "$HOME `x` 'q'".into(),
-        ];
-        let script = dir.join("run.sh");
-        std::fs::write(
-            &script,
-            terminal_script(&argv, OsStr::new("/bin/true"), Some(&dir)),
-        )
-        .unwrap();
-        let run = |script: &Path| {
-            Command::new("/bin/sh")
-                .arg(script)
-                .status()
-                .is_ok_and(|s| s.success())
-        };
-        assert!(run(&script));
+        let cmd = in_terminal(&argv);
+        assert_eq!(cmd.get_program(), TERMINAL);
+        let args: Vec<&OsStr> = cmd.get_args().collect();
         assert_eq!(
-            std::fs::read_to_string(&out).unwrap(),
-            "a b\n$HOME `x` 'q'\n",
-            "arguments arrive untouched by the shell"
+            args,
+            ["-e", "nvim", "--", "/home/a/it's $(here)/notes.txt"].map(OsStr::new)
         );
-        // The second run (a new tab) is the shell, not the command again.
-        std::fs::remove_file(&out).unwrap();
-        assert!(run(&script));
-        assert!(!out.exists());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
