@@ -107,21 +107,42 @@ pub fn export_docx(
     Ok(())
 }
 
+/// The paths a `lntrn-file-manager --pick... --pick-print0` wrote: each one
+/// its exact bytes followed by a NUL. A path is bytes, not text: it may
+/// not be valid UTF-8, and it may hold a line break or blanks at its ends,
+/// which reading lines and trimming them would mangle. (Output without a
+/// NUL comes from a file manager older than the flag: one path per line.)
+fn picked_paths(stdout: &[u8]) -> Vec<std::path::PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
+    let separator = if stdout.contains(&0) { 0 } else { b'\n' };
+    stdout
+        .split(|byte| *byte == separator)
+        .filter(|part| !part.is_empty())
+        .map(|part| std::path::PathBuf::from(std::ffi::OsString::from_vec(part.to_vec())))
+        .collect()
+}
+
+/// Run the lntrn-file-manager picker with `args` and wait for it. `None`:
+/// cancelled, or it could not be started.
+fn pick(args: &[&str]) -> Option<std::path::PathBuf> {
+    let out = std::process::Command::new("lntrn-file-manager")
+        .arg("--pick-print0")
+        .args(args)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    picked_paths(&out.stdout).into_iter().next()
+}
+
 /// Open a file via the lntrn-file-manager picker. Loads it into a new tab.
 pub fn open_file_dialog(handler: &mut TextHandler) {
-    let output = std::process::Command::new("lntrn-file-manager")
-        .args(["--pick", "--title", "Open File"])
-        .output();
-    if let Ok(out) = output {
-        if out.status.success() {
-            let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !path.is_empty() {
-                let mut e = Editor::new();
-                let _ = e.load_file(std::path::PathBuf::from(path));
-                handler.tabs.push(e);
-                handler.active_tab = handler.tabs.len() - 1;
-            }
-        }
+    if let Some(path) = pick(&["--pick", "--title", "Open File"]) {
+        let mut e = Editor::new();
+        let _ = e.load_file(path);
+        handler.tabs.push(e);
+        handler.active_tab = handler.tabs.len() - 1;
     }
 }
 
@@ -147,46 +168,32 @@ fn filename_stem(handler: &TextHandler) -> String {
 /// Typing any other extension still saves plain text.
 pub fn save_as_dialog(handler: &mut TextHandler) {
     let suggested = format!("{}.lnote", filename_stem(handler));
-    let output = std::process::Command::new("lntrn-file-manager")
-        .args([
-            "--pick-save",
-            "--title",
-            "Save As",
-            "--save-name",
-            &suggested,
-        ])
-        .output();
-    if let Ok(out) = output {
-        if out.status.success() {
-            let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !path.is_empty() {
-                handler.editor_mut().file_path = Some(std::path::PathBuf::from(path));
-                let _ = handler.editor_mut().save_file();
-            }
-        }
+    let picked = pick(&[
+        "--pick-save",
+        "--title",
+        "Save As",
+        "--save-name",
+        &suggested,
+    ]);
+    if let Some(path) = picked {
+        handler.editor_mut().file_path = Some(path);
+        let _ = handler.editor_mut().save_file();
     }
 }
 
 /// Export the active editor's content as a `.docx` file via the picker.
 pub fn export_docx_dialog(handler: &mut TextHandler) {
     let default_name = format!("{}.docx", filename_stem(handler));
-    let output = std::process::Command::new("lntrn-file-manager")
-        .args([
-            "--pick-save",
-            "--title",
-            "Export as .docx",
-            "--save-name",
-            &default_name,
-        ])
-        .output();
-    if let Ok(out) = output {
-        if out.status.success() {
-            let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !path.is_empty() {
-                if let Err(e) = export_docx(handler.editor(), std::path::Path::new(&path)) {
-                    eprintln!("[lntrn-notepad] docx export error: {e}");
-                }
-            }
+    let picked = pick(&[
+        "--pick-save",
+        "--title",
+        "Export as .docx",
+        "--save-name",
+        &default_name,
+    ]);
+    if let Some(path) = picked {
+        if let Err(e) = export_docx(handler.editor(), &path) {
+            eprintln!("[lntrn-notepad] docx export error: {e}");
         }
     }
 }
