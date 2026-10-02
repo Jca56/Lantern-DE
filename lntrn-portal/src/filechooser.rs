@@ -30,11 +30,26 @@ fn conn() -> &'static Connection {
     CONN.get().expect("D-Bus connection not set")
 }
 
+// ── The picker's result ─────────────────────────────────────────────────────
+
+/// The paths `lntrn-file-manager --pick... --pick-print0` wrote: each one
+/// its exact bytes followed by a NUL. A path is bytes, not text: it may not
+/// be valid UTF-8, and it may hold a line break or blanks at its ends,
+/// which reading lines and trimming them would mangle. (Output without a
+/// NUL comes from a file manager older than the flag: one path per line.)
+fn picked_paths(stdout: &[u8]) -> Vec<&[u8]> {
+    let separator = if stdout.contains(&0) { 0 } else { b'\n' };
+    stdout
+        .split(|byte| *byte == separator)
+        .filter(|part| !part.is_empty())
+        .collect()
+}
+
 // ── Percent-encode file paths for file:// URIs ─────────────────────────────
 
-fn percent_encode_path(path: &str) -> String {
+fn percent_encode_path(path: &[u8]) -> String {
     let mut out = String::with_capacity(path.len() + 16);
-    for b in path.bytes() {
+    for &b in path {
         match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
                 out.push(b as char)
@@ -224,8 +239,11 @@ impl FileChooserService {
             return (2, HashMap::new());
         }
 
-        // Spawn file manager in pick mode
+        // Spawn file manager in pick mode. `--pick-print0`: the result
+        // comes NUL-separated, each path its exact bytes (see
+        // `picked_paths`).
         let child = match Command::new("lntrn-file-manager")
+            .arg("--pick-print0")
             .args(&args)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit())
@@ -259,11 +277,12 @@ impl FileChooserService {
 
         match output {
             Ok(out) if out.status.success() => {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                let uris: Vec<String> = stdout
-                    .lines()
-                    .filter(|l| !l.is_empty())
-                    .map(|path| format!("file://{}", percent_encode_path(path.trim())))
+                // The URI carries the path's own bytes, percent-encoded:
+                // a name that is not valid UTF-8, or has blanks at its
+                // ends, reaches the application as the file it is.
+                let uris: Vec<String> = picked_paths(&out.stdout)
+                    .iter()
+                    .map(|path| format!("file://{}", percent_encode_path(path)))
                     .collect();
 
                 eprintln!("[lntrn-portal] picked {} URIs: {:?}", uris.len(), uris);
@@ -392,5 +411,32 @@ fn parse_filters(options: &HashMap<String, Value<'_>>) -> Option<String> {
         None
     } else {
         Some(parts.join("|"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{percent_encode_path, picked_paths};
+
+    #[test]
+    fn a_picked_path_becomes_a_uri_of_its_own_bytes() {
+        let out = b"/home/a/My Report 100%.pdf\0/mnt/old/caf\xe9.txt\0/home/a/ padded \0";
+        let uris: Vec<String> = picked_paths(out)
+            .iter()
+            .map(|path| format!("file://{}", percent_encode_path(path)))
+            .collect();
+        assert_eq!(
+            uris,
+            [
+                "file:///home/a/My%20Report%20100%25.pdf",
+                // The byte the file name has, not U+FFFD.
+                "file:///mnt/old/caf%E9.txt",
+                // Blanks at the ends are part of the name.
+                "file:///home/a/%20padded%20",
+            ]
+        );
+        // A file manager from before the flag wrote one path per line.
+        assert_eq!(picked_paths(b"/a/1.png\n/a/2.png\n").len(), 2);
+        assert!(picked_paths(b"").is_empty());
     }
 }
