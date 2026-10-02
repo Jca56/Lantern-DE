@@ -1425,9 +1425,14 @@ pub fn render_surface(
                 .map(|m| m.lock().unwrap().hotspot)
                 .unwrap_or_default()
         });
+        // Bitmap cursors from X11 games ignore the cursor size setting; scale
+        // them up to it here (see client_cursor.rs). The hotspot grows with
+        // the image, so place the top-left by the magnified hotspot and
+        // scale about that corner — the click point stays under the pointer.
+        let magnify = crate::client_cursor::magnification(surface, state.cursor.cursor_size());
         let surface_pos: Point<i32, Physical> = (
-            (cursor_pos.x - hotspot.x as f64 * scale) as i32,
-            (cursor_pos.y - hotspot.y as f64 * scale) as i32,
+            (cursor_pos.x - hotspot.x as f64 * scale * magnify) as i32,
+            (cursor_pos.y - hotspot.y as f64 * scale * magnify) as i32,
         )
             .into();
         let cursor_surface_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
@@ -1439,11 +1444,21 @@ pub fn render_surface(
                 1.0,
                 Kind::Cursor,
             );
-        elements.extend(
-            cursor_surface_elements
-                .into_iter()
-                .map(CustomRenderElements::Surface),
-        );
+        if magnify > 1.0 {
+            elements.extend(cursor_surface_elements.into_iter().map(|elem| {
+                CustomRenderElements::Rescaled(RescaleRenderElement::from_element(
+                    elem,
+                    surface_pos,
+                    smithay::utils::Scale::from(magnify),
+                ))
+            }));
+        } else {
+            elements.extend(
+                cursor_surface_elements
+                    .into_iter()
+                    .map(CustomRenderElements::Surface),
+            );
+        }
     }
 
     // Click ripple: under the cursor, above switcher/windows. Tick + reschedule
@@ -2052,7 +2067,16 @@ pub fn render_surface(
         }
         let new_size = crate::input::read_input_setting_f64("cursor_size", 24.0).round() as u32;
         if new_size != state.cursor.cursor_size() {
+            let old_size = state.cursor.cursor_size();
             state.cursor.set_cursor_size(new_size);
+            // set_cursor_size clamps, so compare what actually landed —
+            // an out-of-range config value must not re-sync every tick.
+            let applied = state.cursor.cursor_size();
+            if applied != old_size {
+                if let Some(display_number) = state.xwayland_state.display_number {
+                    crate::x11_resources::apply_live(display_number, applied);
+                }
+            }
         }
         state.power.reload_from_config();
         // (power.tick() runs on its own 1s timer — see power::install_tick_timer.)

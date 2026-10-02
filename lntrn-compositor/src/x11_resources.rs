@@ -15,11 +15,17 @@
 //!    RENDER `CreateCursor`, retained server-side with `RetainPermanent`
 //!    (the `xsetroot` trick) so it survives this short-lived connection.
 //!
-//! Both mirror the startup-time cursor settings, like the env vars do — a
-//! live cursor-theme change lands on the next session.
+//! Both follow `[input].cursor_size` live ([`apply_live`]): Chromium watches
+//! the property and reloads its cursors when it changes. The env vars can't
+//! follow — a process's environment is fixed at spawn — so libXcursor clients
+//! keep the startup size until the next session (client_cursor.rs magnifies
+//! them in the meantime). A cursor-theme change still lands next session.
 //!
 //! Implemented with x11rb (already in-tree via Smithay) over a throwaway
 //! connection — no xrdb/xsetroot binaries required.
+
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Mutex;
 
 use x11rb::connection::Connection;
 use x11rb::protocol::render::{self, ConnectionExt as _};
@@ -28,26 +34,53 @@ use x11rb::wrapper::ConnectionExt as _;
 
 /// Best-effort: a failure here means X11 apps see a default cursor, not a
 /// broken session — warn and move on.
-pub fn apply(display_number: u32) {
+pub fn apply(display_number: u32, size: u32) {
     // (named `display_name` because `display` collides with tracing's
     // shorthand helper inside its macros)
     let display_name = format!(":{display_number}");
-    if let Err(err) = apply_inner(&display_name) {
+    if let Err(err) = apply_inner(&display_name, size) {
         tracing::warn!("X11 cursor defaults failed on {}: {}", display_name, err);
     }
 }
 
-fn apply_inner(display: &str) -> Result<(), Box<dyn std::error::Error>> {
+/// The cursor size X11 clients are promised at startup: the `XCURSOR_SIZE`
+/// xwayland.rs exported (a user's own override, else `[input].cursor_size`).
+pub fn startup_size() -> u32 {
+    std::env::var("XCURSOR_SIZE")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or_else(|| crate::input::read_input_setting_f64("cursor_size", 24.0).round() as u32)
+}
+
+/// Re-apply after a live cursor-size change, off the calling thread: this is
+/// called from the render path, and the X round-trips (plus rasterizing the
+/// arrow) must neither hitch a frame nor wait on an XWayland that is itself
+/// waiting on us.
+///
+/// A slider drag fires several of these in a row. Each worker applies the
+/// newest requested size once it holds the lock, so whichever runs last
+/// leaves the newest size in place regardless of thread scheduling.
+pub fn apply_live(display_number: u32, size: u32) {
+    static WANTED: AtomicU32 = AtomicU32::new(0);
+    static APPLYING: Mutex<()> = Mutex::new(());
+
+    WANTED.store(size, Ordering::SeqCst);
+    let spawned = std::thread::Builder::new()
+        .name("x11-cursor-sync".into())
+        .spawn(move || {
+            let _guard = APPLYING.lock().unwrap_or_else(|e| e.into_inner());
+            apply(display_number, WANTED.load(Ordering::SeqCst));
+        });
+    if let Err(err) = spawned {
+        tracing::warn!("X11 cursor size sync thread failed to start: {err}");
+    }
+}
+
+fn apply_inner(display: &str, size: u32) -> Result<(), Box<dyn std::error::Error>> {
     let (conn, screen_num) = x11rb::connect(Some(display))?;
     let root = conn.setup().roots[screen_num].root;
 
     let theme = std::env::var("XCURSOR_THEME").unwrap_or_else(|_| "Lantern".to_string());
-    let size = std::env::var("XCURSOR_SIZE")
-        .ok()
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or_else(|| {
-            crate::input::read_input_setting_f64("cursor_size", 24.0).round() as u32
-        });
 
     set_resource_manager(&conn, root, &theme, size)?;
     if let Err(err) = set_root_cursor(&conn, root, size) {

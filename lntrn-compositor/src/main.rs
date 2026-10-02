@@ -4,6 +4,7 @@ mod animation;
 mod animations;
 mod blur;
 pub mod cc_thumbs;
+mod client_cursor;
 pub mod clipboard_ipc;
 pub mod clipboard_manager;
 mod cursor;

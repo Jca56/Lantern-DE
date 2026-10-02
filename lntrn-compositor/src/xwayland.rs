@@ -199,7 +199,7 @@ fn handle_xwayland_ready(
     // Server-side cursor defaults: the RESOURCE_MANAGER root property
     // (Chromium/CEF apps like Steam and Spotify read Xcursor.theme/.size from
     // there, NOT from the env vars above) plus a themed root window cursor.
-    crate::x11_resources::apply(display_number);
+    crate::x11_resources::apply(display_number, crate::x11_resources::startup_size());
 
     // (Do NOT set XRandR primary here — Steam's webhelper (CEF) hits a
     // NOTREACHED assertion shortly after XWayland reports a primary output
