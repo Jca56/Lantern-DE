@@ -23,6 +23,8 @@ pub fn run_picker_and_export(note: &Note) -> Result<PathBuf, String> {
     let _ = std::fs::create_dir_all(&start_dir);
 
     let output = Command::new("lntrn-file-manager")
+        // NUL framing: the path arrives as its exact bytes.
+        .arg("--pick-print0")
         .arg("--pick-save")
         .arg("--title")
         .arg("Export Note")
@@ -35,12 +37,9 @@ pub fn run_picker_and_export(note: &Note) -> Result<PathBuf, String> {
 
     // The picker emits the chosen path on stdout. An empty stdout means
     // the user cancelled (Esc / closed the window).
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let chosen = stdout.lines().next().map(|s| s.trim()).unwrap_or("");
-    if chosen.is_empty() {
+    let Some(path) = crate::picker::picked_paths(&output.stdout).into_iter().next() else {
         return Err("cancelled".to_string());
-    }
-    let path = PathBuf::from(chosen);
+    };
 
     // Build the file body: include the title as a leading line when
     // present, mirroring the previous in-place export format.

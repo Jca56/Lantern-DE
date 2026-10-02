@@ -157,12 +157,26 @@ pub(super) fn worker(tx: mpsc::Sender<BtEvent>, cmd_rx: mpsc::Receiver<BtCmd>) {
                 BtCmd::SendFileToDevice { mac } => {
                     // 1) Pop the file picker by spawning lntrn-file-manager.
                     let picker = Command::new("lntrn-file-manager")
-                        .args(["--pick", "--title", "Send via Bluetooth"])
+                        .args(["--pick", "--pick-print0", "--title", "Send via Bluetooth"])
                         .output();
                     let path = match picker {
                         Ok(o) if o.status.success() => {
-                            let s = String::from_utf8_lossy(&o.stdout);
-                            s.lines().next().unwrap_or("").to_string()
+                            let picked = crate::picker::picked_paths(&o.stdout).into_iter().next();
+                            match picked.as_deref().map(std::path::Path::to_str) {
+                                Some(Some(path)) => path.to_string(),
+                                // OBEX takes the file's path as text.
+                                Some(None) => {
+                                    let _ = tx.send(BtEvent::SendFailed {
+                                        mac: mac.clone(),
+                                        msg: "this file's name is not valid text (UTF-8); rename it first".to_string(),
+                                    });
+                                    String::new()
+                                }
+                                None => {
+                                    let _ = tx.send(BtEvent::SendCleared { mac: mac.clone() });
+                                    String::new()
+                                }
+                            }
                         }
                         Ok(_) => {
                             // Cancelled — that's not a failure, just

@@ -22,6 +22,7 @@ mod outer_edit;
 mod outer_zones;
 mod panel_visible;
 mod persisted_state;
+mod picker;
 mod power;
 mod render;
 mod search;
