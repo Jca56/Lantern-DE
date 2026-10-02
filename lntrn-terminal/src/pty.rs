@@ -24,6 +24,24 @@ impl Pty {
         cwd: Option<&str>,
         repaint: Box<dyn Fn() + Send + 'static>,
     ) -> Result<Self, String> {
+        let shell = std::ffi::CString::new(shell).map_err(|_| "Invalid shell path".to_string())?;
+        Self::spawn_argv(&[shell], None, cwd, repaint)
+    }
+
+    /// Spawn a new PTY running `argv` (program and arguments) instead of a
+    /// shell: what `lntrn-terminal -e ...` starts in its own tab. If the
+    /// program cannot be started, the reason is printed in the terminal and
+    /// `fallback_shell` runs in its place, so the window does not just
+    /// flash and vanish.
+    pub fn spawn_argv(
+        argv: &[std::ffi::CString],
+        fallback_shell: Option<&std::ffi::CStr>,
+        cwd: Option<&str>,
+        repaint: Box<dyn Fn() + Send + 'static>,
+    ) -> Result<Self, String> {
+        let Some(program) = argv.first() else {
+            return Err("nothing to run".to_string());
+        };
         let pty_pair = openpty(None, None).map_err(|e| format!("openpty: {e}"))?;
 
         if let Ok(mut termios) = termios::tcgetattr(&pty_pair.slave) {
@@ -72,8 +90,18 @@ impl Pty {
                 std::env::remove_var("CLAUDECODE");
                 std::env::remove_var("CLAUDE_CODE_ENTRYPOINT");
 
-                let shell_cstr = std::ffi::CString::new(shell).expect("Invalid shell path");
-                execvp(&shell_cstr, &[&shell_cstr]).ok();
+                let failed = execvp(program, argv).err();
+                if let (Some(errno), Some(shell)) = (failed, fallback_shell) {
+                    // Straight to the terminal (fd 2 is the pty), not
+                    // through std's stderr handle: this is a forked child.
+                    let msg = format!(
+                        "lntrn-terminal: cannot run {}: {}\r\n",
+                        program.to_string_lossy(),
+                        errno.desc()
+                    );
+                    unsafe { libc::write(2, msg.as_ptr().cast(), msg.len()) };
+                    execvp(shell, &[shell]).ok();
+                }
 
                 std::process::exit(1);
             }
@@ -100,7 +128,13 @@ impl Pty {
                             break;
                         }
 
-                        if poll_fd.revents & (libc::POLLHUP | libc::POLLERR) != 0 {
+                        // Hang-up with nothing left to read: the program
+                        // has gone. (With output still waiting, POLLIN is
+                        // set as well and is read first: what a program
+                        // prints just before it exits must not be lost.)
+                        if poll_fd.revents & libc::POLLIN == 0
+                            && poll_fd.revents & (libc::POLLHUP | libc::POLLERR) != 0
+                        {
                             break;
                         }
 
@@ -289,9 +323,70 @@ fn take_buffered_chunk(
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::CString;
     use std::sync::mpsc;
+    use std::time::{Duration, Instant};
 
-    use super::take_buffered_chunk;
+    use super::{take_buffered_chunk, Pty};
+
+    /// Everything the pty prints until it has printed `until`, or until
+    /// the program behind it has gone.
+    fn output_until(pty: &mut Pty, until: &str) -> String {
+        let mut seen = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            match pty.read(4096) {
+                Some((bytes, _)) => seen.extend(bytes),
+                None if !pty.alive => break,
+                None => std::thread::sleep(Duration::from_millis(10)),
+            }
+            if String::from_utf8_lossy(&seen).contains(until) {
+                break;
+            }
+        }
+        String::from_utf8_lossy(&seen).into_owned()
+    }
+
+    fn argv(parts: &[&str]) -> Vec<CString> {
+        parts.iter().map(|p| CString::new(*p).unwrap()).collect()
+    }
+
+    /// `-e`: the program gets its arguments exactly as given (a blank, a
+    /// quote and a `$(...)` are text, no shell reads them) and runs in the
+    /// folder asked for.
+    #[test]
+    fn a_command_runs_with_its_arguments_as_given_in_the_folder_asked_for() {
+        let dir = std::env::temp_dir().join(format!("lntrn-term-e-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir = dir.canonicalize().unwrap();
+        let odd = "it's $(echo no) here";
+        let command = argv(&["/bin/sh", "-c", "printf '<%s|%s>' \"$1\" \"$PWD\"", "sh", odd]);
+        let mut pty =
+            Pty::spawn_argv(&command, None, dir.to_str(), Box::new(|| {})).unwrap();
+        let out = output_until(&mut pty, ">");
+        assert!(
+            out.contains(&format!("<{odd}|{}>", dir.display())),
+            "{out:?}"
+        );
+        pty.cleanup();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A program that cannot be started says so in the terminal, and the
+    /// shell takes its place instead of the tab closing at once.
+    #[test]
+    fn a_command_that_cannot_start_says_so_and_leaves_a_shell() {
+        let command = argv(&["/nonexistent/lntrn-no-such-program", "x"]);
+        // `true` stands in for the shell: it shows that the fallback ran.
+        let fallback = CString::new("/bin/true").unwrap();
+        let mut pty =
+            Pty::spawn_argv(&command, Some(&fallback), None, Box::new(|| {})).unwrap();
+        let out = output_until(&mut pty, "cannot run");
+        assert!(out.contains("cannot run /nonexistent/lntrn-no-such-program"), "{out:?}");
+        pty.cleanup();
+
+        assert!(Pty::spawn_argv(&[], None, None, Box::new(|| {})).is_err());
+    }
 
     #[test]
     fn read_preserves_unconsumed_output_between_calls() {

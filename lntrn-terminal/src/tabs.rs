@@ -13,6 +13,20 @@ use crate::app::{App, Pane, SplitDir, Tab, CURSOR_BLINK_INTERVAL};
 
 impl App {
     pub(crate) fn create_pane(&self, cols: usize, rows: usize, cwd: Option<&str>) -> Pane {
+        self.create_pane_running(cols, rows, cwd, None)
+    }
+
+    /// A pane running `command` (program and arguments), or the shell when
+    /// there is none.
+    fn create_pane_running(
+        &self,
+        cols: usize,
+        rows: usize,
+        cwd: Option<&str>,
+        command: Option<&[std::ffi::OsString]>,
+    ) -> Pane {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
         let proxy = self.proxy.clone();
         let repaint = Box::new(move || {
             proxy.send_event(UserEvent::PtyOutput).ok();
@@ -29,7 +43,28 @@ impl App {
             .filter(|s| s != "/")
             .unwrap_or_else(|| std::env::var("HOME").unwrap_or_else(|_| "/".to_string()));
         let dir = cwd.unwrap_or(&process_cwd);
-        let pty = Pty::spawn(&shell, Some(dir), repaint).expect("Failed to spawn PTY");
+        // (An argument cannot hold a NUL byte: such a command is not run.)
+        let argv: Option<Vec<CString>> = command.and_then(|command| {
+            command
+                .iter()
+                .map(|arg| CString::new(arg.as_bytes()).ok())
+                .collect()
+        });
+        let title = argv
+            .as_ref()
+            .and_then(|argv| argv.first())
+            .map(|program| {
+                let name = program.to_string_lossy();
+                name.rsplit('/').next().unwrap_or(&name).to_string()
+            })
+            .unwrap_or_else(|| "Shell".to_string());
+        let pty = match (&argv, CString::new(shell.as_str())) {
+            (Some(argv), Ok(shell)) if !argv.is_empty() => {
+                Pty::spawn_argv(argv, Some(&shell), Some(dir), repaint)
+            }
+            _ => Pty::spawn(&shell, Some(dir), repaint),
+        }
+        .expect("Failed to spawn PTY");
 
         let mut terminal = TerminalState::new(cols, rows);
         terminal.set_default_colors(
@@ -42,7 +77,7 @@ impl App {
         Pane {
             terminal,
             pty,
-            title: "Shell".to_string(),
+            title,
         }
     }
 
@@ -69,6 +104,23 @@ impl App {
             p.terminal.osc7_cwd.clone().or_else(|| p.pty.cwd())
         });
         let pane = self.create_pane(cols, rows, cwd.as_deref());
+        self.tabs.push(Tab {
+            panes: vec![pane],
+            active_pane: 0,
+            split: None,
+            pinned: false,
+            custom_name: None,
+        });
+        self.active_tab = self.tabs.len() - 1;
+    }
+
+    /// The tab the terminal was started for (`-e`): it runs `command` in
+    /// the folder the terminal was started in, and is the one in front.
+    pub(crate) fn spawn_command_tab(&mut self, command: &[std::ffi::OsString]) {
+        let (cols, rows) = self.initial_grid_size();
+        // Not the folder of the tab before it (a pinned one): the caller
+        // chose the working directory.
+        let pane = self.create_pane_running(cols, rows, None, Some(command));
         self.tabs.push(Tab {
             panes: vec![pane],
             active_pane: 0,

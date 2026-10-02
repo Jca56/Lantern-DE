@@ -55,6 +55,9 @@ pub struct App {
     pub config: LanternConfig,
     pub theme: Theme,
     pub(crate) proxy: EventLoopProxy<UserEvent>,
+    /// `-e <program> [args...]`: what the window's own tab runs instead of
+    /// a shell. Taken when that tab is made.
+    pub(crate) startup_command: Option<Vec<std::ffi::OsString>>,
 
     // Initialized on resumed
     pub(crate) window: Option<Arc<Window>>,
@@ -136,7 +139,10 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(proxy: EventLoopProxy<UserEvent>) -> Self {
+    pub fn new(
+        proxy: EventLoopProxy<UserEvent>,
+        startup_command: Option<Vec<std::ffi::OsString>>,
+    ) -> Self {
         let config = LanternConfig::load();
         let theme = Theme::from_config(&config);
         let open_chrome_hidden = config.general.open_chrome_hidden;
@@ -157,6 +163,7 @@ impl App {
             config,
             theme,
             proxy,
+            startup_command,
             window: None,
             gpu: None,
             scale: 1.0,
@@ -617,7 +624,14 @@ impl ApplicationHandler<UserEvent> for App {
 
         self.init_gpu();
         self.restore_pinned_tabs();
-        self.spawn_tab();
+        // The window's own tab, the one in front: a shell, or the command
+        // the terminal was started for (`-e`). Pinned tabs are restored
+        // either way, so pinning or unpinning in this window still saves
+        // the whole set.
+        match self.startup_command.take() {
+            Some(command) => self.spawn_command_tab(&command),
+            None => self.spawn_tab(),
+        }
         self.update_grid_size();
     }
 
