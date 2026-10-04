@@ -5,6 +5,7 @@
 
 mod cards;
 mod draw;
+mod ethernet;
 mod header;
 mod hit;
 mod layout;
@@ -50,6 +51,17 @@ pub(super) const BAND_PILL_W: f32 = 72.0;
 pub(super) const BAND_PILL_GAP: f32 = 8.0;
 pub(super) const BAND_PILL_FONT: f32 = 18.0;
 pub(super) const BAND_LABEL_FONT: f32 = 18.0;
+
+/// Wired-port cards, pinned between the header and the network list.
+pub(super) const ETH_CARD_H: f32 = 80.0;
+pub(super) const ETH_CARD_GAP: f32 = 8.0;
+/// Space between the last card and the first network row.
+pub(super) const ETH_BLOCK_BOTTOM_GAP: f32 = 12.0;
+pub(super) const ETH_ICON_SIZE: f32 = 36.0;
+pub(super) const ETH_DETAIL_FONT: f32 = 20.0;
+/// Between a card's title and its detail line.
+pub(super) const ETH_TEXT_GAP: f32 = 6.0;
+pub(super) const MAX_ETH_CARDS: usize = 3;
 
 /// Round refresh button on the right edge of the header row.
 pub(super) const REFRESH_BTN_SIZE: f32 = 44.0;

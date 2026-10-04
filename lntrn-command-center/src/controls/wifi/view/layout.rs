@@ -5,6 +5,7 @@ use lntrn_render::Rect;
 
 use crate::controls::wifi::{Band, Network, Wifi};
 
+use super::ethernet;
 use super::{
     BAND_PILL_GAP, BAND_PILL_H, BAND_PILL_W, BAND_ROW_TOP_GAP, BSSID_CARD_GAP, BSSID_CARD_H,
     BSSID_HEADER_BOTTOM_GAP, BSSID_HEADER_FONT, BSSID_LOCK_PAD, BSSID_LOCK_SIZE, COL_GUTTER,
@@ -15,10 +16,17 @@ use super::{
     PROFILE_SECTION_TOP_GAP, ROW_HEIGHT, VIEW_HEADER_BOTTOM_GAP, VIEW_HEADER_FONT, VIEW_TOP_PAD,
 };
 
-/// Y-coordinate (physical px) of the first network row, BEFORE scroll
-/// is applied. Header sits above the list and doesn't scroll.
-pub fn row_list_top_y(panel_top_y: f32, scale: f32) -> f32 {
+/// Y-coordinate (physical px) just below the header row, where the
+/// pinned wired-port cards start (or the network list, without any).
+pub(super) fn header_bottom_y(panel_top_y: f32, scale: f32) -> f32 {
     panel_top_y + VIEW_TOP_PAD * scale + VIEW_HEADER_FONT * scale + VIEW_HEADER_BOTTOM_GAP * scale
+}
+
+/// Y-coordinate (physical px) of the first network row, BEFORE scroll
+/// is applied. The header and the wired-port cards sit above the list
+/// and don't scroll.
+pub fn row_list_top_y(wifi: &Wifi, panel_top_y: f32, scale: f32) -> f32 {
+    header_bottom_y(panel_top_y, scale) + ethernet::block_height(wifi, scale)
 }
 
 /// Total content height of the visible-network list in physical px,

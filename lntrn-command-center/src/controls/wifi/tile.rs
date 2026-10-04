@@ -1,6 +1,6 @@
-//! Inline-tile drawing and the shared signal-bars icon. The icon is
-//! drawn in two places (the inline tile and each row of the expanded
-//! view) so it lives here as a shared helper.
+//! Inline-tile drawing and the shared signal-bars and Ethernet icons.
+//! Each icon is drawn in two places (the inline tile and the expanded
+//! view) so they live here as shared helpers.
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
@@ -32,15 +32,28 @@ pub fn draw_inline(
     let icon_x = layout.x + ICON_LEFT_PAD * scale;
     let icon_y = layout.y + (layout.h - icon_size) / 2.0;
 
-    let bars = match wifi.state() {
-        WifiState::Connected { signal, .. } => signal_to_bars(*signal),
-        WifiState::Disconnected => 0,
-        WifiState::Off => 0,
-    };
     let on_color = if lit {
         Color::from_rgb8(0xc8, 0x86, 0x0a)
     } else {
         Color::from_rgb8(0xff, 0xff, 0xff)
+    };
+    // A wired port carrying the traffic takes over the tile: signal bars
+    // would describe a connection that's only the fallback.
+    if wifi.wired_active() {
+        draw_ethernet_icon(
+            painter,
+            icon_x,
+            icon_y,
+            icon_size,
+            icon_size,
+            on_color.with_alpha(alpha),
+        );
+        return;
+    }
+    let bars = match wifi.state() {
+        WifiState::Connected { signal, .. } => signal_to_bars(*signal),
+        WifiState::Disconnected => 0,
+        WifiState::Off => 0,
     };
     draw_signal_icon_colored(
         painter, icon_x, icon_y, icon_size, icon_size, bars, alpha, on_color,
@@ -114,6 +127,68 @@ fn draw_signal_icon_colored(
         painter.rect_filled(
             Rect::new(bar_x, bar_y, bar_w, bar_h_actual),
             bar_w * 0.25,
+            color,
+        );
+    }
+}
+
+/// Wired-network icon: one node on top, joined through a bus to two
+/// nodes below. The pieces abut rather than overlap, so a translucent
+/// `color` doesn't show darker seams where they meet.
+pub(super) fn draw_ethernet_icon(
+    painter: &mut Painter,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    color: Color,
+) {
+    let node_w = w * 0.38;
+    let node_h = h * 0.30;
+    let node_r = node_w * 0.18;
+    let stroke = (w * 0.09).max(1.5);
+    let top_bottom = y + h * 0.04 + node_h;
+    let bus_y = y + h * 0.50;
+    let lower_top = y + h * 0.66;
+    let mid_x = x + w / 2.0;
+    let left_x = x + node_w / 2.0;
+    let right_x = x + w - node_w / 2.0;
+
+    // Nodes.
+    painter.rect_filled(
+        Rect::new(mid_x - node_w / 2.0, y + h * 0.04, node_w, node_h),
+        node_r,
+        color,
+    );
+    for cx in [left_x, right_x] {
+        painter.rect_filled(
+            Rect::new(cx - node_w / 2.0, lower_top, node_w, node_h),
+            node_r,
+            color,
+        );
+    }
+    // Stem down from the top node, the bus, then a drop to each lower node.
+    let bus_top = bus_y - stroke / 2.0;
+    let bus_bottom = bus_y + stroke / 2.0;
+    painter.rect_filled(
+        Rect::new(mid_x - stroke / 2.0, top_bottom, stroke, bus_top - top_bottom),
+        0.0,
+        color,
+    );
+    painter.rect_filled(
+        Rect::new(
+            left_x - stroke / 2.0,
+            bus_top,
+            right_x - left_x + stroke,
+            stroke,
+        ),
+        0.0,
+        color,
+    );
+    for cx in [left_x, right_x] {
+        painter.rect_filled(
+            Rect::new(cx - stroke / 2.0, bus_bottom, stroke, lower_top - bus_bottom),
+            0.0,
             color,
         );
     }

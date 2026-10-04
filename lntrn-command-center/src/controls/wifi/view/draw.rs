@@ -1,5 +1,6 @@
 //! Top-level drawing for the WiFi panel — header row, list, scrollbar,
-//! per-row chrome, expanded body. Right-column cards live in [`cards`].
+//! per-row chrome, expanded body. Right-column cards live in [`cards`],
+//! the pinned wired-port cards in [`ethernet`].
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
@@ -8,10 +9,11 @@ use crate::controls::wifi::tile::{draw_signal_icon, signal_to_bars};
 use crate::controls::wifi::Wifi;
 
 use super::cards::draw_right_column;
+use super::ethernet::draw_cards;
 use super::header::draw_header;
 use super::layout::{
     band_pill_rect, band_row_top, connect_button_rect, detail_rows, expanded_extra_height,
-    has_band_selector, left_col_width, max_scroll, row_list_top_y,
+    has_band_selector, header_bottom_y, left_col_width, max_scroll, row_list_top_y,
 };
 use super::{
     BAND_LABEL_FONT, BAND_PILL_FONT, BAND_PILL_H, BAND_ROW_TOP_GAP, EXPAND_BUTTON_FONT,
@@ -51,11 +53,32 @@ pub fn draw_view(
         painter, text, wifi, panel, panel_top_y, scale, alpha, surface_w, surface_h,
     );
 
+    // ── Wired ports: pinned, never scroll ──
+    draw_cards(
+        painter,
+        text,
+        wifi,
+        inner_x,
+        inner_w,
+        header_bottom_y(panel_top_y, scale),
+        scale,
+        alpha,
+        surface_w,
+        surface_h,
+    );
+    // While a wired port carries the traffic, the connected WiFi network
+    // is only the fallback: it gives up the gold "this one" treatment.
+    let wired_active = wifi.wired_active();
+
     // ── Network rows ──
     if wifi.networks().is_empty() {
-        let msg_y = row_list_top_y(panel_top_y, scale);
+        let msg_y = row_list_top_y(wifi, panel_top_y, scale);
         text.queue(
-            "Scanning…",
+            if wifi.has_wifi() {
+                "Scanning…"
+            } else {
+                "Wi-Fi unavailable"
+            },
             row_font,
             inner_x,
             msg_y,
@@ -70,7 +93,7 @@ pub fn draw_view(
     // List clip: from row_list_top_y down to the bottom of the panel
     // (minus a small bottom pad). Rows that scroll out of this rect
     // get clipped rather than bleeding into chrome below.
-    let list_top = row_list_top_y(panel_top_y, scale);
+    let list_top = row_list_top_y(wifi, panel_top_y, scale);
     let list_bottom = panel.y + panel.h - LIST_BOTTOM_PAD * scale;
     let viewport_h = (list_bottom - list_top).max(0.0);
     let max = max_scroll(wifi, viewport_h, scale);
@@ -99,6 +122,7 @@ pub fn draw_view(
         // Subtle row-stripe for readability + brighter highlight on the
         // currently-connected row.
         let is_hovered = wifi.hovered_ssid.as_deref() == Some(net.ssid.as_str());
+        let carrying = net.in_use && !wired_active;
         if is_expanded {
             // Darker grey plate behind the expanded card so the BSSID
             // grid + Connect button read clearly against the panel bg.
@@ -110,7 +134,7 @@ pub fn draw_view(
         } else if i % 2 == 0 {
             painter.rect_filled(row_rect, 8.0 * scale, white.with_alpha(0.04 * alpha));
         }
-        if net.in_use {
+        if carrying {
             painter.rect_filled(row_rect, 8.0 * scale, gold.with_alpha(0.18 * alpha));
         }
         // Hover highlight sits on top of the stripe so it reads
@@ -118,7 +142,7 @@ pub fn draw_view(
         // row since the gold tint already signals selection clearly,
         // and skipped while expanded since the container plate
         // already differentiates the row.
-        if is_hovered && !net.in_use && !is_expanded {
+        if is_hovered && !carrying && !is_expanded {
             painter.rect_filled(row_rect, 8.0 * scale, white.with_alpha(0.10 * alpha));
         }
 
@@ -162,7 +186,7 @@ pub fn draw_view(
         // SSID label. The connected network gets a larger, gold label
         // so it stands out at a glance even before reading the badge.
         let label_x = icon_x + signal_size + signal_gap;
-        let (ssid_font, ssid_color) = if net.in_use {
+        let (ssid_font, ssid_color) = if carrying {
             (row_font * 1.20, gold.with_alpha(alpha))
         } else {
             (row_font, white.with_alpha(0.86 * alpha))
@@ -207,7 +231,11 @@ pub fn draw_view(
                 surface_h,
             );
         } else if net.in_use {
-            let s = "Connected";
+            let (s, color) = if carrying {
+                ("Connected", gold.with_alpha(alpha))
+            } else {
+                ("Standby", white.with_alpha(0.86 * alpha))
+            };
             let f = row_font * 0.8;
             let w = text.measure_width(s, f);
             right_x -= w;
@@ -216,7 +244,7 @@ pub fn draw_view(
                 f,
                 right_x,
                 row_y + (row_h - f) / 2.0,
-                gold.with_alpha(alpha),
+                color,
                 w,
                 surface_w,
                 surface_h,

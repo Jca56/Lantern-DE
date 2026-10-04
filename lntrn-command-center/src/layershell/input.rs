@@ -46,7 +46,8 @@ pub(super) fn handle_scroll(
         crate::app::PanelMode::Control(crate::controls::TileId::Wifi)
     ) {
         let view_top_y = crate::controls::content_top_y(panel_rect, scale_f);
-        let list_top = crate::controls::wifi::row_list_top_y(view_top_y, scale_f);
+        let list_top =
+            crate::controls::wifi::row_list_top_y(&app.controls.wifi, view_top_y, scale_f);
         let viewport_h = (panel_rect.y + panel_rect.h - list_top).max(0.0);
         let max = crate::controls::wifi::max_scroll(&app.controls.wifi, viewport_h, scale_f);
         app.controls.wifi.scroll = (app.controls.wifi.scroll + dy).clamp(0.0, max);

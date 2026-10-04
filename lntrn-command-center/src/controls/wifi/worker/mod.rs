@@ -1,7 +1,9 @@
 //! Worker thread for the WiFi tile.
 //!
 //! Splits responsibility:
-//!   - This module owns the polling loop and command dispatch.
+//!   - This module owns the polling loop and command dispatch. It also
+//!     re-reads the wired ports ([`super::ethernet`]) on the status
+//!     cadence; those need no bus, so they keep updating without one.
 //!   - [`iwd`] handles iwd over D-Bus (`net.connman.iwd`) — the only
 //!     supported backend. Both Lantern hosts (Arch laptop + Gentoo
 //!     desktop) run iwd.
@@ -22,6 +24,7 @@ use std::time::{Duration, Instant};
 
 use zbus::blocking::Connection;
 
+use super::ethernet::{self, EthPort};
 use super::{Network, WifiCmd, WifiEvent, WifiState};
 use crate::panel_visible::VisGate;
 
@@ -44,12 +47,23 @@ const SCAN_INTERVAL: Duration = Duration::from_secs(8);
 /// Backoff between attempts to reopen a dropped system-bus connection.
 const RECONNECT_INTERVAL: Duration = Duration::from_secs(3);
 
+/// Re-read the wired ports and report them if anything changed.
+fn poll_ethernet(tx: &mpsc::Sender<WifiEvent>, last: &mut Vec<EthPort>) {
+    let ports = ethernet::poll();
+    if ports != *last {
+        last.clone_from(&ports);
+        let _ = tx.send(WifiEvent::Ethernet(ports));
+    }
+}
+
 /// Worker entry point. Spawned from [`crate::controls::wifi::Wifi::new`].
 pub(crate) fn run(tx: mpsc::Sender<WifiEvent>, cmd_rx: mpsc::Receiver<WifiCmd>) {
     let mut conn: Option<Connection> = Connection::system().ok();
     let mut last_conn_try = Instant::now();
     let mut gate = VisGate::new();
+    let mut eth_ports: Vec<EthPort> = Vec::new();
 
+    poll_ethernet(&tx, &mut eth_ports);
     if let Some(c) = &conn {
         let _ = tx.send(WifiEvent::Status(iwd::poll_status(c)));
         let _ = tx.send(WifiEvent::Networks(iwd::scan_networks(c)));
@@ -116,6 +130,7 @@ pub(crate) fn run(tx: mpsc::Sender<WifiEvent>, cmd_rx: mpsc::Receiver<WifiCmd>) 
                 conn = None;
                 last_conn_try = Instant::now();
             }
+            poll_ethernet(&tx, &mut eth_ports);
             last_status = Instant::now();
         }
         // The network list only matters while someone can see it.

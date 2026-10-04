@@ -9,6 +9,10 @@
 //! a connect; secured networks the user hasn't connected to before
 //! show a password modal.
 //!
+//! Pinned above that list sits one card per wired port (link state,
+//! speed, address, and which connection is carrying the traffic). While
+//! a wired port carries it, the inline tile shows an Ethernet icon.
+//!
 //! Backend: autodetected at startup — iwd (over D-Bus) on the Gentoo
 //! desktop, NetworkManager (via `nmcli`) on the Arch laptop. Scans take
 //! ~500-1500 ms either way so we run them on a dedicated background
@@ -19,6 +23,7 @@
 //! - `mod.rs` (this file): [`Wifi`] state struct, password prompt, and
 //!   the worker-bound enums.
 //! - `types.rs`: network / band / profile data types.
+//! - `ethernet.rs`: wired-port state, read straight from sysfs / procfs.
 //! - `worker/`: the background polling thread plus the iwd backend.
 //! - `view/`: click-expand drawing, hit-testing, and layout.
 //! - `modal.rs`: password-prompt drawing and hit-testing.
@@ -30,12 +35,14 @@ use std::time::Instant;
 
 use crate::search::input::Input;
 
+mod ethernet;
 mod modal;
 mod tile;
 mod types;
 mod view;
 mod worker;
 
+pub use ethernet::{EthLink, EthPort};
 pub use types::{Band, BandEntry, Network, Profile, WifiState};
 
 // Re-export the public surface so external callers (layershell, the
@@ -83,6 +90,8 @@ pub(crate) enum WifiCmd {
 pub(crate) enum WifiEvent {
     Status(WifiState),
     Networks(Vec<Network>),
+    /// The wired ports changed (link, speed, address or default route).
+    Ethernet(Vec<EthPort>),
     ConnectOk,
     ConnectFail(String),
     /// A user-requested rescan finished and its fresh network list has
@@ -95,10 +104,12 @@ pub(crate) enum WifiEvent {
 pub struct Wifi {
     state: WifiState,
     networks: Vec<Network>,
+    /// Wired ports, sorted by name. Empty on a machine with none.
+    ethernet: Vec<EthPort>,
     /// Last connect failure shown in the expanded view.
     last_error: Option<String>,
     /// Whether a usable WiFi backend (iwd or NetworkManager) was detected
-    /// at startup. False → tile draws nothing.
+    /// at startup. False with no wired port either → tile draws nothing.
     available: bool,
     cmd_tx: mpsc::Sender<WifiCmd>,
     event_rx: mpsc::Receiver<WifiEvent>,
@@ -152,14 +163,22 @@ impl PasswordPrompt {
 impl Wifi {
     pub fn new() -> Self {
         // iwd owns the airwaves on every Lantern host. Skip spawning the
-        // worker if it isn't on the bus so the tile hides cleanly.
+        // worker if it isn't on the bus and there's no wired port to
+        // watch either, so the tile hides cleanly.
         let available = worker::is_available();
+        // Read once up front so the tile's presence is settled before
+        // the first frame; the worker keeps it fresh from here on.
+        let ethernet = ethernet::poll();
 
         let (cmd_tx, cmd_rx) = mpsc::channel();
         let (event_tx, event_rx) = mpsc::channel();
 
-        if available {
-            tracing::info!("wifi worker spawning (backend=iwd)");
+        if available || !ethernet.is_empty() {
+            tracing::info!(
+                iwd = available,
+                wired_ports = ethernet.len(),
+                "network worker spawning"
+            );
             thread::Builder::new()
                 .name("lcc-wifi-poll".into())
                 .spawn(move || worker::run(event_tx, cmd_rx))
@@ -169,6 +188,7 @@ impl Wifi {
         Self {
             state: WifiState::Off,
             networks: Vec::new(),
+            ethernet,
             last_error: None,
             available,
             cmd_tx,
@@ -190,6 +210,12 @@ impl Wifi {
     }
 
     pub fn is_present(&self) -> bool {
+        self.available || !self.ethernet.is_empty()
+    }
+
+    /// False when no WiFi backend was found, i.e. the tile is only here
+    /// for a wired port.
+    pub fn has_wifi(&self) -> bool {
         self.available
     }
 
@@ -211,6 +237,7 @@ impl Wifi {
             changed = true;
             match ev {
                 WifiEvent::Status(s) => self.state = s,
+                WifiEvent::Ethernet(ports) => self.ethernet = ports,
                 WifiEvent::Networks(mut n) => {
                     // Preserve the user's band selection + pinned BSSID
                     // across rescans when they're still valid (the band

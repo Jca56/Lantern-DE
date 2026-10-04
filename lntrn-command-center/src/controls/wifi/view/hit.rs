@@ -66,7 +66,7 @@ pub fn hit_test_network(
     }
 
     let header_h = ROW_HEIGHT * scale;
-    let list_top = row_list_top_y(panel_top_y, scale);
+    let list_top = row_list_top_y(wifi, panel_top_y, scale);
     // Reject clicks above the first row (header area) so the SSID
     // labels there don't grab clicks meant for scrollbar drag etc.
     if y < list_top {
