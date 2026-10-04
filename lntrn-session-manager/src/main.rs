@@ -317,6 +317,12 @@ fn main() {
 
     // Start the Lantern compositor
     log("🏮 Starting lntrn-compositor...");
+    // Keep the previous session's log: a problem that ends in a reboot is
+    // otherwise wiped by the very restart that follows it.
+    let _ = std::fs::rename(
+        lantern_log_dir.join("compositor.log"),
+        lantern_log_dir.join("compositor.log.1"),
+    );
     let compositor_log = std::fs::File::create(lantern_log_dir.join("compositor.log"))
         .expect("Failed to create compositor log file");
     let compositor_err = compositor_log
