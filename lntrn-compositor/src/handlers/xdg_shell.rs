@@ -275,12 +275,18 @@ impl Lantern {
             return;
         };
 
-        let output = self
+        // No output at all (every monitor unplugged) or a window that is
+        // not placed: there is nothing to constrain the popup to.
+        let Some(output_geo) = self
             .output_for_window(window)
             .or_else(|| self.workspaces.outputs_iter().next().cloned())
-            .unwrap();
-        let output_geo = self.workspaces.output_geometry(&output).unwrap();
-        let window_geo = self.space.element_geometry(window).unwrap();
+            .and_then(|output| self.workspaces.output_geometry(&output))
+        else {
+            return;
+        };
+        let Some(window_geo) = self.space.element_geometry(window) else {
+            return;
+        };
 
         let mut target = output_geo;
         target.loc -= get_popup_toplevel_coords(&PopupKind::Xdg(popup.clone()));

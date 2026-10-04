@@ -26,6 +26,7 @@ mod keyboard_focus;
 mod layer_position;
 mod minimize_anim;
 mod output_layout;
+mod output_recovery;
 mod output_toggle;
 mod power;
 mod rect_anim;

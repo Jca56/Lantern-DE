@@ -388,7 +388,14 @@ where
 
         let compositor = write_guard.get_mut(&crtc).unwrap();
         let compositor = compositor.get_mut().unwrap();
-        render_elements.submit_composited_frame(&mut *compositor, renderer)?;
+        if let Err(err) = render_elements.submit_composited_frame(&mut *compositor, renderer) {
+            // Lantern patch: only a `DrmOutput` ever removes its crtc from this
+            // list, and none is handed out on this path. Left in place, the
+            // crtc would be reported as a duplicate on every later attempt, so
+            // a modeset the driver refused once could never be retried.
+            write_guard.remove(&crtc);
+            return Err(err);
+        }
 
         Ok(DrmOutput {
             compositor: self.compositor.clone(),

@@ -100,6 +100,13 @@ pub fn render_surface(
 ) {
     let render_start = Instant::now();
 
+    // A parked or relighting output is driven by `output_recovery` alone.
+    // Bail before the animation ticks below re-arm a render that would land
+    // straight back here.
+    if !crate::udev::surface_renderable(state, node, crtc) {
+        return;
+    }
+
     // Tick the click ripple before any borrows of state fields land. Cleans
     // up expired rings and reschedules another frame so the animation keeps
     // progressing even without further input events.

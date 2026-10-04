@@ -30,7 +30,7 @@ use smithay::{
             timer::{TimeoutAction, Timer},
             EventLoop, RegistrationToken,
         },
-        drm::control::crtc,
+        drm::control::{connector, crtc},
         input::{AccelProfile, Device as LibinputDevice, Libinput},
         wayland_server::DisplayHandle,
     },
@@ -105,6 +105,20 @@ pub(crate) struct OutputSurface {
     /// When this output last answered frame callbacks (vblank or no-flip
     /// timer). Paces the no-flip path.
     pub last_callbacks_at: Option<Instant>,
+    /// Its monitor is gone but the output was kept because it was the last
+    /// one: nothing is rendered or flipped until the monitor comes back.
+    /// See `output_recovery`.
+    pub parked: bool,
+    /// Set while a returned monitor has no picture yet: `output_recovery`
+    /// retries the modeset on its own clock and nothing else renders it.
+    pub relight: Option<crate::output_recovery::Relight>,
+}
+
+impl OutputSurface {
+    /// Whether the ordinary render path may draw this output right now.
+    pub fn renderable(&self) -> bool {
+        !self.parked && self.relight.is_none()
+    }
 }
 
 /// Floor for the vblank watchdog timeout. The watchdog scales with the
@@ -131,6 +145,9 @@ pub(crate) struct GpuBackend {
     >,
     pub(crate) drm_scanner: DrmScanner,
     pub surfaces: HashMap<crtc::Handle, OutputSurface>,
+    /// Connected connectors whose output could not be brought up yet, each
+    /// with the timer that tries again. See `output_recovery`.
+    pub(crate) connect_retries: HashMap<connector::Handle, crate::output_recovery::ConnectRetry>,
     #[allow(dead_code)] // must stay alive to keep DRM event source registered
     pub(crate) drm_registration: RegistrationToken,
 }
@@ -873,6 +890,25 @@ fn schedule_render(state: &mut Lantern, force: bool) {
     }
 }
 
+/// Whether `render_surface` may draw this output now. When it may not (the
+/// output is parked or being relit, see `output_recovery`) the pending flag
+/// is dropped, so nothing keeps a render armed for it.
+pub(crate) fn surface_renderable(state: &mut Lantern, node: DrmNode, crtc: crtc::Handle) -> bool {
+    let Some(surface) = state
+        .udev
+        .as_mut()
+        .and_then(|u| u.backends.get_mut(&node))
+        .and_then(|b| b.surfaces.get_mut(&crtc))
+    else {
+        return false;
+    };
+    if !surface.renderable() {
+        surface.pending_render = false;
+        return false;
+    }
+    true
+}
+
 fn flush_pending_renders(state: &mut Lantern, force: bool) {
     let timeout = vblank_timeout(state);
     let udev = match state.udev.as_mut() {
@@ -905,7 +941,10 @@ fn flush_pending_renders(state: &mut Lantern, force: bool) {
                 // timer-driven renders; at high refresh it can hold a render
                 // past the next vblank. Trust the vblank handler — if a flip
                 // is in flight, that handler will re-render on completion.
-                if force || !surface.frame_pending {
+                if !surface.renderable() {
+                    // Parked or being relit: `output_recovery` owns it.
+                    surface.pending_render = false;
+                } else if force || !surface.frame_pending {
                     targets.push((*node, *crtc));
                 }
                 // If frame_pending, VBlank handler will pick it up — no timer needed

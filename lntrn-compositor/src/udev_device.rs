@@ -129,6 +129,7 @@ pub fn device_added(
             drm_output_manager,
             drm_scanner: DrmScanner::new(),
             surfaces: HashMap::new(),
+            connect_retries: HashMap::new(),
             drm_registration,
         },
     );
@@ -307,6 +308,10 @@ fn compile_shaders(udev: &mut crate::udev::UdevData) {
 }
 
 pub fn device_changed(state: &mut Lantern, node: DrmNode) {
+    // Whatever was still waiting for its monitor gets another try once this
+    // scan is handled: a hotplug event is the best hint that it is ready.
+    let waiting = crate::output_recovery::pending(state, node);
+
     let udev = match state.udev.as_mut() {
         Some(u) => u,
         None => return,
@@ -336,15 +341,31 @@ pub fn device_changed(state: &mut Lantern, node: DrmNode) {
             } => {
                 connector_connected(state, node, connector, crtc);
             }
-            DrmScanEvent::Disconnected {
-                connector: _,
-                crtc: Some(crtc),
+            DrmScanEvent::Connected {
+                connector,
+                crtc: None,
             } => {
-                connector_disconnected(state, node, crtc);
+                warn!(
+                    "Connector {}-{} connected, but no CRTC is free to drive it",
+                    connector.interface().as_str(),
+                    connector.interface_id()
+                );
             }
-            _ => {}
+            DrmScanEvent::Disconnected { connector, crtc } => {
+                info!(
+                    "Connector disconnected: {}-{}",
+                    connector.interface().as_str(),
+                    connector.interface_id()
+                );
+                crate::output_recovery::cancel_connect_retry(state, node, connector.handle());
+                if let Some(crtc) = crtc {
+                    connector_disconnected(state, node, crtc);
+                }
+            }
         }
     }
+
+    crate::output_recovery::nudge(state, node, waiting);
 }
 
 pub(crate) fn connector_connected(
@@ -353,6 +374,12 @@ pub(crate) fn connector_connected(
     connector: connector::Info,
     crtc: crtc::Handle,
 ) {
+    // The last output is kept while its monitor is away. If this is that
+    // monitor coming back, relighting it is all there is to do.
+    if crate::output_recovery::reconnect_parked(state, node, &connector, crtc) {
+        return;
+    }
+
     let udev = match state.udev.as_mut() {
         Some(u) => u,
         None => return,
@@ -368,11 +395,31 @@ pub(crate) fn connector_connected(
         connector.interface().as_str(),
         connector.interface_id()
     );
+    if backend.surfaces.contains_key(&crtc) {
+        warn!(
+            "Connector {} connected on a CRTC that already drives an output; ignoring",
+            output_name
+        );
+        return;
+    }
     info!(
         "Connector connected: {} (modes: {})",
         output_name,
         connector.modes().len()
     );
+
+    // A monitor that is still waking up can report itself connected before
+    // its mode list is readable.
+    if connector.modes().is_empty() {
+        crate::output_recovery::schedule_connect_retry(
+            state,
+            node,
+            connector.handle(),
+            &output_name,
+            "it reports no modes yet",
+        );
+        return;
+    }
 
     // Find preferred resolution, then pick highest refresh rate at that resolution
     let preferred_idx = connector
@@ -418,8 +465,6 @@ pub(crate) fn connector_connected(
         },
     );
 
-    let global = output.create_global::<Lantern>(&udev.display_handle);
-
     // Check monitor config for explicit position, otherwise auto-layout horizontally
     let monitor_configs = crate::read_monitor_configs();
     let (x, y) = if let Some(cfg) = monitor_configs.iter().find(|c| c.name == output_name) {
@@ -457,10 +502,6 @@ pub(crate) fn connector_connected(
         Some(Scale::Fractional(crate::monitor_scale(&output_name))),
         Some((x, y).into()),
     );
-    state.space.map_output(&output, (x, y));
-    state
-        .workspaces
-        .register_output(output.clone(), (x, y).into());
 
     output.user_data().insert_if_missing(|| UdevOutputId {
         crtc,
@@ -508,10 +549,27 @@ pub(crate) fn connector_connected(
         ) {
         Ok(output) => output,
         Err(e) => {
-            warn!("Failed to initialize DRM output: {:?}", e);
+            // Nothing is registered yet, so a failure leaves no half-built
+            // output behind. The driver can refuse the first modeset of a
+            // monitor that is still waking up: keep trying.
+            let why = format!("{e:?}");
+            crate::output_recovery::schedule_connect_retry(
+                state,
+                node,
+                connector.handle(),
+                &output_name,
+                &why,
+            );
             return;
         }
     };
+
+    // Only an output that can show a picture becomes part of the desktop.
+    let global = output.create_global::<Lantern>(&udev.display_handle);
+    state.space.map_output(&output, (x, y));
+    state
+        .workspaces
+        .register_output(output.clone(), (x, y).into());
 
     backend.surfaces.insert(
         crtc,
@@ -528,6 +586,8 @@ pub(crate) fn connector_connected(
             watchdog_timer: None,
             noflip_timer: None,
             last_callbacks_at: None,
+            parked: false,
+            relight: None,
         },
     );
 
@@ -562,9 +622,24 @@ pub(crate) fn connector_connected(
     // lantern.toml. Runs on every connect so connect-ordering doesn't matter;
     // skips the output currently being deliberately re-enabled.
     crate::output_toggle::reconcile_disabled_outputs(state);
+
+    crate::output_recovery::cancel_connect_retry(state, node, connector.handle());
+    // A parked output was only kept because it was the last one.
+    crate::output_recovery::retire_parked(state, &output_name);
 }
 
 pub fn connector_disconnected(state: &mut Lantern, node: DrmNode, crtc: crtc::Handle) {
+    // The last output is kept rather than torn down, so the desktop never
+    // loses its only screen. See `output_recovery`.
+    if crate::output_recovery::park(state, node, crtc) {
+        return;
+    }
+    teardown_output(state, node, crtc);
+}
+
+/// Remove an output for good: its DRM surface, its wl_output and its place
+/// in the layout.
+pub(crate) fn teardown_output(state: &mut Lantern, node: DrmNode, crtc: crtc::Handle) {
     let udev = match state.udev.as_mut() {
         Some(u) => u,
         None => return,
@@ -578,7 +653,10 @@ pub fn connector_disconnected(state: &mut Lantern, node: DrmNode, crtc: crtc::Ha
     if let Some(surface) = backend.surfaces.remove(&crtc) {
         udev.display_handle.remove_global::<Lantern>(surface.global);
         // Its one-shot timers would otherwise fire into a missing surface.
-        for tok in [surface.watchdog_timer, surface.noflip_timer]
+        let relight_timer = surface
+            .relight
+            .and_then(crate::output_recovery::Relight::into_timer);
+        for tok in [surface.watchdog_timer, surface.noflip_timer, relight_timer]
             .into_iter()
             .flatten()
         {
