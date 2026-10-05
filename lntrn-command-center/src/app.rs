@@ -134,6 +134,10 @@ pub struct AppState {
     /// pin; reorders or fires a regular click on release depending on
     /// whether the cursor moved past `PIN_DRAG_THRESHOLD`.
     pub pin_drag: Option<PinDrag>,
+    /// Active dock drag-reorder gesture, if any — the same gesture as
+    /// `pin_drag`, on a pinned icon in the mini-dock. `from_idx` indexes
+    /// the dock's pinned section.
+    pub dock_drag: Option<PinDrag>,
     /// When true, the panel renders as a minimal top-bar (controls row
     /// only). Toggled by the chevron button at the top-right; opening
     /// any control view automatically un-collapses.
@@ -326,6 +330,7 @@ impl AppState {
             power_hover: None,
             power_confirm: None,
             pin_drag: None,
+            dock_drag: None,
             collapsed: saved_collapsed,
             collapse_anim_start: None,
             collapse_anim_origin: if saved_collapsed { 1.0 } else { 0.0 },
@@ -620,7 +625,8 @@ pub struct ViewSlide {
     pub to_offset: f32,
 }
 
-/// Live state for a pin drag-reorder gesture in progress.
+/// Live state for a drag-reorder gesture in progress — a pin in the
+/// launcher grid, or a pinned icon in the mini-dock.
 #[derive(Debug, Clone, Copy)]
 pub struct PinDrag {
     pub from_idx: usize,

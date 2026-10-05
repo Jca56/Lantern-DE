@@ -12,7 +12,10 @@ use lntrn_render::{Color, Painter, Rect, TextRenderer};
 /// app. The action runs through `AppState::run_menu_action`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuAction {
+    /// Pin / unpin the app in the launcher's pinned grid.
     TogglePin,
+    /// Add / remove the app in the mini-dock's own list.
+    ToggleDock,
     ToggleHidden,
     Launch,
     /// Close the foreign-toplevel window stored in `ContextMenu.window_title`.

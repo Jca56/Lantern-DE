@@ -138,7 +138,7 @@ pub(super) fn render_frame(
             // the hovered dock app, arrayed horizontally.
             let mut slots: Vec<crate::thumbs::ThumbSlot> = Vec::new();
             let panel_logical = lntrn_render::Rect::new(p.rect.x, p.rect.y, p.rect.w, p.rect.h);
-            let pinned = app.launcher.pinned_entries(&app.apps);
+            let pinned = app.launcher.dock_pinned(&app.apps);
             let idx = app.mini_dock_hover.unwrap();
             let layout = crate::mini_dock::compute_layout(
                 panel_logical,

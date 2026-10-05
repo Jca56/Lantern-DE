@@ -338,7 +338,7 @@ fn draw_content_body(
         );
     }
 
-    // 1d. Mini-dock of pinned apps under the panel. Hides with the
+    // 1d. Mini-dock under the panel. Hides with the
     //     expand/collapse and open/close animations (fade or slide per
     //     the user's setting) but stays put across view switches — the
     //     collapsed bar keeps its dock in every view. Skipped when any
@@ -372,7 +372,7 @@ fn draw_content_body(
             1.0
         };
         if dock_alpha_mult > 0.005 && slide_vis > 0.005 {
-            let pinned = state.launcher.pinned_entries(&state.apps);
+            let pinned = state.launcher.dock_pinned(&state.apps);
             let layout = crate::mini_dock::compute_layout(
                 panel.rect,
                 surface_h as f32,
@@ -402,6 +402,7 @@ fn draw_content_body(
                     &mut icons,
                     &layout,
                     &state.toplevels,
+                    state.dock_drag.as_ref(),
                     panel.alpha * dock_alpha_mult,
                 );
 

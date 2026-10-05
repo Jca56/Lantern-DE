@@ -164,20 +164,21 @@ impl AppState {
     /// Centralized so future entry points (grid, pinned row, search
     /// results) all get the same menu.
     fn menu_items_for(&self, app_id: &str) -> Vec<MenuItem> {
-        let pinned = self.launcher.pins().is_pinned(app_id);
+        let docked = self.launcher.dock().is_pinned(app_id);
         let hidden = self.launcher.hidden().is_hidden(app_id);
         vec![
             MenuItem {
                 label: "Open".into(),
                 action: MenuAction::Launch,
             },
+            self.pin_menu_item(app_id),
             MenuItem {
-                label: if pinned {
-                    "Unpin".into()
+                label: if docked {
+                    "Remove from dock".into()
                 } else {
-                    "Pin to launcher".into()
+                    "Add to dock".into()
                 },
-                action: MenuAction::TogglePin,
+                action: MenuAction::ToggleDock,
             },
             MenuItem {
                 label: if hidden {
@@ -190,9 +191,45 @@ impl AppState {
         ]
     }
 
+    /// The "Pin to launcher" / "Unpin from launcher" row. Always spelled
+    /// out — the dock has a list of its own, so a bare "Pin" is ambiguous.
+    fn pin_menu_item(&self, app_id: &str) -> MenuItem {
+        MenuItem {
+            label: if self.launcher.pins().is_pinned(app_id) {
+                "Unpin from launcher".into()
+            } else {
+                "Pin to launcher".into()
+            },
+            action: MenuAction::TogglePin,
+        }
+    }
+
+    /// The installed app with this `.desktop` id, if any.
+    fn app_entry(&self, app_id: &str) -> Option<&crate::search::apps::DesktopEntry> {
+        (0..self.apps.count())
+            .filter_map(|i| self.apps.get(i))
+            .find(|e| e.app_id == app_id)
+    }
+
+    /// Spawn the app with this `.desktop` id, then close the panel.
+    /// `via` names the entry point for the log. No-op when no such app
+    /// is installed.
+    pub fn launch_app(&mut self, app_id: &str, via: &'static str) {
+        let Some(entry) = self.app_entry(app_id) else {
+            return;
+        };
+        let exec = entry.exec.clone();
+        // Same detached spawn as the launcher: null stdio + own
+        // session. A plain `sh -c` inherited our log file as the app's
+        // stdout/stderr.
+        spawn_detached(&exec);
+        tracing::info!(%app_id, %exec, via, "launched app");
+        self.close();
+    }
+
     /// Build and show the right-click menu for a dock icon. `app_id` is
     /// the dock entry's app id; `dock_pinned` reflects whether the icon
-    /// is currently in the pinned section (controls Pin vs Unpin label).
+    /// is currently in the pinned section (Remove vs Keep label).
     pub fn open_dock_context_menu(
         &mut self,
         app_id: String,
@@ -213,7 +250,7 @@ impl AppState {
             .or_else(|| windows.first())
             .map(|w| w.title.clone());
 
-        let mut items: Vec<MenuItem> = Vec::with_capacity(4);
+        let mut items: Vec<MenuItem> = Vec::with_capacity(5);
         if let Some(_title) = &close_title {
             items.push(MenuItem {
                 label: "Close".into(),
@@ -230,14 +267,20 @@ impl AppState {
                 action: MenuAction::FirefoxPrivate,
             });
         }
-        items.push(MenuItem {
-            label: if dock_pinned {
-                "Unpin".into()
-            } else {
-                "Pin".into()
-            },
-            action: MenuAction::TogglePin,
-        });
+        // The dock's list and the launcher's pinned grid are separate;
+        // both are managed from here. A window with no `.desktop` entry
+        // can't be launched again later, so it gets neither row.
+        if self.app_entry(&app_id).is_some() {
+            items.push(MenuItem {
+                label: if dock_pinned {
+                    "Remove from dock".into()
+                } else {
+                    "Keep in dock".into()
+                },
+                action: MenuAction::ToggleDock,
+            });
+            items.push(self.pin_menu_item(&app_id));
+        }
 
         self.context_menu = Some(ContextMenu {
             app_id,
@@ -340,6 +383,9 @@ impl AppState {
             MenuAction::TogglePin => {
                 self.launcher.toggle_pin(&menu.app_id);
             }
+            MenuAction::ToggleDock => {
+                self.launcher.toggle_dock(&menu.app_id);
+            }
             MenuAction::ToggleHidden => {
                 self.launcher.toggle_hidden(&menu.app_id);
                 // Refresh whichever launcher view is up so the hidden
@@ -361,21 +407,7 @@ impl AppState {
                     kind: WindowActionKind::Close,
                 });
             }
-            MenuAction::Launch => {
-                if let Some(entry) = (0..self.apps.count())
-                    .filter_map(|i| self.apps.get(i))
-                    .find(|e| e.app_id == menu.app_id)
-                {
-                    let exec = entry.exec.clone();
-                    let app_id = entry.app_id.clone();
-                    // Same detached spawn as the launcher: null stdio +
-                    // own session. A plain `sh -c` inherited our log file
-                    // as the app's stdout/stderr.
-                    spawn_detached(&exec);
-                    tracing::info!(%app_id, %exec, "launched app via context menu");
-                    self.close();
-                }
-            }
+            MenuAction::Launch => self.launch_app(&menu.app_id, "context menu"),
             MenuAction::TerminalCopy => {
                 let _ = self.terminal.copy_selection();
             }
@@ -428,18 +460,7 @@ impl AppState {
             MenuAction::FilesSortBySize => self.files.set_sort(crate::files::SortBy::Size),
             MenuAction::FilesSortByDate => self.files.set_sort(crate::files::SortBy::Modified),
             MenuAction::FilesSortByType => self.files.set_sort(crate::files::SortBy::Type),
-            MenuAction::DockLaunchNew => {
-                if let Some(entry) = (0..self.apps.count())
-                    .filter_map(|i| self.apps.get(i))
-                    .find(|e| e.app_id == menu.app_id)
-                {
-                    let exec = entry.exec.clone();
-                    let app_id = entry.app_id.clone();
-                    spawn_detached(&exec);
-                    tracing::info!(%app_id, %exec, "dock → open new window");
-                    self.close();
-                }
-            }
+            MenuAction::DockLaunchNew => self.launch_app(&menu.app_id, "dock → open new window"),
             MenuAction::FirefoxPrivate => {
                 spawn_detached("firefox --private-window");
                 tracing::info!("dock → firefox --private-window");

@@ -239,8 +239,9 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
     // actually rendered (collapse-progress > 0; the dock shows in
     // every view while collapsed). The hover index sticks while the
     // cursor is over the preview tile so users can move down onto it
-    // without it disappearing.
-    if app.collapse_progress() <= 0.005 {
+    // without it disappearing. A dock icon being dragged shows no
+    // preview — the tiles would sit right where the ghost travels.
+    if app.collapse_progress() <= 0.005 || app.dock_drag.is_some_and(|d| d.started) {
         app.mini_dock_hover = None;
     } else {
         let scale_f = wl.fractional_scale() as f32;
@@ -255,7 +256,7 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
         let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
         let phys_cx = wl.cursor_x as f32 * scale_f;
         let phys_cy = wl.cursor_y as f32 * scale_f;
-        let pinned = app.launcher.pinned_entries(&app.apps);
+        let pinned = app.launcher.dock_pinned(&app.apps);
         let layout = crate::mini_dock::compute_layout(
             panel_rect,
             phys_h_f,

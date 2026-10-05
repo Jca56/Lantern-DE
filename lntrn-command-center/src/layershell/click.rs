@@ -1,8 +1,9 @@
 //! Per-frame click + pin-drag dispatch. Drains
 //! `wl.{left_clicked, right_clicked, left_released_this_frame}` and
 //! applies the resulting mutations to [`AppState`]. The control-view
-//! click cascade lives in the sibling [`super::view_click`] module so
-//! this file can stay focused on the top-level cascade.
+//! click cascade lives in the sibling [`super::view_click`] module and
+//! the drag-reorder gestures in [`super::icon_drag`], so this file can
+//! stay focused on the top-level cascade.
 
 /// Resolve every per-frame mouse click and pin-drag action — context
 /// menus, the main left-click cascade (control views, tiles, dock,
@@ -298,7 +299,7 @@ pub(super) fn handle_clicks(
         let mut dock_layout: Option<crate::mini_dock::DockLayout> = None;
         // Dock is visible (and clickable) in every view while collapsed.
         if app.collapse_progress() > 0.005 {
-            let pinned = app.launcher.pinned_entries(&app.apps);
+            let pinned = app.launcher.dock_pinned(&app.apps);
             let phys_h_f = wl.phys_height().max(1) as f32;
             if let Some(layout) = crate::mini_dock::compute_layout(
                 panel_rect,
@@ -743,41 +744,26 @@ pub(super) fn handle_clicks(
                 );
             }
         } else if let Some(dock_idx) = dock_pin {
-            // Click on a dock icon: if the app has open windows,
-            // cycle focus to the next one (after whichever is
-            // currently activated). With no windows, launch a new
-            // instance — but only for pinned slots; running-only
-            // slots vanish when their last window closes so this
-            // branch only fires while at least one window exists.
+            // Pinned dock icons defer to release, like pin tiles, so a
+            // press-and-drag can reorder them instead. Running-only
+            // icons have no order of their own and act on press.
             let entry = dock_layout
                 .as_ref()
                 .and_then(|l| l.entries.get(dock_idx))
                 .cloned();
             if let Some(entry) = entry {
-                let windows = crate::mini_dock::windows_for_app(&app.toplevels, &entry.app_id);
-                if windows.is_empty() && entry.pinned {
-                    tracing::debug!(pin = dock_idx, "mini-dock click → launch (no windows)");
-                    app.activate_at(crate::app::HitTarget::Pin(dock_idx));
-                } else if !windows.is_empty() {
-                    let next_idx = if let Some(cur) = windows.iter().position(|w| w.activated) {
-                        (cur + 1) % windows.len()
-                    } else {
-                        0
-                    };
-                    let target = windows[next_idx];
-                    tracing::debug!(
-                        app_id = %entry.app_id,
-                        total = windows.len(),
-                        next_idx,
-                        "mini-dock click → cycle to next window",
-                    );
-                    app.window_actions.push(crate::app::WindowAction {
-                        app_id: target.app_id.clone(),
-                        title: target.title.clone(),
-                        instance: Some(next_idx),
-                        kind: crate::app::WindowActionKind::Activate,
+                if entry.pinned {
+                    tracing::debug!(dock = dock_idx, "dock press → start drag candidate");
+                    app.dock_drag = Some(crate::app::PinDrag {
+                        from_idx: dock_idx,
+                        press_x: phys_cx,
+                        press_y: phys_cy,
+                        current_x: phys_cx,
+                        current_y: phys_cy,
+                        started: false,
                     });
-                    app.close();
+                } else {
+                    super::icon_drag::dock_icon_click(app, &entry);
                 }
             }
         } else if let Some((id, part)) = (!panel.contains(phys_cx, phys_cy))
@@ -930,60 +916,6 @@ pub(super) fn handle_clicks(
         // a no-op.
     }
 
-    // Pin drag — update current cursor each frame, promote to
-    // "started" once movement exceeds the threshold.
-    if let Some(drag) = app.pin_drag.as_mut() {
-        let scale_f = wl.fractional_scale() as f32;
-        let phys_cx = wl.cursor_x as f32 * scale_f;
-        let phys_cy = wl.cursor_y as f32 * scale_f;
-        drag.current_x = phys_cx;
-        drag.current_y = phys_cy;
-        if !drag.started {
-            let dx = phys_cx - drag.press_x;
-            let dy = phys_cy - drag.press_y;
-            let threshold = crate::app::PIN_DRAG_THRESHOLD * scale_f;
-            if (dx * dx + dy * dy).sqrt() > threshold {
-                drag.started = true;
-            }
-        }
-    }
-
-    // Pin drag — release commits a reorder when the drag actually
-    // started, otherwise treats it as a plain click on the pin.
-    if wl.left_released_this_frame {
-        wl.left_released_this_frame = false;
-        if let Some(drag) = app.pin_drag.take() {
-            let scale_f = wl.fractional_scale() as f32;
-            let phys_w = wl.phys_width().max(1);
-            let panel = PanelRect::compute_with_dims(
-                phys_w,
-                scale_f,
-                app.desired_panel_w_logical(),
-                app.desired_panel_h_logical(),
-            );
-            let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
-            if drag.started {
-                let pin_top_y = panel_rect.y
-                    + crate::controls::total_logical_height() * scale_f
-                    + (crate::search::input::SEARCH_HORIZONTAL_PAD * 0.5
-                        + crate::search::input::SEARCH_ROW_HEIGHT)
-                        * scale_f;
-                let row_top = crate::launcher::pins_row_top_y(pin_top_y, scale_f);
-                let num_pins = app.launcher.pinned_items(&app.apps).len();
-                let to = crate::launcher::pin_drop_slot(
-                    panel_rect,
-                    scale_f,
-                    row_top,
-                    num_pins,
-                    drag.current_x,
-                    drag.current_y,
-                );
-                tracing::info!(from = drag.from_idx, to, "pin drag commit");
-                app.launcher.reorder_pins(drag.from_idx, to, &app.apps);
-            } else {
-                // Treat as a plain click on the pin.
-                app.activate_at(crate::app::HitTarget::Pin(drag.from_idx));
-            }
-        }
-    }
+    // Pin + dock drag-reorder: motion, and commit-or-click on release.
+    super::icon_drag::handle_icon_drags(wl, app);
 }

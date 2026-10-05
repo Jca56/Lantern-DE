@@ -45,6 +45,7 @@ mod click;
 mod dispatch;
 mod drag;
 mod hover;
+mod icon_drag;
 mod input;
 mod render_tick;
 mod right_click;

@@ -27,7 +27,7 @@ pub(super) fn handle_right_click(wl: &mut WlState, app: &mut AppState, text: &mu
     // and is visible while collapsed, so it needs to be checked
     // before falling through to the panel-view dispatch below.
     if app.collapse_progress() > 0.005 && app.panel_view == crate::app::PanelView::Default {
-        let pinned = app.launcher.pinned_entries(&app.apps);
+        let pinned = app.launcher.dock_pinned(&app.apps);
         let phys_h_f = wl.phys_height().max(1) as f32;
         let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
         if let Some(layout) = crate::mini_dock::compute_layout(
