@@ -444,8 +444,12 @@ impl AppHost for App {
         // Every terminal, shown or not: a hidden tab's output is read in
         // as it comes, so the program there never blocks on a full pipe.
         let now = shell.state.now;
+        lntrn_term::pictures::release(images);
         for t in &mut self.terminals {
             again |= t.pump(now);
+            // The pictures it was sent go to the GPU; one that shows
+            // calls for the frame again.
+            again |= lntrn_term::pictures::upload(t, gpu, images, now) && t.viewed_at == now;
         }
         again |= self.settle_bells(shell);
         if self.pending_drop.as_ref().is_some_and(|(_, _, at)| now - at > 0.5) {

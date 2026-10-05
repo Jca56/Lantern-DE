@@ -2917,7 +2917,9 @@ name = "lntrn-term"
 version = "0.2.0"
 dependencies = [
  "lntrn-core",
+ "lntrn-image",
  "lntrn-math",
+ "lntrn-render 0.2.0",
  "lntrn-text 0.2.0",
  "lntrn-ui 0.2.0",
 ]

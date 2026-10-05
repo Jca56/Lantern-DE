@@ -393,7 +393,16 @@ impl AppHost for App {
         self.wake = Some(Arc::new(move || waker.wake()));
     }
 
-    fn after_rebuild(&mut self, _gpu: &Gpu, _images: &mut Images, shell: &mut Shell<Self>) -> bool {
-        self.tick(shell)
+    fn after_rebuild(&mut self, gpu: &Gpu, images: &mut Images, shell: &mut Shell<Self>) -> bool {
+        let mut again = self.tick(shell);
+        // The pictures programs have sent go to the GPU here, where
+        // there is one. Only one that shows calls for the frame again.
+        let now = shell.state.now;
+        let areas = shell.screen.area_ids().filter_map(|a| shell.screen.area(a));
+        for term in areas.flat_map(|a| a.tabs.iter()).filter_map(|tab| tab.state.term.as_ref()) {
+            let mut t = term.borrow_mut();
+            again |= lntrn_term::pictures::upload(&mut t, gpu, images, now) && t.viewed_at == now;
+        }
+        again
     }
 }
