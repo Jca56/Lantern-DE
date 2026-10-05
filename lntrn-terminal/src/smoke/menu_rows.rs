@@ -24,6 +24,11 @@ fn the_right_click_menu_does_what_its_rows_say() {
         assert!(r.height() >= 44.0 && r.width() >= 410.0, "{key}: {r:?}");
         assert!(r.min.x >= window.min.x && r.max.x <= window.max.x && r.min.y >= window.min.y && r.max.y <= window.max.y, "{key} is inside the window: {r:?}");
     }
+    // The little title bar is the first thing in the menu: nothing over
+    // it but the panel's edge.
+    let (panel, name) = (rig.shell.state.popup.expect("the menu").0, rig.menu_rect(Rig::in_row(0, "lntrn")));
+    assert!((name.min.y - panel.min.y - rig.h.metrics().pad).abs() <= 1.0, "{name:?} in {panel:?}");
+    assert!(panel.height() <= 620.0, "room to spare in a window 720 tall: {panel:?}");
     // Nothing selected: Copy is dim, and a click on it leaves the menu up.
     let copy = rig.menu_rect(Rig::in_row(4, "edit.copy"));
     rig.click_at(copy.center());

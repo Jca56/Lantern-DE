@@ -284,7 +284,7 @@ impl Host for App {
         if let Some(at) = out.context {
             self.menu_area = Some(cx.area);
             self.menu_term = Rc::downgrade(&term);
-            cx.request(ShellRequest::ContextMenu(Box::new(menu::context(&t.title(), at))));
+            cx.request(ShellRequest::ContextMenu(Box::new(menu::context(at))));
         }
         false
     }

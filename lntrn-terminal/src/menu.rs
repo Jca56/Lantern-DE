@@ -60,14 +60,15 @@ const ROWS: &[(&str, &str, &str)] = &[
 /// the size the desktop opens them at.
 const ROW_H: f64 = 44.0;
 
-/// The right-click menu for the terminal called `title`, at `at`.
-pub fn context(title: &str, at: Vec2) -> ContextMenu {
+/// The right-click menu, at `at`. It has no heading: its first row is
+/// its title bar.
+pub fn context(at: Vec2) -> ContextMenu {
     let mut items = vec![Item::custom("controls"), Item::Separator, Item::custom("size")];
     for group in [&["edit.copy", "edit.paste", "edit.select-all"][..], &["tab.new", "tab.close"], &["split.right", "split.down", "pane.close"]] {
         items.push(Item::Separator);
         items.extend(group.iter().map(|key| Item::custom(key)));
     }
-    ContextMenu::new(title, at).wide().tab("Terminal", items)
+    ContextMenu::new("", at).wide().tab("Terminal", items)
 }
 
 /// Draw one of the right-click menu's rows. `true` when it changed
