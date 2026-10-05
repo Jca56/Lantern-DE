@@ -31,6 +31,7 @@ members = [
     "lntrn-command-center",
     "lntrn-keychain",
     "lntrn-keys",
+    "lntrn-kit",
     "lntrn-rice",
     "lntrn-lockscreen",
     "lntrn-afterglow",

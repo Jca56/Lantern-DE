@@ -40,6 +40,7 @@ fn sandbox() {
 /// The app in a window `width` × `height` logical pixels at `scale`.
 fn app_at(width: f64, height: f64, scale: f64) -> (Harness, Shell<App>, App) {
     sandbox();
+    kit::probe::watch();
     let mut h = Harness::new(width * scale, height * scale);
     h.scale = scale;
     let mut shell = Shell::new(Editor::Settings);
@@ -61,11 +62,11 @@ fn click(h: &mut Harness, shell: &mut Shell<App>, app: &mut App, at: Vec2) {
 }
 
 fn clipped() -> Vec<String> {
-    kit::tests::CLIPPED.with(|c| std::mem::take(&mut *c.borrow_mut()))
+    kit::probe::take_clipped()
 }
 
 fn stacked() -> Vec<String> {
-    kit::tests::STACKED.with(|c| std::mem::take(&mut *c.borrow_mut()))
+    kit::probe::take_stacked()
 }
 
 #[test]
@@ -112,6 +113,7 @@ fn the_sidebar_switches_pages_and_a_tile_puts_a_wallpaper_up() {
 
 /// A harness for kit code alone, wearing the app's look.
 fn kit_at(width: f64, height: f64) -> Harness {
+    kit::probe::watch();
     let mut h = Harness::new(width, height);
     h.theme = look::theme(look::GOLD);
     h

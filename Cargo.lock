@@ -2584,18 +2584,16 @@ dependencies = [
 
 [[package]]
 name = "lntrn-git"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
- "anyhow",
- "libc",
- "lntrn-render 0.1.0",
- "lntrn-theme",
- "lntrn-ui 0.1.0",
- "raw-window-handle",
- "wayland-backend",
- "wayland-client",
- "wayland-protocols",
- "wgpu 28.0.0",
+ "lntrn-app",
+ "lntrn-core",
+ "lntrn-data",
+ "lntrn-kit",
+ "lntrn-math",
+ "lntrn-props",
+ "lntrn-sys",
+ "lntrn-ui 0.2.0",
 ]
 
 [[package]]
@@ -2649,6 +2647,20 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "lntrn-dbus",
+]
+
+[[package]]
+name = "lntrn-kit"
+version = "0.1.0"
+dependencies = [
+ "lntrn-core",
+ "lntrn-data",
+ "lntrn-math",
+ "lntrn-props",
+ "lntrn-render 0.2.0",
+ "lntrn-sys",
+ "lntrn-text 0.2.0",
+ "lntrn-ui 0.2.0",
 ]
 
 [[package]]
@@ -2891,11 +2903,11 @@ dependencies = [
  "lntrn-data",
  "lntrn-icons",
  "lntrn-image",
+ "lntrn-kit",
  "lntrn-math",
  "lntrn-props",
  "lntrn-svg",
  "lntrn-sys",
- "lntrn-text 0.2.0",
  "lntrn-ui 0.2.0",
 ]
 

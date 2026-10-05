@@ -5,7 +5,7 @@
 use lntrn_math::{Color, Rect, Vec2};
 use lntrn_ui::{CursorIcon, KeyStep, Sense, Ui, WidgetId};
 
-use super::controls::BUTTON_H;
+use crate::controls::BUTTON_H;
 use crate::look;
 
 pub const DROPDOWN_W: f64 = 360.0;

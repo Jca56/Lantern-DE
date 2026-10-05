@@ -1,116 +1,22 @@
-//! The settings widget kit. A page is a capped column of cards; a card
-//! is a stack of rows; a row is a label (and maybe a hint under it) on
-//! the left and one control on the right. All of it is drawn here from
-//! Lantern UI's paint and interact primitives, so Settings has a look of
-//! its own instead of the editor widgets' edge-to-edge bars.
-//!
-//! - this file: the page column, captions, notes, and [`Card`] with its
-//!   rows.
-//! - `controls`: the switch, slider, segmented control and button.
-//! - `pickers`: the dropdown and the colour chip, which open Lantern
-//!   UI's own popups.
-
-pub mod controls;
-pub mod pickers;
+//! Cards: a rounded panel holding a stack of rows. A row is a label (and
+//! maybe a hint under it) on the left and one control on the right; when
+//! the card is too narrow for both, the control goes under the text.
 
 use lntrn_math::{Color, Rect, Vec2};
-use lntrn_text::TextStyle;
-use lntrn_ui::{FILL, Ui};
+use lntrn_ui::{FILL, TextResponse, Ui};
 
-use crate::look;
+use crate::layout::small_style;
+use crate::{controls, look, pickers, probe};
 
-/// The widest a page's column gets, and the least room either side of it.
-const COLUMN_W: f64 = 980.0;
-const MARGIN: f64 = 20.0;
 /// The least a row is tall, and the room inside a card's left and right.
 const ROW_H: f64 = 70.0;
-const ROW_PAD: f64 = 25.0;
+pub const ROW_PAD: f64 = 25.0;
 const CARD_RADIUS: f64 = 15.0;
 /// The least width a hint is wrapped in beside a control; with less, the
 /// row's text goes above the control instead.
 const HINT_MIN_W: f64 = 260.0;
-const TITLE_SIZE: f64 = 40.0;
-/// Hints, captions and notes. Nothing in Settings is smaller.
-const SMALL_SIZE: f64 = 20.0;
-
-pub fn title_style(ui: &Ui) -> TextStyle {
-    TextStyle::new(ui.m.px(TITLE_SIZE) as f32).bold()
-}
-
-pub fn small_style(ui: &Ui) -> TextStyle {
-    TextStyle::new(ui.m.px(SMALL_SIZE) as f32)
-}
-
-/// One line of text that takes its own height in the layout.
-pub fn text_line(ui: &mut Ui, s: &str, style: &TextStyle, color: Color) -> Rect {
-    let r = ui.alloc(Vec2::new(FILL, style.line_height() as f64));
-    ui.text_in_rect(s, style, r, color);
-    r
-}
-
-/// A page: its title and a line about it, then whatever `f` declares, in
-/// a centred column no wider than [`COLUMN_W`], scrolling.
-pub fn page(ui: &mut Ui, title: &str, blurb: &str, f: impl FnOnce(&mut Ui)) {
-    let mut f = Some(f);
-    ui.scroll_area("page", None, |ui| {
-        let (m, avail) = (ui.m, ui.avail_width());
-        let col = (avail - m.px(MARGIN) * 2.0).min(m.px(COLUMN_W)).max(0.0);
-        let left = ((avail - col) * 0.5).floor();
-        // `columns` puts a gap between the two; the first is only the margin.
-        ui.columns(&[(left - m.gap).max(0.0), col], |ui, i| {
-            if i == 0 {
-                return;
-            }
-            let Some(f) = f.take() else { return };
-            ui.space(m.px(15.0));
-            let (big, small) = (title_style(ui), small_style(ui));
-            text_line(ui, title, &big, look::TEXT);
-            text_line(ui, blurb, &small, look::TEXT_DIM);
-            ui.space(m.px(10.0));
-            f(ui);
-            ui.space(m.px(40.0));
-        });
-    });
-}
-
-/// A small heading over the card that follows.
-pub fn caption(ui: &mut Ui, s: &str) {
-    let m = ui.m;
-    ui.space(m.px(15.0));
-    let style = small_style(ui).bold();
-    let r = ui.alloc(Vec2::new(FILL, m.px(30.0)));
-    let inset = Rect::new(Vec2::new(r.min.x + m.px(5.0), r.min.y), r.max);
-    ui.text_in_rect(&s.to_uppercase(), &style, inset, look::TEXT_DIM);
-}
-
-/// Dim explanatory text under a card, wrapped to the column.
-pub fn note(ui: &mut Ui, s: &str) {
-    let style = small_style(ui);
-    let inset = ui.m.px(5.0);
-    let w = (ui.avail_width() - inset * 2.0).max(1.0);
-    let h = ui.text.measure_wrapped(s, &style, w as f32).height as f64;
-    let r = ui.alloc(Vec2::new(FILL, h));
-    ui.text_at(s, &style, Vec2::new(r.min.x + inset, r.min.y), w, look::TEXT_DIM);
-}
-
-/// `0..=1` as a percentage.
-pub fn percent(v: f64) -> String {
-    format!("{}%", (v * 100.0).round())
-}
-
-/// A whole number that already is a percentage.
-pub fn percent_of_100(v: f64) -> String {
-    format!("{}%", v.round())
-}
-
-pub fn pixels(v: f64) -> String {
-    format!("{} px", v.round())
-}
-
-/// A multiplier: `1.25×`.
-pub fn times(v: f64) -> String {
-    format!("{v:.2}×")
-}
+/// A text row's field.
+const FIELD_W: f64 = 440.0;
 
 /// A card being filled. Rows go in through its methods, which know
 /// whether a line belongs above them.
@@ -189,13 +95,11 @@ impl Card<'_, '_> {
         let text_w = if stacked { inner } else { beside };
         let hint_h = if hint.is_empty() { 0.0 } else { self.ui.text.measure_wrapped(hint, &small, text_w as f32).height as f64 };
         let text_h = label_h + hint_h;
-        #[cfg(test)]
         if label_w > text_w {
-            tests::CLIPPED.with(|c| c.borrow_mut().push(label.to_owned()));
+            probe::clipped(label);
         }
         if stacked {
-            #[cfg(test)]
-            tests::STACKED.with(|c| c.borrow_mut().push(label.to_owned()));
+            probe::stacked(label);
             let (edge, between) = (m.px(15.0), m.px(8.0));
             let control_h = control_h.max(m.px(56.0));
             let row = self.next(edge + text_h + between + control_h + edge);
@@ -313,6 +217,18 @@ impl Card<'_, '_> {
         self.row(label, hint, w, |ui, slot| pickers::color(ui, label, slot, hex, fallback))
     }
 
+    /// A row with a one-line text field, showing `placeholder` dimly while
+    /// it is empty.
+    pub fn text(&mut self, label: &str, hint: &str, value: &mut String, placeholder: &str) -> TextResponse {
+        let id = self.ui.id(label);
+        let w = self.ui.m.px(FIELD_W);
+        self.row(label, hint, w, |ui, slot| {
+            let h = ui.m.px(controls::BUTTON_H);
+            let rect = Rect::from_min_size(Vec2::new(slot.min.x, (slot.center().y - h * 0.5).round()), Vec2::new(slot.width(), h));
+            controls::text_field(ui, id, rect, value, placeholder)
+        })
+    }
+
     /// A row that does something: `text` on a button. `true` when pressed.
     pub fn button(&mut self, label: &str, hint: &str, text: &str) -> bool {
         let id = self.ui.id(label);
@@ -322,19 +238,5 @@ impl Card<'_, '_> {
             let rect = Rect::from_min_size(Vec2::new(slot.min.x, (slot.center().y - h * 0.5).round()), Vec2::new(slot.width(), h));
             controls::button(ui, id, rect, text)
         })
-    }
-}
-
-#[cfg(test)]
-pub mod tests {
-    use std::cell::RefCell;
-
-    thread_local! {
-        /// Labels laid out wider than the room their row had for them,
-        /// gathered so a test can say no page has one.
-        pub static CLIPPED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-        /// Labels whose row had no room for the control beside them, so
-        /// it went underneath.
-        pub static STACKED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     }
 }

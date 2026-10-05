@@ -1,533 +1,374 @@
-//! Application state — repo picker, view routing, worker orchestration.
+//! The app as the shell sees it: one editor showing the repos down the
+//! left and the open one beside them, its menu and palette, and what its
+//! actions do. Git itself runs on the worker; this sends it commands and
+//! takes in what comes back.
 
-use std::path::PathBuf;
-use std::sync::mpsc;
+use std::path::{Path, PathBuf};
 
-use lntrn_render::{Painter, Rect, TextRenderer};
-use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar, SmoothScroll};
+use lntrn_app::lntrn_render::{Gpu, Images};
+use lntrn_app::{AppHost, Waker};
+use lntrn_kit::desktop::{Desktop, Follow};
+use lntrn_ui::keymap::CTX_WINDOW;
+use lntrn_ui::{Action, AreaCx, FILL, Host, HostCx, Key, KeyConfig, KeyItem, KeyPress, Menu, MenuItem, Modifiers, Shell, Trigger, Ui, actions};
 
-use crate::clone::{CloneAction, CloneView};
+use crate::dialogs;
 use crate::git;
-use crate::main_view::{MainView, MainViewAction};
-use crate::new_repo::{NewRepoAction, NewRepoView};
-use crate::worker::{GitCmd, GitEvent};
+use crate::history::Graph;
+use crate::sidebar;
+use crate::state::{self, CloneForm, Dialogs, HISTORY_COMMITS, NewRepo, Repo, View};
+use crate::views;
+use crate::worker::{Cmd, Event, Link, first_line};
 
-// Zone IDs
-const ZONE_REPO_BASE: u32 = 200;
-const ZONE_SCROLLBAR: u32 = 199;
-const ZONE_CLONE_BTN: u32 = 198;
-const ZONE_NEW_REPO_BTN: u32 = 197;
-
-#[derive(PartialEq)]
-enum View {
-    RepoPicker,
-    Main,
-    Clone,
-    NewRepo,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Editor {
+    Git,
 }
 
+const EDITORS: [Editor; 1] = [Editor::Git];
+
 pub struct App {
-    view: View,
-    // Repo picker
-    repos: Vec<PathBuf>,
-    // Repo navigation
-    repo_path: Option<PathBuf>,
-    repo_stack: Vec<PathBuf>,
-    // Sub-views
-    clone_view: CloneView,
-    main_view: MainView,
-    new_repo_view: NewRepoView,
-    // Picker scroll
-    scroll: SmoothScroll,
-    picker_content_height: f32,
-    picker_viewport_h: f32,
-    // Channels
-    cmd_tx: mpsc::Sender<GitCmd>,
-    event_rx: mpsc::Receiver<GitEvent>,
+    pub link: Link,
+    follow: Follow,
+    keys: KeyConfig,
+    /// The repos found under `~/Projects`.
+    pub repos: Vec<PathBuf>,
+    /// That search has come back.
+    pub repos_found: bool,
+    pub view: View,
+    pub repo: Option<Repo>,
+    /// The repos the open one is nested in when it is a submodule,
+    /// outermost first.
+    pub parents: Vec<PathBuf>,
+    /// How many repos have been opened: what the worker says about an
+    /// earlier one is dropped.
+    opens: u64,
+    /// The worker has something still to do, and what to call it.
+    pub busy: bool,
+    doing: &'static str,
+    pub new_repo: NewRepo,
+    pub clone: CloneForm,
+    pub dialogs: Dialogs,
+    was_focused: bool,
 }
 
 impl App {
-    pub fn new() -> Self {
-        let (cmd_tx, event_rx) = crate::worker::spawn();
-
-        let app = Self {
-            view: View::RepoPicker,
+    /// The app with the worker started and the repo list asked for;
+    /// `open` is the repo to start in.
+    pub fn new(open: Option<PathBuf>) -> App {
+        let mut keys = KeyConfig::default();
+        keys.bind(CTX_WINDOW, KeyItem::new(Trigger::key(Key::Char('q'), Modifiers::CTRL), actions::QUIT));
+        keys.bind(CTX_WINDOW, KeyItem::new(Trigger::key(Key::F(3), Modifiers::NONE), actions::PALETTE));
+        keys.bind(CTX_WINDOW, KeyItem::new(Trigger::key(Key::F(5), Modifiers::NONE), "repo.refresh"));
+        keys.bind(CTX_WINDOW, KeyItem::new(Trigger::key(Key::Char('r'), Modifiers::CTRL), "repo.refresh"));
+        let mut app = App {
+            link: Link::spawn(),
+            follow: Follow::default(),
+            keys,
             repos: Vec::new(),
-            repo_path: None,
-            repo_stack: Vec::new(),
-            clone_view: CloneView::new(),
-            main_view: MainView::new(cmd_tx.clone()),
-            new_repo_view: NewRepoView::new(),
-            scroll: SmoothScroll::new(),
-            picker_content_height: 0.0,
-            picker_viewport_h: 0.0,
-            cmd_tx,
-            event_rx,
+            repos_found: false,
+            view: View::Welcome,
+            repo: None,
+            parents: Vec::new(),
+            opens: 0,
+            busy: false,
+            doing: "",
+            new_repo: NewRepo::default(),
+            clone: CloneForm::default(),
+            dialogs: Dialogs::default(),
+            was_focused: false,
         };
-        let _ = app.cmd_tx.send(GitCmd::FindRepos);
+        app.send(Cmd::FindRepos, "");
+        if let Some(path) = open {
+            app.open(path);
+        }
         app
     }
 
-    /// Drain background git events. Returns true if any arrived (= redraw).
-    pub fn tick(&mut self) -> bool {
-        let mut processed = false;
-        while let Ok(event) = self.event_rx.try_recv() {
-            processed = true;
-            match event {
-                GitEvent::Repos(repos) => {
+    /// The desktop's look as it was read at the start: its font and how
+    /// see-through its windows are.
+    pub fn desktop(&self) -> &Desktop {
+        self.follow.desktop()
+    }
+
+    /// Hand the worker something to do; `doing` is what the title bar
+    /// says meanwhile.
+    pub fn send(&mut self, cmd: Cmd, doing: &'static str) {
+        self.busy = true;
+        if !doing.is_empty() {
+            self.doing = doing;
+        }
+        self.link.send(cmd);
+    }
+
+    fn show(&mut self, path: PathBuf) {
+        self.view = View::Repo;
+        self.opens += 1;
+        self.send(Cmd::Open(path.clone()), "");
+        self.repo = Some(Repo::new(path));
+    }
+
+    /// Open a repo from the sidebar: it is nobody's submodule.
+    pub fn open(&mut self, path: PathBuf) {
+        self.parents.clear();
+        state::remember_repo(&path);
+        self.show(path);
+    }
+
+    /// Go into a submodule of the open repo.
+    pub fn open_submodule(&mut self, path: PathBuf) {
+        if let Some(repo) = &self.repo {
+            self.parents.push(repo.path.clone());
+        }
+        self.show(path);
+    }
+
+    /// Leave a submodule for the repo it is in.
+    pub fn back(&mut self) {
+        if let Some(parent) = self.parents.pop() {
+            self.show(parent);
+        }
+    }
+
+    /// The repo the sidebar marks: the open one, or the outermost one it
+    /// is nested in.
+    pub fn root(&self) -> Option<&Path> {
+        self.parents.first().map(PathBuf::as_path).or(self.repo.as_ref().filter(|_| self.view == View::Repo).map(|r| r.path.as_path()))
+    }
+
+    /// Take in what the worker has sent since the last frame.
+    fn take_events(&mut self, cx: &mut AreaCx<()>) {
+        for (opens, event) in self.link.take() {
+            // What is said about a repo is for the one open when it was
+            // asked: drop it if another has been opened since.
+            let current = opens == self.opens;
+            match (event, self.repo.as_mut().filter(|_| current)) {
+                (Event::Repos(repos), _) => {
                     self.repos = repos;
+                    self.repos_found = true;
                 }
-                GitEvent::RemoteRepos(result) => {
-                    self.clone_view.loading = false;
-                    match result {
-                        Ok(repos) => {
-                            self.clone_view.repos = repos;
-                        }
-                        Err(e) => {
-                            self.clone_view.error = Some(e);
-                        }
+                (Event::Idle(_), _) => {}
+                (Event::GitHubRepos(answer), _) => {
+                    self.clone.loading = false;
+                    self.clone.asked = true;
+                    match answer {
+                        Ok(repos) => (self.clone.repos, self.clone.error) = (repos, None),
+                        Err(why) => self.clone.error = Some(why),
                     }
                 }
-                GitEvent::RepoCreated(result) => {
-                    self.new_repo_view.creating = false;
+                (Event::Cloned(result), _) => {
+                    let name = self.clone.cloning.take().unwrap_or_default();
                     match result {
-                        Ok(res) => {
-                            let github_error = res.github_error;
-                            self.open_repo(res.path);
-                            if let Some(e) = github_error {
-                                self.main_view
-                                    .handle_event(GitEvent::Error(format!("GitHub: {e}")));
+                        Ok(path) => {
+                            cx.toast(&format!("Cloned {name}"));
+                            self.link.send(Cmd::FindRepos);
+                            self.open(path);
+                        }
+                        Err(why) => self.clone.error = Some(why),
+                    }
+                }
+                (Event::Created(result), _) => {
+                    self.new_repo.creating = false;
+                    match result {
+                        Ok((path, complaint)) => {
+                            self.new_repo = NewRepo::default();
+                            self.link.send(Cmd::FindRepos);
+                            self.open(path);
+                            if let (Some(repo), Some(why)) = (&mut self.repo, complaint) {
+                                repo.error = Some(format!("The repository was made here, but not on GitHub: {why}"));
                             }
-                            self.new_repo_view.reset();
-                            // Refresh the picker so the new repo shows up there too.
-                            let _ = self.cmd_tx.send(GitCmd::FindRepos);
                         }
-                        Err(e) => {
-                            self.new_repo_view.error = Some(e);
-                        }
+                        Err(why) => self.new_repo.error = Some(why),
                     }
                 }
-                other => {
-                    self.main_view.handle_event(other);
-                }
-            }
-        }
-        processed
-    }
-
-    /// Advance scroll animations. Returns true while anything is gliding.
-    pub fn tick_scroll(&mut self, dt: f32) -> bool {
-        let mut animating = self.scroll.tick(dt);
-        animating |= self.clone_view.tick_scroll(dt);
-        animating |= self.main_view.tick_scroll(dt);
-        animating
-    }
-
-    /// Whether a background git operation is in flight (drives poll cadence).
-    pub fn busy(&self) -> bool {
-        self.main_view.busy || self.clone_view.loading || self.new_repo_view.creating
-    }
-
-    pub fn on_click(&mut self, ix: &InteractionContext, phys_cx: f32, phys_cy: f32) {
-        // Main view handles its own clicks (including branch dropdown)
-        if self.view == View::Main {
-            match self.main_view.on_click(ix, phys_cx, phys_cy) {
-                MainViewAction::GoBack => {
-                    self.main_view.reset();
-                    if let Some(parent) = self.repo_stack.pop() {
-                        self.open_repo(parent);
-                    } else {
-                        self.view = View::RepoPicker;
-                        self.repo_path = None;
+                (Event::Status(status), Some(repo)) => repo.on_status(status),
+                (Event::Branches(branches), Some(repo)) => repo.branches = branches,
+                (Event::History(commits), Some(repo)) => repo.graph = Some(Graph::new(commits)),
+                (Event::Diff { file, tag, diff }, Some(repo)) => repo.on_diff(&file, tag, diff),
+                (Event::Done(said), Some(repo)) => {
+                    repo.error = None;
+                    repo.history_stale = true;
+                    let line = first_line(&said);
+                    if !line.is_empty() {
+                        cx.toast(line);
                     }
                 }
-                MainViewAction::OpenSubmodule(sub_path) => {
-                    if let Some(current) = &self.repo_path {
-                        self.repo_stack.push(current.clone());
-                    }
-                    self.open_repo(sub_path);
+                (Event::Failed(why), Some(repo)) => {
+                    repo.error = Some(why);
+                    repo.history_stale = true;
                 }
-                MainViewAction::None => {}
+                (_, None) => {}
+            }
+        }
+        self.busy = self.link.busy();
+        if !self.busy {
+            self.doing = "";
+        }
+    }
+
+    /// Read the open repo again: files, branches, and the history next
+    /// time it shows.
+    pub fn refresh(&mut self, doing: &'static str) {
+        if let Some(repo) = &mut self.repo {
+            repo.history_stale = true;
+            self.send(Cmd::Refresh, doing);
+        }
+    }
+
+    /// Show the new-repository or the clone page.
+    pub fn go(&mut self, view: View) {
+        self.view = view;
+        if view == View::Clone && !self.clone.asked && !self.clone.loading {
+            self.clone.loading = true;
+            self.send(Cmd::GitHubRepos, "Asking GitHub…");
+        }
+    }
+
+    /// Ask for the history when its tab shows and what is there is old.
+    pub fn want_history(&mut self) {
+        if let Some(repo) = &mut self.repo
+            && repo.history_stale
+        {
+            repo.history_stale = false;
+            self.send(Cmd::History(HISTORY_COMMITS), "");
+        }
+    }
+}
+
+impl Host for App {
+    type Editor = Editor;
+    type AreaState = ();
+
+    fn editors(&self) -> &[Editor] {
+        &EDITORS
+    }
+
+    fn editor_label(&self, _editor: Editor) -> &str {
+        "Git"
+    }
+
+    fn title(&self) -> String {
+        "Lantern Git".to_owned()
+    }
+
+    fn status(&self) -> String {
+        self.doing.to_owned()
+    }
+
+    fn shows_header(&self, _editor: Editor) -> bool {
+        false
+    }
+
+    fn title_menus(&self) -> &[(&str, &str)] {
+        &[("Git", "git")]
+    }
+
+    fn menu(&self, name: &str) -> Option<Menu> {
+        let open = self.repo.is_some() && self.view == View::Repo;
+        (name == "git").then(|| {
+            Menu::new(
+                "Git",
+                vec![
+                    MenuItem::new("Refresh", Action::new("repo.refresh")).enabled(open),
+                    MenuItem::new("Pull", Action::new("repo.pull")).enabled(open),
+                    MenuItem::new("Push", Action::new("repo.push")).enabled(open),
+                    MenuItem::separator(),
+                    MenuItem::new("New Branch…", Action::new("branch.new")).enabled(open),
+                    MenuItem::new("Merge…", Action::new("merge.open")).enabled(open),
+                    MenuItem::separator(),
+                    MenuItem::new("New Repository…", Action::new("view.new")),
+                    MenuItem::new("Clone from GitHub…", Action::new("view.clone")),
+                    MenuItem::separator(),
+                    MenuItem::pref_toggle("Reduce Motion", "reduce_motion"),
+                    MenuItem::new("Quit", Action::new(actions::QUIT)),
+                ],
+            )
+        })
+    }
+
+    fn palette(&self, query: &str) -> Vec<(String, String)> {
+        let q = query.to_lowercase();
+        let repos = self.repos.iter().enumerate().map(|(i, p)| (format!("open.{i}"), format!("Open {}", git::repo_name(p))));
+        let rest = [("repo.refresh", "Refresh"), ("repo.pull", "Pull"), ("repo.push", "Push"), ("branch.new", "New Branch…"), ("merge.open", "Merge…"), ("view.new", "New Repository…"), ("view.clone", "Clone from GitHub…"), (actions::QUIT, "Quit")];
+        repos.chain(rest.into_iter().map(|(id, label)| (id.to_owned(), label.to_owned()))).filter(|(_, label)| label.to_lowercase().contains(&q)).collect()
+    }
+
+    fn key_hint(&self, action: &Action) -> Option<String> {
+        self.keys.hint_for(action)
+    }
+
+    fn draw_body(&mut self, _editor: Editor, ui: &mut Ui, cx: &mut AreaCx<()>) -> bool {
+        self.take_events(cx);
+        let width = ui.m.px(sidebar::WIDTH);
+        ui.columns(&[width, FILL], |ui, col| match col {
+            0 => sidebar::draw(self, ui),
+            _ => views::draw(self, ui, cx),
+        });
+        false
+    }
+
+    fn draw_item(&mut self, key: &str, ui: &mut Ui, cx: &mut HostCx) -> bool {
+        dialogs::draw(self, key, ui, cx)
+    }
+
+    fn dialog_ready(&self, action: &Action) -> bool {
+        dialogs::ready(self, &action.id)
+    }
+
+    fn run(&mut self, action: &Action, cx: &mut HostCx) {
+        let path = || action.arg("path").and_then(|v| v.as_str()).map(str::to_owned);
+        if let Some(i) = action.id.strip_prefix("open.").and_then(|i| i.parse::<usize>().ok()) {
+            if let Some(repo) = self.repos.get(i).cloned() {
+                self.open(repo);
             }
             return;
         }
-
-        // Clone view
-        if self.view == View::Clone {
-            match self.clone_view.on_click(ix, phys_cx, phys_cy) {
-                CloneAction::GoBack => {
-                    self.view = View::RepoPicker;
-                    self.scroll.set(0.0);
-                }
-                CloneAction::OpenRepo(path) => {
-                    self.open_repo(path);
-                }
-                CloneAction::None => {}
+        match action.id.as_str() {
+            "view.new" => self.go(View::NewRepo),
+            "view.clone" => self.go(View::Clone),
+            "newrepo.folder" => self.new_repo.parent = path().unwrap_or_default(),
+            "clone.folder" => self.clone.dest = path().unwrap_or_default(),
+            _ if self.repo.is_none() || self.view != View::Repo => {}
+            "repo.refresh" => self.refresh("Refreshing…"),
+            "repo.pull" => self.send(Cmd::Pull, "Pulling…"),
+            "repo.push" => self.send(Cmd::Push, "Pushing…"),
+            "branch.new" => cx.request(dialogs::new_branch(self)),
+            "branch.create" => {
+                let name = git::branch_name(&self.dialogs.branch_name);
+                self.send(Cmd::CreateBranch { name, push: self.dialogs.branch_push }, "Making the branch…");
             }
-            return;
-        }
-
-        // New repo view
-        if self.view == View::NewRepo {
-            match self.new_repo_view.on_click(ix, phys_cx, phys_cy) {
-                NewRepoAction::GoBack => {
-                    self.view = View::RepoPicker;
-                    self.scroll.set(0.0);
-                }
-                NewRepoAction::Create {
-                    name,
-                    parent,
-                    github,
-                    private,
-                } => {
-                    let _ = self.cmd_tx.send(GitCmd::CreateRepo {
-                        name,
-                        parent,
-                        github,
-                        private,
-                    });
-                }
-                NewRepoAction::None => {}
-            }
-            return;
-        }
-
-        // Repo picker
-        let Some(zone) = ix.zone_at(phys_cx, phys_cy) else {
-            return;
-        };
-
-        if zone == ZONE_CLONE_BTN {
-            self.view = View::Clone;
-            self.scroll.set(0.0);
-            if self.clone_view.repos.is_empty() {
-                self.clone_view.loading = true;
-                let _ = self.cmd_tx.send(GitCmd::FetchGitHubRepos);
-            }
-        } else if zone == ZONE_NEW_REPO_BTN {
-            self.view = View::NewRepo;
-            self.scroll.set(0.0);
-        } else if zone >= ZONE_REPO_BASE && zone < ZONE_REPO_BASE + 256 {
-            let idx = (zone - ZONE_REPO_BASE) as usize;
-            if let Some(repo) = self.repos.get(idx).cloned() {
-                self.open_repo(repo);
-            }
-        }
-    }
-
-    fn open_repo(&mut self, path: PathBuf) {
-        self.repo_path = Some(path.clone());
-        self.view = View::Main;
-        self.scroll.set(0.0);
-        self.main_view.reset();
-        self.main_view.repo_path = Some(path.clone());
-        self.main_view.busy = true;
-        let _ = self.cmd_tx.send(GitCmd::OpenRepo(path));
-    }
-
-    pub fn on_key(&mut self, key: u32, shift: bool) {
-        match self.view {
-            View::Main => self.main_view.on_key(key, shift),
-            View::Clone => self.clone_view.on_key(key, shift),
-            View::NewRepo => {
-                if let NewRepoAction::Create {
-                    name,
-                    parent,
-                    github,
-                    private,
-                } = self.new_repo_view.on_key(key, shift)
-                {
-                    let _ = self.cmd_tx.send(GitCmd::CreateRepo {
-                        name,
-                        parent,
-                        github,
-                        private,
-                    });
+            "merge.open" => cx.request(dialogs::merge(self)),
+            "merge.run" => {
+                let names = |i: usize| self.repo.as_ref().and_then(|r| r.branches.get(i)).map(|b| b.name.clone());
+                if let (Some(source), Some(target)) = (names(self.dialogs.merge_from), names(self.dialogs.merge_into)) {
+                    self.send(Cmd::Merge { source, target }, "Merging…");
                 }
             }
-            View::RepoPicker => {}
+            "file.discard" => {
+                if let Some(file) = self.dialogs.discard.take() {
+                    self.send(Cmd::Discard(file), "Discarding…");
+                }
+            }
+            other => cx.toast(&format!("unknown action {other}")),
         }
     }
 
-    pub fn on_scroll(&mut self, delta: f32) {
-        match self.view {
-            View::Main => self.main_view.on_scroll(delta),
-            View::Clone => self.clone_view.on_scroll(delta),
-            View::NewRepo => {}
-            View::RepoPicker => {
-                self.scroll
-                    .scroll_by(delta, self.picker_content_height, self.picker_viewport_h);
-            }
-        }
+    fn key(&self, press: KeyPress, _editor: Option<Editor>) -> Option<Action> {
+        self.keys.resolve(&[CTX_WINDOW], &press.to_event(), |_| true).map(KeyItem::action)
+    }
+}
+
+impl AppHost for App {
+    fn waker(&mut self, waker: Waker) {
+        self.link.set_waker(waker);
     }
 
-    pub fn wants_keyboard(&self) -> bool {
-        match self.view {
-            View::Main => self.main_view.wants_keyboard(),
-            View::Clone => self.clone_view.wants_keyboard(),
-            View::NewRepo => self.new_repo_view.wants_keyboard(),
-            View::RepoPicker => false,
+    fn after_rebuild(&mut self, _gpu: &Gpu, _images: &mut Images, shell: &mut Shell<Self>) -> bool {
+        // Coming back to the window: files may have changed meanwhile.
+        let focused = shell.window_focused;
+        if focused && !self.was_focused && self.view == View::Repo && !self.busy {
+            self.refresh("");
         }
-    }
-
-    /// Draw into the title bar content area.
-    pub fn draw_title_bar(
-        &mut self,
-        text: &mut TextRenderer,
-        ix: &mut InteractionContext,
-        palette: &FoxPalette,
-        tb_content: Rect,
-        painter: &mut Painter,
-        scale: f32,
-        screen_w: u32,
-        screen_h: u32,
-    ) {
-        let s = scale;
-        let font = 20.0 * s;
-        let tx = tb_content.x + 8.0 * s;
-        let ty = tb_content.y + (tb_content.h - font) / 2.0;
-
-        match self.view {
-            View::RepoPicker | View::Clone | View::NewRepo => {
-                text.queue(
-                    "Lantern Git",
-                    font,
-                    tx,
-                    ty,
-                    palette.text,
-                    tb_content.w,
-                    screen_w,
-                    screen_h,
-                );
-            }
-            View::Main => {
-                self.main_view.draw_title_bar_content(
-                    text, ix, palette, tb_content, painter, s, screen_w, screen_h,
-                );
-            }
-        }
-    }
-
-    /// Draw overlays on layer 1 (branch dropdown + merge modal).
-    pub fn draw_overlays(
-        &mut self,
-        painter: &mut Painter,
-        text: &mut TextRenderer,
-        ix: &mut InteractionContext,
-        palette: &FoxPalette,
-        scale: f32,
-        wf: f32,
-        hf: f32,
-        screen_w: u32,
-        screen_h: u32,
-    ) {
-        if self.view == View::Main {
-            self.main_view.draw_overlays(
-                painter, text, ix, palette, scale, wf, hf, screen_w, screen_h,
-            );
-        }
-    }
-
-    pub fn draw(
-        &mut self,
-        painter: &mut Painter,
-        text: &mut TextRenderer,
-        ix: &mut InteractionContext,
-        palette: &FoxPalette,
-        content_x: f32,
-        content_y: f32,
-        content_w: f32,
-        content_h: f32,
-        scale: f32,
-        screen_w: u32,
-        screen_h: u32,
-    ) {
-        match self.view {
-            View::RepoPicker => self.draw_picker(
-                painter, text, ix, palette, content_x, content_y, content_w, content_h, scale,
-                screen_w, screen_h,
-            ),
-            View::Clone => self.clone_view.draw(
-                painter, text, ix, palette, content_x, content_y, content_w, content_h, scale,
-                screen_w, screen_h,
-            ),
-            View::NewRepo => self.new_repo_view.draw(
-                painter, text, ix, palette, content_x, content_y, content_w, content_h, scale,
-                screen_w, screen_h,
-            ),
-            View::Main => self.main_view.draw(
-                painter, text, ix, palette, content_x, content_y, content_w, content_h, scale,
-                screen_w, screen_h,
-            ),
-        }
-    }
-
-    fn draw_picker(
-        &mut self,
-        painter: &mut Painter,
-        text: &mut TextRenderer,
-        ix: &mut InteractionContext,
-        palette: &FoxPalette,
-        cx: f32,
-        cy: f32,
-        cw: f32,
-        ch: f32,
-        s: f32,
-        sw: u32,
-        sh: u32,
-    ) {
-        let title_font = 28.0 * s;
-        let body_font = 24.0 * s;
-        let small_font = 18.0 * s;
-        let row_h = 60.0 * s;
-        let divider_h = 1.0 * s;
-        let pad = 20.0 * s;
-
-        // --- Action row: "Open Repository" label + "Clone from GitHub" button ---
-        let action_row_h = 64.0 * s;
-        let action_rect = Rect::new(cx, cy, cw, action_row_h);
-        painter.rect_filled(action_rect, 0.0, palette.surface.with_alpha(0.4));
-
-        let label_y = cy + (action_row_h - title_font) / 2.0;
-        text.queue(
-            "Open Repository",
-            title_font,
-            cx + pad,
-            label_y,
-            palette.text,
-            cw,
-            sw,
-            sh,
-        );
-
-        // "New Repository" + "Clone from GitHub" buttons (right-aligned)
-        let btn_font = 20.0 * s;
-        let btn_h = 38.0 * s;
-        let btn_y = cy + (action_row_h - btn_h) / 2.0;
-        let btn_gap = 10.0 * s;
-        let clone_w = 200.0 * s;
-        let new_w = 180.0 * s;
-
-        let clone_rect = Rect::new(cx + cw - pad - clone_w, btn_y, clone_w, btn_h);
-        let new_rect = Rect::new(clone_rect.x - btn_gap - new_w, btn_y, new_w, btn_h);
-
-        for (zone_id, label, rect) in [
-            (ZONE_NEW_REPO_BTN, "New Repository", new_rect),
-            (ZONE_CLONE_BTN, "Clone from GitHub", clone_rect),
-        ] {
-            let state = ix.add_zone(zone_id, rect);
-            let color = if state.is_hovered() {
-                palette.accent
-            } else {
-                palette.accent.with_alpha(0.7)
-            };
-            painter.rect_filled(rect, 8.0 * s, color);
-            let ty = rect.y + (btn_h - btn_font) / 2.0;
-            let tw = btn_font * 0.5 * label.len() as f32;
-            text.queue(
-                label,
-                btn_font,
-                rect.x + (rect.w - tw) / 2.0,
-                ty,
-                palette.text,
-                rect.w,
-                sw,
-                sh,
-            );
-        }
-
-        // Divider below action row
-        let action_div_h = 3.0 * s;
-        let div_y = cy + action_row_h - action_div_h;
-        painter.rect_filled(
-            Rect::new(cx, div_y, cw, action_div_h),
-            0.0,
-            palette.muted.with_alpha(0.4),
-        );
-
-        let header_y = cy + action_row_h + 8.0 * s;
-
-        if self.repos.is_empty() {
-            text.queue(
-                "Scanning for repos...",
-                body_font,
-                cx + pad,
-                header_y,
-                palette.muted,
-                cw,
-                sw,
-                sh,
-            );
-            return;
-        }
-
-        let total_content_h = self.repos.len() as f32 * row_h;
-        let viewport_h = ch - (header_y - cy);
-
-        self.picker_content_height = total_content_h;
-        self.picker_viewport_h = viewport_h;
-        self.scroll.clamp_to(total_content_h, viewport_h);
-
-        let viewport = Rect::new(cx, header_y, cw, viewport_h);
-        let scroll = ScrollArea::new(viewport, total_content_h, &mut self.scroll.offset);
-
-        scroll.begin(painter, text);
-
-        let base_y = scroll.content_y();
-        for (idx, repo) in self.repos.iter().enumerate() {
-            let y = base_y + idx as f32 * row_h;
-
-            if y + row_h < header_y || y > header_y + viewport_h {
-                continue;
-            }
-
-            let row_rect = Rect::new(cx, y, cw, row_h);
-            let zone_id = ZONE_REPO_BASE + idx as u32;
-            let state = ix.add_zone(zone_id, row_rect);
-
-            if state.is_hovered() {
-                painter.rect_filled(row_rect, 8.0 * s, palette.muted.with_alpha(0.15));
-            }
-
-            let name = git::repo_name(repo);
-            let path_str = repo.to_string_lossy();
-            let text_y = y + (row_h - body_font - small_font) / 2.0;
-
-            text.queue(
-                &name,
-                body_font,
-                cx + pad,
-                text_y,
-                palette.text,
-                cw - pad * 2.0,
-                sw,
-                sh,
-            );
-            text.queue(
-                &path_str,
-                small_font,
-                cx + pad,
-                text_y + body_font + 10.0 * s,
-                palette.muted,
-                cw - pad * 2.0,
-                sw,
-                sh,
-            );
-
-            if idx < self.repos.len() - 1 {
-                let div_y = y + row_h - divider_h;
-                painter.rect_filled(
-                    Rect::new(cx + pad, div_y, cw - pad * 2.0, divider_h),
-                    0.0,
-                    palette.muted.with_alpha(0.15),
-                );
-            }
-        }
-
-        scroll.end(painter, text);
-
-        let scrollbar = Scrollbar::new(&viewport, total_content_h, self.scroll.offset);
-        let sb_state = ix.add_zone(ZONE_SCROLLBAR, scrollbar.thumb);
-        scrollbar.draw(painter, sb_state, palette);
+        self.was_focused = focused;
+        self.follow.apply(shell)
     }
 }

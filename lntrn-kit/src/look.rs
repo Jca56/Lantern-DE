@@ -1,8 +1,7 @@
-//! How Settings itself looks: the Lantern palette (warm near-black
-//! surfaces, tan ink) with the desktop's accent on top, so a new accent
-//! shows here the moment it is picked. [`theme`] dresses the shell's own
-//! parts (title bar, menus, popups, dialogs); the constants are what the
-//! kit paints cards and controls with.
+//! How a Lantern app looks: the Lantern palette (warm near-black
+//! surfaces, tan ink) with the desktop's accent on top. [`theme`] dresses
+//! the shell's own parts (title bar, menus, popups, dialogs); the
+//! constants are what the kit paints cards and controls with.
 
 use lntrn_math::Color;
 use lntrn_props::Gradient;
@@ -24,6 +23,14 @@ pub const TEXT: Color = Color::hex(0xE8DCC8);
 pub const TEXT_DIM: Color = Color::hex(0xA99C86);
 /// Lantern gold: the accent when the stored one won't parse.
 pub const GOLD: Color = Color::hex(0xFAC800);
+/// Something added, done, or safe.
+pub const GOOD: Color = Color::hex(0x8FD46A);
+/// Something removed, failed, or that can't be undone.
+pub const BAD: Color = Color::hex(0xFF7B6B);
+/// Something changed, or to look at.
+pub const WARN: Color = Color::hex(0xFFB84D);
+/// Something neutral that still wants telling apart.
+pub const INFO: Color = Color::hex(0x7DB8FF);
 
 /// The desktop's accent from its stored hex.
 pub fn accent(hex: &str) -> Color {

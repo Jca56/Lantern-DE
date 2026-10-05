@@ -1,11 +1,13 @@
-//! GitHub integration via the `gh` CLI — repo listing and creation.
-//! All blocking — call from the background worker thread.
+//! GitHub through the `gh` command: listing the user's repos and making
+//! new ones. Blocking: call from the worker thread.
 
 use std::path::Path;
 use std::process::Command;
 
-/// A remote GitHub repository.
-#[derive(Debug, Clone)]
+use lntrn_data::{Doc, json};
+
+/// A repository on GitHub.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RemoteRepo {
     pub name: String,
     pub full_name: String,
@@ -15,151 +17,61 @@ pub struct RemoteRepo {
     pub is_fork: bool,
 }
 
-/// Fetch the authenticated user's GitHub repos via `gh` CLI.
-pub fn fetch_github_repos() -> Result<Vec<RemoteRepo>, String> {
-    let output = Command::new("gh")
-        .args([
-            "repo",
-            "list",
-            "--limit",
-            "200",
-            "--json",
-            "name,nameWithOwner,description,url,isPrivate,isFork",
-        ])
-        .output()
-        .map_err(|e| format!("gh not found: {e}"))?;
+fn gh_missing(e: std::io::Error) -> String {
+    format!("The gh command could not be run ({e}). Install it and sign in with `gh auth login`.")
+}
 
+/// The signed-in user's repos, newest first as `gh` lists them.
+pub fn list_repos() -> Result<Vec<RemoteRepo>, String> {
+    let output = Command::new("gh").args(["repo", "list", "--limit", "200", "--json", "name,nameWithOwner,description,url,isPrivate,isFork"]).output().map_err(gh_missing)?;
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
     }
-
-    // Minimal JSON parsing — avoid pulling in serde/serde_json
-    let json = String::from_utf8_lossy(&output.stdout);
-    parse_gh_repo_list(&json)
+    parse_repo_list(&String::from_utf8_lossy(&output.stdout))
 }
 
-/// Create the repo on GitHub via `gh` and link it as the `origin` remote.
-/// Works on an empty repo — no push is attempted, just the remote link.
-pub fn create_github_repo(repo: &Path, name: &str, private: bool) -> Result<String, String> {
-    let vis = if private { "--private" } else { "--public" };
-    let output = Command::new("gh")
-        .args([
-            "repo", "create", name, vis, "--source", ".", "--remote", "origin",
-        ])
-        .current_dir(repo)
-        .output()
-        .map_err(|e| format!("gh not found: {e}"))?;
-    if output.status.success() {
-        let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        Ok(if url.is_empty() {
-            "Created on GitHub".into()
-        } else {
-            format!("Created {url}")
+/// `gh repo list --json ...` as repos.
+pub fn parse_repo_list(text: &str) -> Result<Vec<RemoteRepo>, String> {
+    let doc = json::parse(text).map_err(|e| format!("gh said something unexpected: {e}"))?;
+    let list = doc.as_list().ok_or("gh said something unexpected: not a list")?;
+    let word = |d: &Doc, key: &str| d.get(key).and_then(Doc::as_str).unwrap_or("").to_owned();
+    let flag = |d: &Doc, key: &str| d.get(key).and_then(Doc::as_bool).unwrap_or(false);
+    Ok(list
+        .iter()
+        .map(|d| RemoteRepo {
+            name: word(d, "name"),
+            full_name: word(d, "nameWithOwner"),
+            // A description is one line here, whatever it holds.
+            description: word(d, "description").split_whitespace().collect::<Vec<_>>().join(" "),
+            clone_url: word(d, "url"),
+            is_private: flag(d, "isPrivate"),
+            is_fork: flag(d, "isFork"),
         })
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
-    }
+        .filter(|r| !r.name.is_empty() && !r.clone_url.is_empty())
+        .collect())
 }
 
-/// Tiny JSON parser for gh repo list output.
-/// Format: [{"name":"...","nameWithOwner":"...","description":"...","url":"...","isPrivate":bool,"isFork":bool}, ...]
-fn parse_gh_repo_list(json: &str) -> Result<Vec<RemoteRepo>, String> {
-    let json = json.trim();
-    if !json.starts_with('[') {
-        return Err("unexpected gh output".into());
-    }
-
-    let mut repos = Vec::new();
-    // Split by "},{" to get individual objects
-    let inner = &json[1..json.len() - 1]; // strip [ ]
-    if inner.trim().is_empty() {
-        return Ok(repos);
-    }
-
-    for chunk in split_json_objects(inner) {
-        let name = extract_json_str(&chunk, "name").unwrap_or_default();
-        let full_name = extract_json_str(&chunk, "nameWithOwner").unwrap_or_default();
-        let description = extract_json_str(&chunk, "description").unwrap_or_default();
-        let clone_url = extract_json_str(&chunk, "url").unwrap_or_default();
-        let is_private = extract_json_bool(&chunk, "isPrivate");
-        let is_fork = extract_json_bool(&chunk, "isFork");
-        repos.push(RemoteRepo {
-            name,
-            full_name,
-            description,
-            clone_url,
-            is_private,
-            is_fork,
-        });
-    }
-
-    Ok(repos)
+/// Make the repo on GitHub and set it as `origin`. Nothing is pushed: it
+/// works on a repo with no commit yet.
+pub fn create_repo(repo: &Path, name: &str, private: bool) -> Result<String, String> {
+    let visibility = if private { "--private" } else { "--public" };
+    let output = Command::new("gh").args(["repo", "create", name, visibility, "--source", ".", "--remote", "origin"]).current_dir(repo).output().map_err(gh_missing)?;
+    if output.status.success() { Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned()) } else { Err(String::from_utf8_lossy(&output.stderr).trim().to_owned()) }
 }
 
-fn split_json_objects(s: &str) -> Vec<String> {
-    let mut objects = Vec::new();
-    let mut depth = 0;
-    let mut start = 0;
-    for (i, c) in s.char_indices() {
-        match c {
-            '{' => {
-                if depth == 0 {
-                    start = i;
-                }
-                depth += 1;
-            }
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    objects.push(s[start..=i].to_string());
-                }
-            }
-            _ => {}
-        }
-    }
-    objects
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn extract_json_str(obj: &str, key: &str) -> Option<String> {
-    let needle = format!("\"{}\":", key);
-    let pos = obj.find(&needle)? + needle.len();
-    let rest = &obj[pos..].trim_start();
-    if rest.starts_with("null") {
-        return Some(String::new());
+    #[test]
+    fn gh_output_becomes_repos() {
+        let text = r#"[{"description":"A \"desktop\"\nfor fun","isFork":false,"isPrivate":true,"name":"Lantern-DE","nameWithOwner":"Jca56/Lantern-DE","url":"https://github.com/Jca56/Lantern-DE"},
+            {"description":null,"isFork":true,"isPrivate":false,"name":"llama.cpp","nameWithOwner":"Jca56/llama.cpp","url":"https://github.com/Jca56/llama.cpp"}]"#;
+        let repos = parse_repo_list(text).unwrap();
+        assert_eq!(repos.len(), 2);
+        assert_eq!(repos[0], RemoteRepo { name: "Lantern-DE".into(), full_name: "Jca56/Lantern-DE".into(), description: "A \"desktop\" for fun".into(), clone_url: "https://github.com/Jca56/Lantern-DE".into(), is_private: true, is_fork: false });
+        assert!(repos[1].description.is_empty() && repos[1].is_fork && !repos[1].is_private);
+        assert_eq!(parse_repo_list("[]").unwrap(), []);
+        assert!(parse_repo_list("gh: not logged in").is_err());
     }
-    if !rest.starts_with('"') {
-        return None;
-    }
-    let inner = &rest[1..];
-    let mut result = String::new();
-    let mut chars = inner.chars();
-    while let Some(c) = chars.next() {
-        match c {
-            '\\' => {
-                if let Some(escaped) = chars.next() {
-                    match escaped {
-                        '"' => result.push('"'),
-                        '\\' => result.push('\\'),
-                        'n' => result.push(' '),
-                        _ => {
-                            result.push('\\');
-                            result.push(escaped);
-                        }
-                    }
-                }
-            }
-            '"' => break,
-            _ => result.push(c),
-        }
-    }
-    Some(result)
-}
-
-fn extract_json_bool(obj: &str, key: &str) -> bool {
-    let needle = format!("\"{}\":", key);
-    let Some(pos) = obj.find(&needle) else {
-        return false;
-    };
-    let rest = &obj[pos + needle.len()..].trim_start();
-    rest.starts_with("true")
 }

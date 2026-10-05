@@ -1,10 +1,40 @@
-//! Git operations via CLI commands. All blocking — call from background thread.
+//! Git through its command line. Everything here blocks: call it from
+//! the worker thread. Diffs are in `diff.rs`.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 
-/// A changed file in the working tree.
-#[derive(Debug, Clone)]
+/// `git` in `repo`, told never to stop and ask for a password: a push
+/// that needs one fails with a message instead of hanging the worker.
+pub fn git(repo: &Path) -> Command {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo).env("GIT_TERMINAL_PROMPT", "0");
+    cmd
+}
+
+fn text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).trim().to_owned()
+}
+
+/// What a finished command said: its output when it worked (`stderr`
+/// first, where git reports progress, else `stdout`, else `fallback`),
+/// its error text when it didn't.
+fn said(output: std::io::Result<Output>, fallback: &str) -> Result<String, String> {
+    let output = output.map_err(|e| format!("git could not be run: {e}"))?;
+    let (out, err) = (text(&output.stdout), text(&output.stderr));
+    if !output.status.success() {
+        return Err(if err.is_empty() { out } else { err });
+    }
+    Ok([err, out].into_iter().find(|s| !s.is_empty()).unwrap_or_else(|| fallback.to_owned()))
+}
+
+fn ran(output: std::io::Result<Output>) -> bool {
+    output.is_ok_and(|o| o.status.success())
+}
+
+/// A changed file in the working tree. One file can be here twice: once
+/// for what is staged and once for what isn't.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileStatus {
     pub path: String,
     pub status: FileState,
@@ -19,22 +49,27 @@ pub enum FileState {
     Deleted,
     Renamed,
     Untracked,
+    /// Both sides of a merge changed it and git could not put them
+    /// together; staging it says it has been sorted out.
+    Conflict,
 }
 
 impl FileState {
-    pub fn label(self) -> &'static str {
+    /// The letter git shows for it.
+    pub fn letter(self) -> &'static str {
         match self {
             Self::Modified => "M",
             Self::Added => "A",
             Self::Deleted => "D",
             Self::Renamed => "R",
             Self::Untracked => "?",
+            Self::Conflict => "!",
         }
     }
 }
 
-/// Summary of repo state.
-#[derive(Debug, Clone)]
+/// Summary of a repo's state.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RepoStatus {
     pub branch: String,
     pub files: Vec<FileStatus>,
@@ -42,19 +77,11 @@ pub struct RepoStatus {
     pub behind: u32,
 }
 
-/// Find git repos in common locations (scans 2 levels deep).
+/// Git repos under `~/Projects`, two folders deep.
 pub fn find_repos() -> Vec<PathBuf> {
     let home = std::env::var("HOME").unwrap_or_default();
-    let search_dirs = [format!("{home}/Projects")];
-
     let mut repos = Vec::new();
-    for dir in &search_dirs {
-        let path = Path::new(dir);
-        if !path.is_dir() {
-            continue;
-        }
-        scan_repos(path, &mut repos, 2);
-    }
+    scan_repos(&Path::new(&home).join("Projects"), &mut repos, 2);
     repos.sort();
     repos.dedup();
     repos
@@ -64,21 +91,14 @@ fn scan_repos(dir: &Path, repos: &mut Vec<PathBuf>, depth: u32) {
     if depth == 0 {
         return;
     }
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let p = entry.path();
-        if !p.is_dir() {
+        let hidden = p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with('.'));
+        if !p.is_dir() || hidden {
             continue;
         }
-        // Skip hidden dirs (except .config which we explicitly search)
-        if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
-            if name.starts_with('.') {
-                continue;
-            }
-        }
-        if p.join(".git").exists() {
+        if is_repo(&p) {
             repos.push(p);
         } else {
             scan_repos(&p, repos, depth - 1);
@@ -86,504 +106,311 @@ fn scan_repos(dir: &Path, repos: &mut Vec<PathBuf>, depth: u32) {
     }
 }
 
-/// Get the current branch name.
-pub fn current_branch(repo: &Path) -> String {
-    let output = Command::new("git")
-        .args(["branch", "--show-current"])
-        .current_dir(repo)
-        .output();
-    output
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_else(|_| "unknown".into())
+/// Whether `path` is the top of a work tree (a submodule's `.git` is a
+/// file, not a folder).
+pub fn is_repo(path: &Path) -> bool {
+    path.join(".git").exists()
 }
 
-/// Get ahead/behind counts relative to upstream.
-pub fn ahead_behind(repo: &Path) -> (u32, u32) {
-    let output = Command::new("git")
-        .args(["rev-list", "--left-right", "--count", "HEAD...@{upstream}"])
-        .current_dir(repo)
-        .output();
-    let Ok(output) = output else { return (0, 0) };
+/// The folder's name, which is what a repo is called.
+pub fn repo_name(repo: &Path) -> String {
+    repo.file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_owned()
+}
+
+pub fn current_branch(repo: &Path) -> String {
+    git(repo).args(["branch", "--show-current"]).output().map(|o| text(&o.stdout)).unwrap_or_default()
+}
+
+/// Commits `a` has that `b` doesn't, and the other way round.
+fn left_right(repo: &Path, range: &str) -> (u32, u32) {
+    let Ok(output) = git(repo).args(["rev-list", "--left-right", "--count", range]).output() else { return (0, 0) };
     if !output.status.success() {
         return (0, 0);
     }
-    let s = String::from_utf8_lossy(&output.stdout);
-    let parts: Vec<&str> = s.trim().split_whitespace().collect();
-    if parts.len() == 2 {
-        let ahead = parts[0].parse().unwrap_or(0);
-        let behind = parts[1].parse().unwrap_or(0);
-        (ahead, behind)
-    } else {
-        (0, 0)
-    }
+    let s = text(&output.stdout);
+    let mut parts = s.split_whitespace().map(|p| p.parse().unwrap_or(0));
+    (parts.next().unwrap_or(0), parts.next().unwrap_or(0))
 }
 
-/// Detect submodule paths by checking which entries in the repo are
-/// themselves git repos (have .git file or directory). More robust than
-/// `git submodule status` which can fail on stale .gitmodules entries.
-pub fn submodule_paths(repo: &Path) -> Vec<String> {
-    let output = Command::new("git")
-        .args(["ls-files", "--stage"])
-        .current_dir(repo)
-        .output();
-    let Ok(output) = output else {
-        return Vec::new();
-    };
-    // Submodules show as mode 160000 in the index
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            if line.starts_with("160000 ") {
-                // Format: "160000 <hash> <stage>\t<path>"
-                line.split('\t').nth(1).map(|s| s.to_string())
-            } else {
-                None
-            }
-        })
-        .collect()
+/// The paths git tracks as submodules (mode 160000 in the index): more
+/// robust than `git submodule status`, which fails on a stale
+/// `.gitmodules`.
+fn submodule_paths(repo: &Path) -> Vec<String> {
+    let Ok(output) = git(repo).args(["ls-files", "--stage", "-z"]).output() else { return Vec::new() };
+    String::from_utf8_lossy(&output.stdout).split('\0').filter(|e| e.starts_with("160000 ")).filter_map(|e| e.split('\t').nth(1).map(str::to_owned)).collect()
 }
 
-/// Get full repo status.
-pub fn status(repo: &Path) -> RepoStatus {
-    let branch = current_branch(repo);
-    let (ahead, behind) = ahead_behind(repo);
-
-    let submodules = submodule_paths(repo);
-
-    let output = Command::new("git")
-        .args(["status", "--porcelain=v1"])
-        .current_dir(repo)
-        .output();
-
+/// `git status --porcelain=v1 -z` as files. Entries are `XY path`,
+/// separated by NULs and never quoted; a rename's old path follows it as
+/// an entry of its own, which is skipped.
+pub fn parse_status(porcelain: &str, submodules: &[String]) -> Vec<FileStatus> {
     let mut files = Vec::new();
-    if let Ok(output) = output {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        for line in stdout.lines() {
-            if line.len() < 4 {
-                continue;
-            }
-            let index = line.as_bytes()[0];
-            let worktree = line.as_bytes()[1];
-            let path = line[3..].to_string();
-            let is_sub = submodules.iter().any(|s| s == &path);
-
-            // Staged changes (index column)
-            if index != b' ' && index != b'?' {
-                let state = match index {
-                    b'M' => FileState::Modified,
-                    b'A' => FileState::Added,
-                    b'D' => FileState::Deleted,
-                    b'R' => FileState::Renamed,
-                    _ => FileState::Modified,
-                };
-                files.push(FileStatus {
-                    path: path.clone(),
-                    status: state,
-                    staged: true,
-                    is_submodule: is_sub,
-                });
-            }
-
-            // Unstaged changes (worktree column)
-            if worktree == b'M' || worktree == b'D' {
-                let state = if worktree == b'D' {
-                    FileState::Deleted
-                } else {
-                    FileState::Modified
-                };
-                files.push(FileStatus {
-                    path: path.clone(),
-                    status: state,
-                    staged: false,
-                    is_submodule: is_sub,
-                });
-            }
-
-            // Untracked
-            if index == b'?' {
-                files.push(FileStatus {
-                    path,
-                    status: FileState::Untracked,
-                    staged: false,
-                    is_submodule: is_sub,
-                });
-            }
+    let mut entries = porcelain.split('\0');
+    while let Some(entry) = entries.next() {
+        let bytes = entry.as_bytes();
+        if bytes.len() < 4 {
+            continue;
+        }
+        let (index, worktree) = (bytes[0], bytes[1]);
+        let path = entry[3..].trim_end_matches('/').to_owned();
+        if index == b'R' || index == b'C' || worktree == b'R' {
+            entries.next();
+        }
+        let is_submodule = submodules.contains(&path);
+        let mut push = |status, staged| files.push(FileStatus { path: path.clone(), status, staged, is_submodule });
+        if index == b'?' {
+            push(FileState::Untracked, false);
+            continue;
+        }
+        if index == b'U' || worktree == b'U' || (index == worktree && matches!(index, b'A' | b'D')) {
+            push(FileState::Conflict, false);
+            continue;
+        }
+        match index {
+            b' ' | b'!' => {}
+            b'A' => push(FileState::Added, true),
+            b'D' => push(FileState::Deleted, true),
+            b'R' | b'C' => push(FileState::Renamed, true),
+            _ => push(FileState::Modified, true),
+        }
+        match worktree {
+            b'M' | b'T' => push(FileState::Modified, false),
+            b'D' => push(FileState::Deleted, false),
+            _ => {}
         }
     }
-
-    RepoStatus {
-        branch,
-        files,
-        ahead,
-        behind,
-    }
+    files
 }
 
-/// Stage a file.
+pub fn status(repo: &Path) -> RepoStatus {
+    let branch = current_branch(repo);
+    let (ahead, behind) = left_right(repo, "HEAD...@{upstream}");
+    let submodules = submodule_paths(repo);
+    let files = git(repo).args(["status", "--porcelain=v1", "-z"]).output().map(|o| parse_status(&String::from_utf8_lossy(&o.stdout), &submodules)).unwrap_or_default();
+    RepoStatus { branch, files, ahead, behind }
+}
+
 pub fn stage(repo: &Path, path: &str) -> bool {
-    Command::new("git")
-        .args(["add", path])
-        .current_dir(repo)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    ran(git(repo).args(["add", "--", path]).output())
 }
 
-/// Unstage a file.
+/// Take a file out of the next commit. A repo with no commit yet has no
+/// `HEAD` to restore from, so there the file is dropped from the index.
 pub fn unstage(repo: &Path, path: &str) -> bool {
-    Command::new("git")
-        .args(["restore", "--staged", path])
-        .current_dir(repo)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    ran(git(repo).args(["restore", "--staged", "--", path]).output()) || ran(git(repo).args(["rm", "--cached", "-r", "-q", "--", path]).output())
 }
 
-/// Commit staged changes.
+pub fn stage_all(repo: &Path) -> bool {
+    ran(git(repo).args(["add", "-A"]).output())
+}
+
+pub fn unstage_all(repo: &Path) -> bool {
+    ran(git(repo).args(["reset", "-q"]).output())
+}
+
+/// Throw away what isn't staged of a file. A tracked file goes back to
+/// what is staged (or committed); an untracked one is deleted, since git
+/// has no copy to go back to. Nothing brings either back.
+pub fn discard(repo: &Path, file: &FileStatus) -> Result<String, String> {
+    if file.staged {
+        return Err("Unstage it first: only changes that aren't staged can be discarded".into());
+    }
+    let done = if file.status == FileState::Untracked {
+        said(git(repo).args(["clean", "-f", "-d", "-q", "--", &file.path]).output(), "")
+    } else {
+        said(git(repo).args(["restore", "--worktree", "--", &file.path]).output(), "")
+    };
+    done.map(|_| format!("Discarded {}", file.path))
+}
+
 pub fn commit(repo: &Path, message: &str) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["commit", "-m", message])
-        .current_dir(repo)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
-    }
+    let output = git(repo).args(["commit", "-m", message]).output().map_err(|e| format!("git could not be run: {e}"))?;
+    // A commit that has nothing to do says so on stdout.
+    if output.status.success() { Ok(text(&output.stdout)) } else { Err([text(&output.stderr), text(&output.stdout)].into_iter().find(|s| !s.is_empty()).unwrap_or_default()) }
 }
 
-/// Push to remote. If no upstream is set, automatically pushes with `-u origin <branch>`.
+/// Push the current branch. One with no upstream yet is pushed to
+/// `origin` and set to track it.
 pub fn push(repo: &Path) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["push"])
-        .current_dir(repo)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if output.status.success() {
-        let msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Ok(if msg.is_empty() {
-            "Pushed successfully".into()
-        } else {
-            msg
-        });
+    match said(git(repo).args(["push"]).output(), "Pushed") {
+        Err(e) if e.contains("no upstream") || e.contains("set the remote as upstream") => push_new_branch(repo, &current_branch(repo)),
+        other => other,
     }
-    // If push failed due to no upstream, auto-set it
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if stderr.contains("no upstream")
-        || stderr.contains("has no upstream")
-        || stderr.contains("set the remote as upstream")
-    {
-        let branch = current_branch(repo);
-        return push_new_branch(repo, &branch);
-    }
-    Err(stderr.trim().to_string())
 }
 
-/// Pull from remote.
+pub fn push_new_branch(repo: &Path, name: &str) -> Result<String, String> {
+    said(git(repo).args(["push", "-u", "origin", name]).output(), &format!("Pushed '{name}' to origin"))
+}
+
 pub fn pull(repo: &Path) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["pull"])
-        .current_dir(repo)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
-    }
+    said(git(repo).args(["pull"]).output(), "Pulled")
 }
 
-// ── Clone & create ──────────────────────────────────────────────────────────
-
-/// Clone a repo into the given directory.
+/// Clone `url` into a folder of its own inside `dest`.
 pub fn clone_repo(url: &str, dest: &Path) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["clone", url])
-        .current_dir(dest)
-        .output()
-        .map_err(|e| e.to_string())?;
-
-    if output.status.success() {
-        Ok("Cloned successfully".into())
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    if !dest.is_dir() {
+        return Err(format!("There is no folder {}", dest.display()));
     }
+    said(git(dest).args(["clone", "--quiet", url]).output(), "Cloned")
 }
 
-/// Create a new empty repo at `parent/name` with `git init -b main`.
+/// A new empty repo at `parent/name`, on a `main` branch.
 pub fn init_repo(parent: &Path, name: &str) -> Result<PathBuf, String> {
     let name = name.trim();
     if name.is_empty() || name.contains('/') || name.starts_with('.') {
-        return Err("Invalid repository name".into());
+        return Err("That is not a name a repository can have".into());
     }
     if !parent.is_dir() {
-        return Err(format!("Directory doesn't exist: {}", parent.display()));
+        return Err(format!("There is no folder {}", parent.display()));
     }
     let path = parent.join(name);
     if path.exists() {
-        return Err(format!("Already exists: {}", path.display()));
+        return Err(format!("{} is already there", path.display()));
     }
     std::fs::create_dir(&path).map_err(|e| e.to_string())?;
-    let output = Command::new("git")
-        .args(["init", "-b", "main"])
-        .current_dir(&path)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if output.status.success() {
-        Ok(path)
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
-    }
+    said(git(&path).args(["init", "-q", "-b", "main"]).output(), "").map(|_| path)
 }
 
-// ── Branch operations ───────────────────────────────────────────────────────
+// ---- branches -------------------------------------------------------------
 
-/// A local branch.
-#[derive(Debug, Clone)]
-pub struct BranchInfo {
+/// A local branch as the branches tab shows it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Branch {
     pub name: String,
     pub is_current: bool,
-}
-
-/// List all local branches.
-pub fn list_branches(repo: &Path) -> Vec<BranchInfo> {
-    let output = Command::new("git")
-        .args(["branch", "--list"])
-        .current_dir(repo)
-        .output();
-    let Ok(output) = output else {
-        return Vec::new();
-    };
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(|line| {
-            let is_current = line.starts_with('*');
-            let name = line.trim_start_matches('*').trim().to_string();
-            BranchInfo { name, is_current }
-        })
-        .filter(|b| !b.name.is_empty())
-        .collect()
-}
-
-/// Create a new branch and switch to it.
-pub fn create_branch(repo: &Path, name: &str) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["checkout", "-b", name])
-        .current_dir(repo)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if output.status.success() {
-        Ok(format!("Created and switched to '{name}'"))
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
-    }
-}
-
-/// Push a new branch to origin with upstream tracking.
-pub fn push_new_branch(repo: &Path, name: &str) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["push", "-u", "origin", name])
-        .current_dir(repo)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if output.status.success() {
-        let msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        Ok(if msg.is_empty() {
-            format!("Pushed '{name}' to origin")
-        } else {
-            msg
-        })
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
-    }
-}
-
-/// Switch to an existing branch.
-pub fn switch_branch(repo: &Path, name: &str) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["checkout", name])
-        .current_dir(repo)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if output.status.success() {
-        Ok(format!("Switched to '{name}'"))
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
-    }
-}
-
-// ── Detailed branch info ────────────────────────────────────────────────────
-
-/// Detailed branch info for the branch panel.
-#[derive(Debug, Clone)]
-pub struct BranchDetail {
-    pub name: String,
-    pub is_current: bool,
+    /// Commits it has that the base branch doesn't, and the reverse.
     pub ahead: u32,
     pub behind: u32,
+    /// Its newest commit's subject.
     pub last_commit: String,
     pub has_upstream: bool,
 }
 
-/// Get ahead/behind counts between two branches.
-pub fn ahead_behind_branches(repo: &Path, a: &str, b: &str) -> (u32, u32) {
-    let output = Command::new("git")
-        .args(["rev-list", "--left-right", "--count", &format!("{a}...{b}")])
-        .current_dir(repo)
-        .output();
-    let Ok(output) = output else { return (0, 0) };
-    if !output.status.success() {
-        return (0, 0);
-    }
-    let s = String::from_utf8_lossy(&output.stdout);
-    let parts: Vec<&str> = s.trim().split_whitespace().collect();
-    if parts.len() == 2 {
-        (parts[0].parse().unwrap_or(0), parts[1].parse().unwrap_or(0))
-    } else {
-        (0, 0)
-    }
+/// The branch the others are measured against: `main`, else `master`,
+/// else the first.
+pub fn base_branch(names: &[String]) -> Option<&str> {
+    ["main", "master"].into_iter().find(|b| names.iter().any(|n| n == b)).or(names.first().map(String::as_str))
 }
 
-/// List all branches with ahead/behind relative to main (or master).
-pub fn list_branches_detailed(repo: &Path) -> Vec<BranchDetail> {
-    let branches = list_branches(repo);
-    if branches.is_empty() {
-        return Vec::new();
-    }
-
-    // Find the base branch name (main or master)
-    let base = branches
-        .iter()
-        .find(|b| b.name == "main" || b.name == "master")
-        .map(|b| b.name.clone())
-        .unwrap_or_else(|| branches[0].name.clone());
-
-    // Get last commit subject per branch
-    let output = Command::new("git")
-        .args(["branch", "--format=%(refname:short)\t%(subject)", "--list"])
-        .current_dir(repo)
-        .output();
-    let subjects: Vec<(String, String)> = output
-        .map(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .filter_map(|line| {
-                    let mut parts = line.splitn(2, '\t');
-                    let name = parts.next()?.to_string();
-                    let subject = parts.next().unwrap_or("").to_string();
-                    Some((name, subject))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    branches
-        .iter()
-        .map(|b| {
-            let (ahead, behind) = if b.name == base {
-                (0, 0)
-            } else {
-                ahead_behind_branches(repo, &b.name, &base)
-            };
-            let last_commit = subjects
-                .iter()
-                .find(|(n, _)| n == &b.name)
-                .map(|(_, s)| s.clone())
-                .unwrap_or_default();
-            let has_upstream = Command::new("git")
-                .args(["config", &format!("branch.{}.remote", b.name)])
-                .current_dir(repo)
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false);
-            BranchDetail {
-                name: b.name.clone(),
-                is_current: b.is_current,
-                ahead,
-                behind,
-                last_commit,
-                has_upstream,
+/// Every local branch with what the branches tab says about it.
+pub fn branches(repo: &Path) -> Vec<Branch> {
+    let format = "--format=%(HEAD)%00%(refname:short)%00%(upstream:short)%00%(subject)";
+    let Ok(output) = git(repo).args(["branch", "--list", format]).output() else { return Vec::new() };
+    let mut out: Vec<Branch> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.splitn(4, '\0');
+            let (head, name, upstream, subject) = (parts.next()?, parts.next()?, parts.next()?, parts.next().unwrap_or(""));
+            if name.starts_with('(') {
+                return None;
             }
+            Some(Branch { name: name.to_owned(), is_current: head == "*", has_upstream: !upstream.is_empty(), last_commit: subject.to_owned(), ..Branch::default() })
         })
-        .collect()
-}
-
-/// Merge another branch into the current branch.
-pub fn merge_branch(repo: &Path, source: &str) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["merge", source, "--no-edit"])
-        .current_dir(repo)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        .collect();
+    let names: Vec<String> = out.iter().map(|b| b.name.clone()).collect();
+    if let Some(base) = base_branch(&names).map(str::to_owned) {
+        for b in out.iter_mut().filter(|b| b.name != base) {
+            (b.ahead, b.behind) = left_right(repo, &format!("{}...{base}", b.name));
+        }
     }
+    out
 }
 
-// ── Commit graph data ───────────────────────────────────────────────────────
+/// A name as git will take it for a branch: spaces become dashes, and
+/// anything else a ref can't hold is dropped.
+pub fn branch_name(typed: &str) -> String {
+    let name: String = typed.trim().chars().map(|c| if c.is_whitespace() { '-' } else { c }).filter(|c| c.is_alphanumeric() || "-_./".contains(*c)).collect();
+    name.trim_matches(|c| c == '/' || c == '.').to_owned()
+}
 
-/// A commit for graph rendering.
-#[derive(Debug, Clone)]
-pub struct GraphCommit {
+/// Make a branch from where `HEAD` is and switch to it.
+pub fn create_branch(repo: &Path, name: &str) -> Result<String, String> {
+    said(git(repo).args(["checkout", "-q", "-b", name]).output(), "").map(|_| format!("Created '{name}' and switched to it"))
+}
+
+pub fn switch_branch(repo: &Path, name: &str) -> Result<String, String> {
+    said(git(repo).args(["checkout", "-q", name]).output(), "").map(|_| format!("Switched to '{name}'"))
+}
+
+/// Merge `source` into the branch that is checked out.
+pub fn merge_branch(repo: &Path, source: &str) -> Result<String, String> {
+    let output = git(repo).args(["merge", source, "--no-edit"]).output().map_err(|e| format!("git could not be run: {e}"))?;
+    // A merge that stops on conflicts explains itself on stdout.
+    if output.status.success() { Ok(text(&output.stdout)) } else { Err([text(&output.stdout), text(&output.stderr)].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n")) }
+}
+
+// ---- history --------------------------------------------------------------
+
+/// A commit for the history graph.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Commit {
     pub hash: String,
     pub short_hash: String,
     pub parents: Vec<String>,
     pub subject: String,
+    /// The refs on it, as `git log` decorates them (`HEAD -> main`,
+    /// `origin/main`, `tag: v1`).
     pub decorations: Vec<String>,
 }
 
-/// Get structured commit data for graph rendering.
-pub fn log_structured(repo: &Path, count: usize) -> Vec<GraphCommit> {
-    // NUL-separated fields, record separator between commits
-    let output = Command::new("git")
-        .args([
-            "log",
-            "--all",
-            "--topo-order",
-            &format!("-n{count}"),
-            "--format=%H%x00%h%x00%P%x00%s%x00%D",
-        ])
-        .current_dir(repo)
-        .output();
-    let Ok(output) = output else {
-        return Vec::new();
-    };
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout
-        .lines()
-        .filter_map(|line| {
-            let parts: Vec<&str> = line.splitn(5, '\0').collect();
-            if parts.len() < 5 {
-                return None;
-            }
-            let parents = if parts[2].is_empty() {
-                Vec::new()
-            } else {
-                parts[2].split(' ').map(|s| s.to_string()).collect()
-            };
-            let decorations = if parts[4].is_empty() {
-                Vec::new()
-            } else {
-                parts[4].split(", ").map(|s| s.trim().to_string()).collect()
-            };
-            Some(GraphCommit {
-                hash: parts[0].to_string(),
-                short_hash: parts[1].to_string(),
-                parents,
-                subject: parts[3].to_string(),
-                decorations,
-            })
-        })
-        .collect()
+/// One `%H%x00%h%x00%P%x00%s%x00%D` line.
+pub fn parse_commit(line: &str) -> Option<Commit> {
+    let parts: Vec<&str> = line.splitn(5, '\0').collect();
+    let [hash, short, parents, subject, refs] = parts[..] else { return None };
+    Some(Commit {
+        hash: hash.to_owned(),
+        short_hash: short.to_owned(),
+        parents: parents.split_whitespace().map(str::to_owned).collect(),
+        subject: subject.to_owned(),
+        decorations: refs.split(", ").map(str::trim).filter(|d| !d.is_empty()).map(str::to_owned).collect(),
+    })
 }
 
-/// Get the repo name from the path.
-pub fn repo_name(repo: &Path) -> String {
-    repo.file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown")
-        .to_string()
+/// The newest `count` commits of every branch, remote branch and tag
+/// (and of `HEAD`, when it is on none), children before parents. Not
+/// `--all`: that would list every stash as three commits of its own.
+pub fn log(repo: &Path, count: usize) -> Vec<Commit> {
+    let Ok(output) = git(repo).args(["log", "--topo-order", &format!("-n{count}"), "--format=%H%x00%h%x00%P%x00%s%x00%D", "--branches", "--remotes", "--tags", "HEAD"]).output() else { return Vec::new() };
+    String::from_utf8_lossy(&output.stdout).lines().filter_map(parse_commit).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_entries_become_files() {
+        // Staged and unstaged at once, a rename (its old path is the next
+        // entry), a deletion, an untracked folder, a submodule.
+        let porcelain = "MM src/app.rs\0R  src/new name.rs\0src/old.rs\0 D gone.rs\0?? notes/\0A  added.rs\0UU both.rs\0 M vendor/lib\0";
+        let files = parse_status(porcelain, &["vendor/lib".to_owned()]);
+        let got: Vec<(&str, &str, bool)> = files.iter().map(|f| (f.path.as_str(), f.status.letter(), f.staged)).collect();
+        assert_eq!(got, [("src/app.rs", "M", true), ("src/app.rs", "M", false), ("src/new name.rs", "R", true), ("gone.rs", "D", false), ("notes", "?", false), ("added.rs", "A", true), ("both.rs", "!", false), ("vendor/lib", "M", false),]);
+        assert!(files.last().unwrap().is_submodule && !files[0].is_submodule);
+        assert!(parse_status("", &[]).is_empty());
+    }
+
+    #[test]
+    fn typed_names_become_branch_names() {
+        assert_eq!(branch_name("  fix the  thing "), "fix-the--thing");
+        assert_eq!(branch_name("feature/new look!"), "feature/new-look");
+        assert_eq!(branch_name("/.hidden."), "hidden");
+        assert_eq!(branch_name("~^:?*"), "");
+        let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(base_branch(&names(&["dev", "master", "x"])), Some("master"));
+        assert_eq!(base_branch(&names(&["dev", "main", "master"])), Some("main"));
+        assert_eq!(base_branch(&names(&["dev"])), Some("dev"));
+        assert_eq!(base_branch(&[]), None);
+    }
+
+    #[test]
+    fn log_lines_become_commits() {
+        let c = parse_commit("abc123\0abc\0p1 p2\0Merge things\0HEAD -> main, origin/main, tag: v1").unwrap();
+        assert_eq!((c.hash.as_str(), c.short_hash.as_str(), c.subject.as_str()), ("abc123", "abc", "Merge things"));
+        assert_eq!(c.parents, ["p1", "p2"]);
+        assert_eq!(c.decorations, ["HEAD -> main", "origin/main", "tag: v1"]);
+        let root = parse_commit("abc\0a\0\0First\0").unwrap();
+        assert!(root.parents.is_empty() && root.decorations.is_empty());
+        assert!(parse_commit("not a log line").is_none());
+    }
 }

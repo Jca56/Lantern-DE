@@ -14,10 +14,10 @@ lntrn-app = { path = "../../lantern-ui-2/crates/lntrn-app" }
 lntrn-ui = { path = "../../lantern-ui-2/crates/lntrn-ui" }
 lntrn-core = { path = "../../lantern-ui-2/crates/lntrn-core" }
 lntrn-math = { path = "../../lantern-ui-2/crates/lntrn-math" }
-lntrn-text = { path = "../../lantern-ui-2/crates/lntrn-text" }
 lntrn-props = { path = "../../lantern-ui-2/crates/lntrn-props" }
 lntrn-data = { path = "../../lantern-ui-2/crates/lntrn-data" }
 lntrn-sys = { path = "../../lantern-ui-2/crates/lntrn-sys" }
 lntrn-svg = { path = "../../lantern-ui-2/crates/lntrn-svg" }
 lntrn-image = { path = "../../lantern-ui-2/crates/lntrn-image" }
 lntrn-icons = { path = "../lntrn-icons" }
+lntrn-kit = { path = "../lntrn-kit" }

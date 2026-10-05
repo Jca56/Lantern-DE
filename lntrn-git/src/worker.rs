@@ -1,275 +1,240 @@
-//! Background git worker thread — runs blocking git operations off the UI thread.
+//! The worker thread: every git and GitHub command runs here, off the UI
+//! thread, one at a time in the order asked. What comes of each goes back
+//! as [`Event`]s, and the window is woken to show them.
 
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::cell::Cell;
+use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
+use std::sync::{Arc, OnceLock};
 
-use crate::git;
+use lntrn_app::Waker;
+
+use crate::diff::{self, Diff};
+use crate::git::{self, FileStatus};
 use crate::github;
 
-/// Events from the background git thread.
-pub enum GitEvent {
-    Repos(Vec<PathBuf>),
-    Status(git::RepoStatus),
-    Branches(Vec<git::BranchInfo>),
-    BranchDetails(Vec<git::BranchDetail>),
-    GraphData(Vec<git::GraphCommit>),
-    Message(String),
-    Error(String),
-    RemoteRepos(Result<Vec<github::RemoteRepo>, String>),
-    RepoCreated(Result<NewRepoResult, String>),
-}
-
-/// Outcome of creating a new repo — the local part can succeed even when
-/// the optional GitHub creation fails, so the error rides along.
-#[derive(Debug)]
-pub struct NewRepoResult {
-    pub path: PathBuf,
-    pub github_error: Option<String>,
-}
-
-/// Commands to the background git thread.
-pub enum GitCmd {
+/// What the UI asks for. Commands about "the repo" mean the one last
+/// opened with [`Cmd::Open`].
+pub enum Cmd {
     FindRepos,
-    OpenRepo(PathBuf),
+    Open(PathBuf),
     Refresh,
     Stage(String),
     Unstage(String),
     StageAll,
     UnstageAll,
-    Commit(String),
+    Discard(FileStatus),
+    /// Commit what is staged; `push` it too when that worked.
+    Commit { message: String, push: bool },
     Push,
     Pull,
-    FetchGitHubRepos,
-    CreateRepo {
-        name: String,
-        parent: PathBuf,
-        github: bool,
-        private: bool,
-    },
-    ListBranches,
-    ListBranchesDetailed,
-    FetchGraph(usize),
-    CreateBranch(String, bool),
+    /// The diff of one file. `tag` comes back with it, so an answer to a
+    /// question since overtaken can be told from a current one.
+    Diff { file: FileStatus, tag: u64 },
+    History(usize),
+    /// Make a branch and switch to it; `push` sets it up on `origin` too.
+    CreateBranch { name: String, push: bool },
     SwitchBranch(String),
-    Merge {
-        source: String,
-        target: String,
-    },
+    /// Merge `source` into `target`, switching to `target` first.
+    Merge { source: String, target: String },
+    GitHubRepos,
+    Clone { url: String, name: String, dest: PathBuf },
+    CreateRepo { name: String, parent: PathBuf, github: bool, private: bool },
 }
 
-/// Spawn the worker thread — returns the command sender and event receiver.
-pub fn spawn() -> (mpsc::Sender<GitCmd>, mpsc::Receiver<GitEvent>) {
-    let (cmd_tx, cmd_rx) = mpsc::channel();
-    let (event_tx, event_rx) = mpsc::channel();
-
-    std::thread::Builder::new()
-        .name("git-worker".into())
-        .spawn(move || run(event_tx, cmd_rx))
-        .expect("spawn git worker");
-
-    (cmd_tx, event_rx)
+/// What came of a command.
+pub enum Event {
+    Repos(Vec<PathBuf>),
+    Status(git::RepoStatus),
+    Branches(Vec<git::Branch>),
+    History(Vec<git::Commit>),
+    Diff { file: FileStatus, tag: u64, diff: Diff },
+    /// Something worked and git had this to say about it.
+    Done(String),
+    Failed(String),
+    GitHubRepos(Result<Vec<github::RemoteRepo>, String>),
+    /// A clone finished: where the new repo is, or why not.
+    Cloned(Result<PathBuf, String>),
+    /// A repo was made: where, and what GitHub said if it was asked to
+    /// make one too and couldn't (the local one is there either way).
+    Created(Result<(PathBuf, Option<String>), String>),
+    /// Nothing is waiting: this many commands have been run in all.
+    Idle(u64),
 }
 
-fn run(tx: mpsc::Sender<GitEvent>, rx: mpsc::Receiver<GitCmd>) {
-    let mut repo_path: Option<PathBuf> = None;
+/// The UI's end of the worker.
+pub struct Link {
+    tx: Sender<Cmd>,
+    rx: Receiver<(u64, Event)>,
+    waker: Arc<OnceLock<Waker>>,
+    /// How many commands have been sent, and how many of them the worker
+    /// has said are done.
+    sent: Cell<u64>,
+    done: Cell<u64>,
+}
 
-    loop {
-        let cmd = match rx.recv() {
-            Ok(cmd) => cmd,
-            Err(_) => return,
-        };
+impl Link {
+    /// Start the worker thread.
+    pub fn spawn() -> Link {
+        let (tx, cmd_rx) = channel();
+        let (event_tx, rx) = channel();
+        let waker = Arc::new(OnceLock::new());
+        let wake = waker.clone();
+        let spawned = std::thread::Builder::new().name("git-worker".into()).spawn(move || run(cmd_rx, event_tx, wake));
+        if let Err(e) = spawned {
+            lntrn_core::log_error!("the git worker could not start: {e}");
+        }
+        Link { tx, rx, waker, sent: Cell::new(0), done: Cell::new(0) }
+    }
 
-        match cmd {
-            GitCmd::FindRepos => {
-                let repos = git::find_repos();
-                let _ = tx.send(GitEvent::Repos(repos));
-            }
-            GitCmd::OpenRepo(path) => {
-                repo_path = Some(path.clone());
-                let status = git::status(&path);
-                let branches = git::list_branches(&path);
-                let _ = tx.send(GitEvent::Status(status));
-                let _ = tx.send(GitEvent::Branches(branches));
-            }
-            GitCmd::Refresh => {
-                if let Some(ref path) = repo_path {
-                    let status = git::status(path);
-                    let _ = tx.send(GitEvent::Status(status));
-                }
-            }
-            GitCmd::Stage(file) => {
-                if let Some(ref path) = repo_path {
-                    git::stage(path, &file);
-                    let status = git::status(path);
-                    let _ = tx.send(GitEvent::Status(status));
-                }
-            }
-            GitCmd::Unstage(file) => {
-                if let Some(ref path) = repo_path {
-                    git::unstage(path, &file);
-                    let status = git::status(path);
-                    let _ = tx.send(GitEvent::Status(status));
-                }
-            }
-            GitCmd::StageAll => {
-                if let Some(ref path) = repo_path {
-                    let _ = std::process::Command::new("git")
-                        .args(["add", "-A"])
-                        .current_dir(path)
-                        .output();
-                    let status = git::status(path);
-                    let _ = tx.send(GitEvent::Status(status));
-                }
-            }
-            GitCmd::UnstageAll => {
-                if let Some(ref path) = repo_path {
-                    let _ = std::process::Command::new("git")
-                        .args(["reset", "HEAD"])
-                        .current_dir(path)
-                        .output();
-                    let status = git::status(path);
-                    let _ = tx.send(GitEvent::Status(status));
-                }
-            }
-            GitCmd::Commit(msg) => {
-                if let Some(ref path) = repo_path {
-                    match git::commit(path, &msg) {
-                        Ok(out) => {
-                            let _ = tx.send(GitEvent::Message(out));
-                        }
-                        Err(err) => {
-                            let _ = tx.send(GitEvent::Error(err));
-                        }
-                    }
-                }
-            }
-            GitCmd::Push => {
-                if let Some(ref path) = repo_path {
-                    match git::push(path) {
-                        Ok(out) => {
-                            let _ = tx.send(GitEvent::Message(out));
-                        }
-                        Err(err) => {
-                            let _ = tx.send(GitEvent::Error(err));
-                        }
-                    }
-                }
-            }
-            GitCmd::Pull => {
-                if let Some(ref path) = repo_path {
-                    match git::pull(path) {
-                        Ok(out) => {
-                            let _ = tx.send(GitEvent::Message(out));
-                        }
-                        Err(err) => {
-                            let _ = tx.send(GitEvent::Error(err));
-                        }
-                    }
-                }
-            }
-            GitCmd::FetchGitHubRepos => {
-                let result = github::fetch_github_repos();
-                let _ = tx.send(GitEvent::RemoteRepos(result));
-            }
-            GitCmd::CreateRepo {
-                name,
-                parent,
-                github,
-                private,
-            } => {
-                let result = git::init_repo(&parent, &name).map(|path| {
-                    let github_error = if github {
-                        github::create_github_repo(&path, &name, private).err()
-                    } else {
-                        None
-                    };
-                    NewRepoResult { path, github_error }
-                });
-                let _ = tx.send(GitEvent::RepoCreated(result));
-            }
-            GitCmd::ListBranches => {
-                if let Some(ref path) = repo_path {
-                    let branches = git::list_branches(path);
-                    let _ = tx.send(GitEvent::Branches(branches));
-                }
-            }
-            GitCmd::ListBranchesDetailed => {
-                if let Some(ref path) = repo_path {
-                    let details = git::list_branches_detailed(path);
-                    let _ = tx.send(GitEvent::BranchDetails(details));
-                }
-            }
-            GitCmd::FetchGraph(count) => {
-                if let Some(ref path) = repo_path {
-                    let commits = git::log_structured(path, count);
-                    let _ = tx.send(GitEvent::GraphData(commits));
-                }
-            }
-            GitCmd::CreateBranch(name, push) => {
-                if let Some(ref path) = repo_path {
-                    match git::create_branch(path, &name) {
-                        Ok(mut msg) => {
-                            if push {
-                                match git::push_new_branch(path, &name) {
-                                    Ok(push_msg) => {
-                                        msg = format!("{msg} — {push_msg}");
-                                    }
-                                    Err(push_err) => {
-                                        let _ = tx.send(GitEvent::Error(push_err));
-                                        let branches = git::list_branches(path);
-                                        let _ = tx.send(GitEvent::Branches(branches));
-                                        continue;
-                                    }
-                                }
-                            }
-                            let _ = tx.send(GitEvent::Message(msg));
-                            let branches = git::list_branches(path);
-                            let _ = tx.send(GitEvent::Branches(branches));
-                        }
-                        Err(err) => {
-                            let _ = tx.send(GitEvent::Error(err));
-                        }
-                    }
-                }
-            }
-            GitCmd::SwitchBranch(name) => {
-                if let Some(ref path) = repo_path {
-                    match git::switch_branch(path, &name) {
-                        Ok(msg) => {
-                            let _ = tx.send(GitEvent::Message(msg));
-                            let status = git::status(path);
-                            let branches = git::list_branches(path);
-                            let _ = tx.send(GitEvent::Status(status));
-                            let _ = tx.send(GitEvent::Branches(branches));
-                        }
-                        Err(err) => {
-                            let _ = tx.send(GitEvent::Error(err));
-                        }
-                    }
-                }
-            }
-            GitCmd::Merge { source, target } => {
-                if let Some(ref path) = repo_path {
-                    // Switch to target branch first (if not already on it)
-                    let current = git::current_branch(path);
-                    if current != target {
-                        if let Err(err) = git::switch_branch(path, &target) {
-                            let _ = tx.send(GitEvent::Error(err));
-                            continue;
-                        }
-                    }
-                    match git::merge_branch(path, &source) {
-                        Ok(msg) => {
-                            let _ = tx.send(GitEvent::Message(msg));
-                            let status = git::status(path);
-                            let _ = tx.send(GitEvent::Status(status));
-                        }
-                        Err(err) => {
-                            let _ = tx.send(GitEvent::Error(err));
-                        }
-                    }
-                }
+    /// The loop's waker, so an event shows without waiting for input.
+    pub fn set_waker(&self, waker: Waker) {
+        let _ = self.waker.set(waker);
+    }
+
+    pub fn send(&self, cmd: Cmd) {
+        self.sent.set(self.sent.get() + 1);
+        let _ = self.tx.send(cmd);
+    }
+
+    /// Whether anything sent is still to be done, as of the last
+    /// [`Self::take`].
+    pub fn busy(&self) -> bool {
+        self.done.get() < self.sent.get()
+    }
+
+    /// The events that have arrived since the last call, each with how
+    /// many [`Cmd::Open`]s the worker had run when it was made: what is
+    /// said about a repo since left can be told from what is said about
+    /// the one that is open.
+    pub fn take(&self) -> Vec<(u64, Event)> {
+        let events: Vec<(u64, Event)> = self.rx.try_iter().collect();
+        for (_, event) in &events {
+            if let Event::Idle(done) = event {
+                self.done.set(*done);
             }
         }
+        events
     }
+}
+
+fn run(rx: Receiver<Cmd>, tx: Sender<(u64, Event)>, waker: Arc<OnceLock<Waker>>) {
+    let mut repo: Option<PathBuf> = None;
+    let (mut opens, mut done) = (0u64, 0u64);
+    let mut next = rx.recv().ok();
+    while let Some(cmd) = next {
+        let mut events = Vec::new();
+        if matches!(cmd, Cmd::Open(_)) {
+            opens += 1;
+        }
+        handle(cmd, &mut repo, &mut events);
+        done += 1;
+        // The next command, if one is waiting; else say all is done and
+        // sleep until one comes.
+        next = match rx.try_recv() {
+            Ok(cmd) => Some(cmd),
+            Err(TryRecvError::Empty) => {
+                events.push(Event::Idle(done));
+                None
+            }
+            Err(TryRecvError::Disconnected) => return,
+        };
+        for event in events {
+            if tx.send((opens, event)).is_err() {
+                return;
+            }
+        }
+        if let Some(w) = waker.get() {
+            w.wake();
+        }
+        if next.is_none() {
+            next = rx.recv().ok();
+        }
+    }
+}
+
+/// Run one command, pushing what came of it onto `out`.
+fn handle(cmd: Cmd, repo: &mut Option<PathBuf>, out: &mut Vec<Event>) {
+    // Commands that need no repo open.
+    let cmd = match cmd {
+        Cmd::FindRepos => return out.push(Event::Repos(git::find_repos())),
+        Cmd::GitHubRepos => return out.push(Event::GitHubRepos(github::list_repos())),
+        Cmd::Clone { url, name, dest } => return out.push(Event::Cloned(git::clone_repo(&url, &dest).map(|_| dest.join(name)))),
+        Cmd::CreateRepo { name, parent, github, private } => {
+            let made = git::init_repo(&parent, &name).map(|path| {
+                let complaint = if github { github::create_repo(&path, &name, private).err() } else { None };
+                (path, complaint)
+            });
+            return out.push(Event::Created(made));
+        }
+        Cmd::Open(path) => {
+            out.push(Event::Status(git::status(&path)));
+            out.push(Event::Branches(git::branches(&path)));
+            *repo = Some(path);
+            return;
+        }
+        other => other,
+    };
+    let Some(path) = repo.as_deref() else { return };
+    // What a command that changes things reports: its outcome, then the
+    // repo as it now is.
+    let mut report = |result: Result<String, String>, branches: bool| {
+        out.push(match result {
+            Ok(said) => Event::Done(said),
+            Err(why) => Event::Failed(why),
+        });
+        out.push(Event::Status(git::status(path)));
+        if branches {
+            out.push(Event::Branches(git::branches(path)));
+        }
+    };
+    match cmd {
+        Cmd::Refresh => {
+            out.push(Event::Status(git::status(path)));
+            out.push(Event::Branches(git::branches(path)));
+        }
+        Cmd::Stage(file) => {
+            git::stage(path, &file);
+            out.push(Event::Status(git::status(path)));
+        }
+        Cmd::Unstage(file) => {
+            git::unstage(path, &file);
+            out.push(Event::Status(git::status(path)));
+        }
+        Cmd::StageAll => {
+            git::stage_all(path);
+            out.push(Event::Status(git::status(path)));
+        }
+        Cmd::UnstageAll => {
+            git::unstage_all(path);
+            out.push(Event::Status(git::status(path)));
+        }
+        Cmd::Discard(file) => report(git::discard(path, &file), false),
+        Cmd::Commit { message, push } => {
+            let done = git::commit(path, &message).and_then(|said| if push { git::push(path).map(|_| format!("{} Pushed.", first_line(&said))) } else { Ok(said) });
+            report(done, true);
+        }
+        Cmd::Push => report(git::push(path), true),
+        Cmd::Pull => report(git::pull(path), true),
+        Cmd::Diff { file, tag } => {
+            let diff = diff::of(path, &file);
+            out.push(Event::Diff { file, tag, diff });
+        }
+        Cmd::History(count) => out.push(Event::History(git::log(path, count))),
+        Cmd::CreateBranch { name, push } => {
+            let done = git::create_branch(path, &name).and_then(|said| if push { git::push_new_branch(path, &name).map(|_| format!("{said}. Pushed to origin.")) } else { Ok(said) });
+            report(done, true);
+        }
+        Cmd::SwitchBranch(name) => report(git::switch_branch(path, &name), true),
+        Cmd::Merge { source, target } => {
+            let on_target = if git::current_branch(path) == target { Ok(String::new()) } else { git::switch_branch(path, &target) };
+            report(on_target.and_then(|_| git::merge_branch(path, &source)), true);
+        }
+        Cmd::FindRepos | Cmd::GitHubRepos | Cmd::Clone { .. } | Cmd::CreateRepo { .. } | Cmd::Open(_) => {}
+    }
+}
+
+/// The first line of what git said: enough for a toast.
+pub fn first_line(said: &str) -> &str {
+    said.lines().next().unwrap_or("").trim()
 }

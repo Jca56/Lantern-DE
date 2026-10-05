@@ -1,10 +1,10 @@
 //! The kit's own controls, each drawn into a rect it is handed: a pill
-//! switch, a thin slider with a knob, a segmented control and a button.
-//! All take the keyboard: Tab reaches them, Enter or Space clicks, the
-//! arrows step.
+//! switch, a thin slider with a knob, a segmented control, buttons and a
+//! text field. All take the keyboard: Tab reaches them, Enter or Space
+//! clicks, the arrows step.
 
 use lntrn_math::{Color, Rect, Vec2};
-use lntrn_ui::{CursorIcon, KeyStep, Sense, Ui, WidgetId};
+use lntrn_ui::{CursorIcon, IconFn, KeyStep, Sense, TextOpts, TextResponse, Ui, WidgetId};
 
 use crate::look;
 
@@ -184,14 +184,75 @@ pub fn segmented(ui: &mut Ui, id: WidgetId, slot: Rect, selected: &mut usize, op
     changed
 }
 
+/// What a button is for, which is how it is painted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// One of several things to do.
+    Plain,
+    /// The thing to do: filled with the accent.
+    Primary,
+    /// Something that can't be undone: red.
+    Danger,
+}
+
 /// How wide a [`button`] saying `text` wants to be.
 pub fn button_width(ui: &mut Ui, text: &str) -> f64 {
     let style = ui.text_style();
     ui.measure(text, &style) + ui.m.px(50.0)
 }
 
-/// A button filling `rect`. `true` when pressed.
+/// A plain button filling `rect`. `true` when pressed.
 pub fn button(ui: &mut Ui, id: WidgetId, rect: Rect, text: &str) -> bool {
+    button_of(ui, id, rect, text, Kind::Plain, true)
+}
+
+/// A button of `kind` filling `rect`. Not `enabled`, it is dim and takes
+/// neither the pointer nor the keyboard. `true` when pressed.
+pub fn button_of(ui: &mut Ui, id: WidgetId, rect: Rect, text: &str, kind: Kind, enabled: bool) -> bool {
+    let m = ui.m;
+    let radius = m.px(RADIUS);
+    let style = ui.text_style();
+    if !enabled {
+        // Still laid out under its id, so it can be found; it senses nothing.
+        ui.interact(id, rect, Sense::NONE);
+        ui.draw.rounded_rect(rect, radius, look::BUTTON.fade(0.6));
+        ui.draw.stroke_rect(rect, m.px(1.0), radius, look::LINE);
+        ui.text_centered(text, &style, rect, look::TEXT_DIM.fade(0.6));
+        return false;
+    }
+    let mut r = ui.interact(id, rect, Sense::CLICK);
+    ui.focusable(id, rect);
+    ui.key_click(id, &mut r);
+    if r.hovered {
+        ui.state.cursor_icon = CursorIcon::Pointer;
+    }
+    let lit = if r.held {
+        0.8
+    } else if r.hovered {
+        1.35
+    } else {
+        1.0
+    };
+    let accent = ui.theme.accent;
+    let (face, edge, ink) = match kind {
+        Kind::Plain => (look::BUTTON.scale_rgb(lit), if r.hovered { accent } else { look::TRACK }, look::TEXT),
+        Kind::Primary => (accent.scale_rgb(if r.held { 0.85 } else { 1.0 }), accent, ui.theme.accent_text),
+        Kind::Danger => (look::BAD.lerp(look::CARD, if r.hovered || r.held { 0.55 } else { 0.8 }), look::BAD, look::BAD.lerp(Color::WHITE, 0.35)),
+    };
+    if kind == Kind::Primary && r.hovered && !r.held {
+        ui.draw.shadow(rect, radius, m.px(14.0), accent.fade(0.45));
+    }
+    ui.draw.rounded_rect(rect, radius, face);
+    ui.draw.stroke_rect(rect, m.px(1.0), radius, edge);
+    ui.text_centered(text, &style, rect, ink);
+    ui.focus_ring(id, rect);
+    r.clicked
+}
+
+/// A button showing `glyph` instead of a word, filling `rect` (make it a
+/// square). `tip` says what it does while Alt is held over it. `true`
+/// when pressed.
+pub fn glyph_button(ui: &mut Ui, id: WidgetId, rect: Rect, glyph: IconFn, tip: &str) -> bool {
     let m = ui.m;
     let mut r = ui.interact(id, rect, Sense::CLICK);
     ui.focusable(id, rect);
@@ -199,20 +260,28 @@ pub fn button(ui: &mut Ui, id: WidgetId, rect: Rect, text: &str) -> bool {
     if r.hovered {
         ui.state.cursor_icon = CursorIcon::Pointer;
     }
-    let face = if r.held {
-        look::BUTTON.scale_rgb(0.8)
+    let lit = if r.held {
+        0.8
     } else if r.hovered {
-        look::BUTTON.scale_rgb(1.35)
+        1.5
     } else {
-        look::BUTTON
+        1.0
     };
     let radius = m.px(RADIUS);
-    ui.draw.rounded_rect(rect, radius, face);
+    ui.draw.rounded_rect(rect, radius, look::BUTTON.scale_rgb(lit));
     ui.draw.stroke_rect(rect, m.px(1.0), radius, if r.hovered { ui.theme.accent } else { look::TRACK });
-    let style = ui.text_style();
-    ui.text_centered(text, &style, rect, look::TEXT);
+    let side = rect.width().min(rect.height()) * 0.5;
+    glyph(ui.draw, Rect::from_center_size(rect.center(), Vec2::splat(side)), if r.hovered { ui.theme.accent } else { look::TEXT }, m.px(2.5));
     ui.focus_ring(id, rect);
+    ui.tooltip(&r, tip);
     r.clicked
+}
+
+/// A one-line text field filling `rect`, showing `hint` dimly while it is
+/// empty. Lantern UI's own field (selection, clipboard, undo), sized to
+/// the kit.
+pub fn text_field(ui: &mut Ui, id: WidgetId, rect: Rect, value: &mut String, hint: &str) -> TextResponse {
+    ui.text_edit_core_with(id, rect, value, TextOpts { placeholder: hint, ..TextOpts::default() })
 }
 
 #[cfg(test)]

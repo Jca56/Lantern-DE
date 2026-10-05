@@ -3,15 +3,7 @@
 
 use std::path::PathBuf;
 
-/// The family every Lantern app falls back to.
-pub const DEFAULT_FAMILY: &str = "Inter";
-
-/// The family a stored `font_family` means: empty and the legacy
-/// generic `sans-serif` are the default.
-pub fn effective_family(stored: &str) -> String {
-    let s = stored.trim();
-    if s.is_empty() || s == "sans-serif" { DEFAULT_FAMILY.to_owned() } else { s.to_owned() }
-}
+pub use crate::kit::desktop::{DEFAULT_FAMILY, effective_family};
 
 fn fonts_dir() -> Option<PathBuf> {
     lntrn_sys::dirs::lantern().map(|l| l.join("fonts"))
