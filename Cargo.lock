@@ -2432,6 +2432,7 @@ version = "0.2.0"
 dependencies = [
  "lntrn-app",
  "lntrn-core",
+ "lntrn-image",
  "lntrn-math",
  "lntrn-props",
  "lntrn-svg",

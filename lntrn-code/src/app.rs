@@ -21,6 +21,7 @@ use crate::files::{Project, Tree, home};
 use crate::git::Git;
 use crate::git::gutter::LineMark;
 use crate::lsp::{CodeAction, Lsp};
+use crate::picture::Pictures;
 use crate::editor::lsp_ui::LspUi;
 use crate::search::Search;
 use crate::session::Session;
@@ -36,6 +37,8 @@ pub struct App {
     pub keys: KeyConfig,
     pub settings: Settings,
     pub docs: Vec<Doc>,
+    /// The pictures open in file tabs, named by document ids of their own.
+    pub pictures: Pictures,
     next_doc: u64,
     untitled: usize,
     /// The folder the app works in: git, the language servers, search and
@@ -63,7 +66,7 @@ pub struct App {
     /// A file whose diff against HEAD was asked for.
     pub pending_git_diff: Option<PathBuf>,
     /// The document actions act on: the current one of the last active
-    /// Code area.
+    /// Code area. A picture's id when that tab holds one.
     pub focus_doc: Option<DocId>,
     pub focus_area: Option<AreaId>,
     pub last_editor_focus: Option<WidgetId>,
@@ -89,6 +92,8 @@ pub struct App {
     pub dialog_text: String,
     // ---- applied after the rebuild, with the screen in hand ----
     pub pending_paths: Vec<PathBuf>,
+    /// Files to read as text whatever they are (an SVG's source).
+    pub pending_text: Vec<PathBuf>,
     pub pending_docs: Vec<DocId>,
     /// Put the caret somewhere in a file once it is open: a path clicked
     /// in the terminal, a problem, a search hit.
@@ -136,6 +141,7 @@ impl App {
             keys: commands::keymap(),
             settings,
             docs: Vec::new(),
+            pictures: Pictures::new(),
             next_doc: 1,
             untitled: 0,
             project: None,
@@ -165,6 +171,7 @@ impl App {
             prefs_tab: 0,
             dialog_text: String::new(),
             pending_paths: Vec::new(),
+            pending_text: Vec::new(),
             pending_docs: Vec::new(),
             pending_goto: None,
             pending_folder: None,
@@ -197,7 +204,7 @@ impl App {
         };
         if args.is_empty() {
             app.pending_folder = session.root.clone();
-            app.pending_paths = session.open.iter().map(|(p, _, _)| p.clone()).collect();
+            app.restore_tabs(&session);
         } else {
             for a in args {
                 let a = std::path::absolute(&a).unwrap_or(a);
@@ -228,7 +235,7 @@ impl App {
         self.doc_mut(id)
     }
 
-    fn next_doc_id(&mut self) -> DocId {
+    pub(crate) fn next_doc_id(&mut self) -> DocId {
         let id = DocId(self.next_doc);
         self.next_doc += 1;
         id
@@ -316,6 +323,7 @@ impl App {
         self.session = Session {
             root: self.project.as_ref().map(|p| p.root.clone()),
             open: self.docs.iter().filter_map(|d| d.path.as_ref().map(|p| (p.clone(), d.cursor.line, d.cursor.col))).collect(),
+            pictures: self.pictures.iter().map(|p| p.path.clone()).collect(),
             recent: self.session.recent.clone(),
         };
         self.session.save(APP_ID);
@@ -329,6 +337,7 @@ impl App {
             return false;
         };
         let mut wanted: HashSet<PathBuf> = self.docs.iter().filter_map(|d| d.path.as_ref()?.parent().map(Path::to_path_buf)).collect();
+        wanted.extend(self.pictures.iter().filter_map(|p| p.path.parent().map(Path::to_path_buf)));
         wanted.extend(self.tree.listed_dirs().map(Path::to_path_buf));
         // Commits and staging from a terminal show up as writes in .git.
         let git_dir = self.git.as_ref().map(|g| g.root.join(".git")).filter(|d| d.is_dir());
@@ -373,6 +382,7 @@ impl App {
                     p.refresh();
                 }
             }
+            self.pictures.changed(&c, self.waker.as_ref());
             let hits: Vec<usize> = self.docs.iter().enumerate().filter(|(_, d)| d.path.as_ref().is_some_and(|p| p.parent() == Some(c.dir.as_path()) && (c.name.is_none() || p.file_name().and_then(|n| n.to_str()) == c.name.as_deref()))).map(|(i, _)| i).collect();
             for i in hits {
                 let path = self.docs[i].path.clone().unwrap_or_default();
@@ -425,6 +435,7 @@ impl AppHost for App {
         self.ide_sync_roots();
         let mut again = self.ide_pump(shell);
         again |= self.icons.upload(gpu, images);
+        again |= self.pictures_pump(gpu, images);
         again |= self.ide_settle_writes(shell);
         again |= self.watch_pump(shell);
         again |= self.search.poll();

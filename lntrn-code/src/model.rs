@@ -36,8 +36,9 @@ pub enum Goto {
     Units { line: usize, col: usize, end_col: usize, utf16: bool },
 }
 
-/// What one tab of an area holds: the documents of a Code editor and
-/// which shows, or the terminal of a Terminal editor.
+/// What one tab of an area holds: the documents (and pictures, which
+/// are named by document ids too) of a Code editor and which shows, or
+/// the terminal of a Terminal editor.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TabState {
     pub docs: Vec<DocId>,

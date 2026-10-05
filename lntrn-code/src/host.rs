@@ -55,6 +55,13 @@ impl Host for App {
     }
 
     fn status(&self) -> String {
+        // A picture says what it is; a document, where the caret is.
+        if let Some(p) = self.focus_picture() {
+            return match self.attention_status() {
+                s if s.is_empty() => p.info(),
+                s => format!("{} · {s}", p.info()),
+            };
+        }
         let Some(d) = self.focus_doc() else {
             return self.attention_status();
         };

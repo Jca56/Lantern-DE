@@ -104,6 +104,7 @@ impl App {
                 d.set_path(to.join(rest));
             }
         }
+        self.pictures.retarget(from, to);
         self.session_dirty = true;
     }
 

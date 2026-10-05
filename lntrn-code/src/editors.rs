@@ -43,7 +43,7 @@ impl App {
                 // The file being edited shows in the tree when it changes.
                 if self.focus_doc != self.last_revealed {
                     self.last_revealed = self.focus_doc;
-                    if let Some(p) = self.focus_doc().and_then(|d| d.path.clone()) {
+                    if let Some(p) = self.focus_doc.and_then(|id| self.tab_path(id)).map(|p| p.to_path_buf()) {
                         if p.starts_with(&self.tree.root) {
                             self.tree.reveal = Some(p.clone());
                         }

@@ -124,6 +124,8 @@ pub const COLLAPSE_ALL: &str = "files.collapse_all";
 pub const FILES_FILTER: &str = "files.filter";
 /// The `path` arg to the desktop's default app for it.
 pub const OPEN_EXTERNAL: &str = "files.open_external";
+/// Read a picture's file as text (an SVG's source).
+pub const OPEN_AS_TEXT: &str = "files.open_as_text";
 pub const REFRESH_TREE: &str = "files.refresh";
 pub const IDE_ACCEPT: &str = "ide.accept";
 pub const IDE_REJECT: &str = "ide.reject";
@@ -293,6 +295,9 @@ fn files_menu(app: &App, context: bool) -> Menu {
         } else {
             into = p.parent().map(Path::to_path_buf);
             items.push(MenuItem::new("Open", with_path(OPENED, &p)));
+            if crate::picture::opens(&p) != crate::picture::Opens::Text {
+                items.push(MenuItem::new("Open as Text", with_path(OPEN_AS_TEXT, &p)));
+            }
             items.push(MenuItem::new("Open in Default App", with_path(OPEN_EXTERNAL, &p)));
             items.push(MenuItem::new("Open Terminal Here", with_path(TERMINAL_HERE, into.as_deref().unwrap_or(&root))));
         }
@@ -403,11 +408,11 @@ fn terminal_menu(app: &App) -> Menu {
 /// and finding the file.
 fn tab_menu(app: &App) -> Menu {
     let item = |label: &str, id: &str| MenuItem::new(label, Action::new(id));
-    let (doc, others) = match &app.context_tab {
-        Some((id, all)) => (app.doc(*id), all.len() > 1),
+    let (tab, others) = match &app.context_tab {
+        Some((id, all)) => (Some(*id), all.len() > 1),
         None => (None, false),
     };
-    let path = doc.and_then(|d| d.path.clone());
+    let path = tab.and_then(|id| app.tab_path(id)).map(Path::to_path_buf);
     let with_path = |id: &str, p: &Path| Action::new(id).with("path", Value::Str(p.display().to_string()));
     let mut items = vec![item("Close", TAB_CLOSE).hint("Ctrl+W"), item("Close Others", TAB_CLOSE_OTHERS).enabled(others), item("Close Saved", TAB_CLOSE_SAVED), item("Close All", TAB_CLOSE_ALL), MenuItem::separator()];
     match &path {
@@ -418,7 +423,7 @@ fn tab_menu(app: &App) -> Menu {
         }
         None => items.push(item("Reveal in Files", TAB_REVEAL).disabled()),
     }
-    Menu::new(doc.map_or("Tab", |d| d.title.as_str()), items)
+    Menu::new(tab.and_then(|id| app.tab_title(id)).unwrap_or("Tab"), items)
 }
 
 /// The right-click menu of a changed file in the Git editor.
@@ -458,7 +463,7 @@ pub fn menu(app: &App, name: &str) -> Option<Menu> {
                 item("Save", SAVE).enabled(has_doc),
                 item("Save As…", SAVE_AS).enabled(has_doc),
                 MenuItem::separator(),
-                item("Close Tab", CLOSE_TAB).enabled(has_doc),
+                item("Close Tab", CLOSE_TAB).enabled(has_doc || app.focus_picture().is_some()),
                 MenuItem::separator(),
                 item("Quit", QUIT),
             ],

@@ -1,5 +1,8 @@
 //! The Code editor of one area: its file tabs, the find bar when it is
-//! open here, and the document view.
+//! open here, and the document view, or the picture when the tab holds
+//! one ([`crate::picture`]).
+
+use std::path::Path;
 
 use lntrn_math::{Rect, Vec2};
 use lntrn_ui::{AreaCx, Key, ShellRequest, Ui};
@@ -19,7 +22,7 @@ impl App {
         let (area, active) = (cx.area, cx.active);
         let mut close_id = None;
         let st = &mut *cx.state;
-        st.docs.retain(|id| self.docs.iter().any(|d| d.id == *id));
+        st.docs.retain(|id| self.docs.iter().any(|d| d.id == *id) || self.pictures.has(*id));
         if st.docs.is_empty() {
             return false;
         }
@@ -28,10 +31,10 @@ impl App {
         let root = self.tree.root.clone();
         let mut icons_of: Vec<Option<_>> = Vec::new();
         for id in st.docs.iter() {
-            let path = self.docs.iter().find(|d| d.id == *id).and_then(|d| d.path.clone());
+            let path = self.tab_path(*id).map(Path::to_path_buf);
             icons_of.push(path.and_then(|p| self.icons.icon(&p, false, &root, icon_px)));
         }
-        let items: Vec<TabItem> = st.docs.iter().zip(icons_of).filter_map(|(id, icon)| self.docs.iter().find(|d| d.id == *id).map(|d| TabItem { label: &d.title, dirty: d.is_dirty(), icon })).collect();
+        let items: Vec<TabItem> = st.docs.iter().zip(icons_of).filter_map(|(id, icon)| self.tab_title(*id).map(|label| TabItem { label, dirty: self.doc(*id).is_some_and(|d| d.is_dirty()), icon })).collect();
         let tabs = draw_tabs(ui, &items, st.current);
         // The body under the tab strip, painted once: the view, gutter and
         // minimap draw no backgrounds of their own (U037).
@@ -66,6 +69,11 @@ impl App {
         if active || self.focus_doc.is_none() {
             self.focus_doc = Some(doc_id);
             self.focus_area = Some(area);
+        }
+        if self.pictures.has(doc_id) {
+            self.draw_picture_tab(ui, cx, doc_id);
+            self.close_tab_asked(close_id, cx);
+            return false;
         }
         let finder_here = self.finder.open && self.focus_area == Some(area) && self.focus_doc == Some(doc_id);
         let marks = self.diag_marks(doc_id);
@@ -160,12 +168,17 @@ impl App {
             self.focus_area = Some(area);
             cx.request(ShellRequest::MenuAt("editor-context".to_owned(), at));
         }
-        if let Some(id) = close_id {
+        self.close_tab_asked(close_id, cx);
+        changed
+    }
+
+    /// A tab's close button (or a middle click on it) asked for `id` to go.
+    fn close_tab_asked(&mut self, id: Option<crate::doc::DocId>, cx: &mut AreaCx<TabState>) {
+        if let Some(id) = id {
             self.focus_doc = Some(id);
-            self.focus_area = Some(area);
+            self.focus_area = Some(cx.area);
             self.run_action(&Action::new(commands::CLOSE_TAB), &mut cx.host());
         }
-        changed
     }
 
     /// The problems of a document as marks with byte columns.

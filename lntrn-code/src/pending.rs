@@ -1,12 +1,13 @@
 //! The requests queued during a rebuild and applied after it, when the
-//! screen can be touched: files into the Code area, editors brought on
+//! screen can be touched: files and pictures into the Code area
+//! ([`crate::picture`] says which is which), editors brought on
 //! screen or split off, terminals made and reaped, tabs closed, the
 //! caret sent to a line, the clipboard worked, focus handed back.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use lntrn_ui::{AreaId, Axis, Shell, ShellRequest};
+use lntrn_ui::{AreaId, Axis, Shell};
 
 use crate::app::{App, ClipOp, Editor, Goto};
 use crate::bridge::Bridge;
@@ -90,12 +91,10 @@ impl App {
             p.ensure_files();
         }
         for p in std::mem::take(&mut self.pending_paths) {
-            match self.load_doc(&p) {
-                Ok(id) => self.pending_docs.push(id),
-                Err(e) => {
-                    shell.request(self, ShellRequest::Toast(format!("Could not open {e}")));
-                }
-            }
+            self.open_path(&p, false, shell);
+        }
+        for p in std::mem::take(&mut self.pending_text) {
+            self.open_path(&p, true, shell);
         }
         if !self.pending_docs.is_empty() {
             let area = self.code_area(shell);
@@ -208,6 +207,7 @@ impl App {
                 }
             }
             self.docs.retain(|d| d.id != id);
+            self.pictures.close(id);
             if self.focus_doc == Some(id) {
                 self.focus_doc = None;
             }

@@ -143,6 +143,7 @@ impl App {
                 self.pending_show.push(Editor::Files);
             }
             OPEN_EXTERNAL => crate::launch::open_external(&path().display().to_string()),
+            OPEN_AS_TEXT => self.pending_text.push(path()),
             SAVE => self.save_doc(cx),
             SAVE_AS => {
                 if let Some(d) = self.focus_doc() {
@@ -171,6 +172,8 @@ impl App {
                     } else {
                         self.pending_close.push(id);
                     }
+                } else if let Some(id) = self.focus_picture().map(|p| p.id) {
+                    self.pending_close.push(id);
                 }
             }
             CLOSE_FORCE => {
@@ -274,6 +277,16 @@ impl App {
                         UNFOLD => d.unfold_here(line),
                         FOLD_ALL => d.fold_all(),
                         _ => d.unfold_all(),
+                    }
+                }
+            }
+            // A picture in the focused tab zooms itself; the code font stays.
+            ZOOM_IN | ZOOM_OUT | ZOOM_RESET if self.focus_picture().is_some() => {
+                if let Some(p) = self.focus_picture_mut() {
+                    match action.id.as_str() {
+                        ZOOM_IN => p.view.step(1),
+                        ZOOM_OUT => p.view.step(-1),
+                        _ => p.view.fit(),
                     }
                 }
             }
@@ -386,6 +399,7 @@ impl App {
                     Ok(()) => {
                         let gone: Vec<_> = self.docs.iter().filter(|d| d.path.as_ref().is_some_and(|dp| dp == &p || dp.starts_with(&p))).map(|d| d.id).collect();
                         self.pending_close.extend(gone);
+                        self.pending_close.extend(self.pictures.iter().filter(|pic| pic.path.starts_with(&p)).map(|pic| pic.id));
                     }
                     Err(e) => cx.request(ShellRequest::Dialog(Dialog::notice("Could not delete", &e.to_string()))),
                 }
@@ -444,7 +458,7 @@ impl App {
                 }
             }
             TAB_REVEAL => {
-                if let Some(p) = self.context_tab.as_ref().and_then(|(id, _)| self.doc(*id)).and_then(|d| d.path.clone()) {
+                if let Some(p) = self.context_tab.as_ref().and_then(|(id, _)| self.tab_path(*id)).map(Path::to_path_buf) {
                     self.reveal_path(p);
                 }
             }
