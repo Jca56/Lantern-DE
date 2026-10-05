@@ -1,29 +1,22 @@
 [package]
 name = "lntrn-system-settings"
-version = "0.1.0"
-description = "Lantern DE - System Settings"
-authors = ["Jca56"]
-edition = "2021"
+version = "0.2.0"
+description = "Lantern DE - System Settings, on Lantern UI 2"
+authors = ["Alva"]
+edition = "2024"
 
 [[bin]]
 name = "lntrn-system-settings"
 path = "src/main.rs"
 
 [dependencies]
-anyhow = "1"
-libc = "0.2"
+lntrn-app = { path = "../../lantern-ui-2/crates/lntrn-app" }
+lntrn-ui = { path = "../../lantern-ui-2/crates/lntrn-ui" }
+lntrn-core = { path = "../../lantern-ui-2/crates/lntrn-core" }
+lntrn-math = { path = "../../lantern-ui-2/crates/lntrn-math" }
+lntrn-props = { path = "../../lantern-ui-2/crates/lntrn-props" }
+lntrn-data = { path = "../../lantern-ui-2/crates/lntrn-data" }
+lntrn-sys = { path = "../../lantern-ui-2/crates/lntrn-sys" }
+lntrn-svg = { path = "../../lantern-ui-2/crates/lntrn-svg" }
+lntrn-image = { path = "../../lantern-ui-2/crates/lntrn-image" }
 lntrn-icons = { path = "../lntrn-icons" }
-lntrn-render = { path = "../lntrn-render" }
-lntrn-ui = { path = "../lntrn-ui" }
-lntrn-theme = { path = "../lntrn-theme" }
-raw-window-handle = "0.6"
-serde = { version = "1", features = ["derive"] }
-toml = "0.8"
-wayland-backend = { version = "0.3", features = ["client_system"] }
-wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
-wayland-protocols-wlr = { version = "0.3", features = ["client"] }
-image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
-xkbcommon = "0.9"
-wgpu = "28"
-resvg = "0.47"

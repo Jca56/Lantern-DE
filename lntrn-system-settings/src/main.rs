@@ -1,85 +1,91 @@
-//! Lantern System Settings.
+//! Lantern System Settings: the desktop's `lantern.toml` with a face, on
+//! Lantern UI 2.
 //!
-//! ## Module layout
+//! ## Layout
 //!
-//! **Wayland host** — `main.rs`, `wayland.rs`, `wayland_state.rs`,
-//! `popup_backend.rs`, `chrome.rs`, `click_router.rs`. The event loop,
-//! dispatch impls, window chrome, and the click-dispatch router.
-//!
-//! **Shared panel infra** — `panels.rs` owns the layout constants
-//! (`ROW_H`, `CARD_*`, etc.), the `GLOW_COLORS` palette, `PanelState`,
-//! and the common helpers (`draw_section_card`, `draw_color_swatch_row`,
-//! `slider_value_from_cursor`, `draw_save_cancel_bar`, etc.).
-//!
-//! **Per-panel modules** — `appearance_panel.rs` (with its sibling section
-//! modules `appearance_layout.rs`, `appearance_animations.rs`, and
-//! `appearance_focus.rs`), `display_panel.rs`, `input_panel.rs`,
-//! `power_panel.rs`, `notifications_panel.rs`, `icon_panel.rs`. Each panel
-//! exports:
-//!   * `draw_<name>_panel(...)` — renders the panel
-//!   * `handle_<name>_click(config, zone_id, ...)` — mutates config
-//!   * Private `ZONE_*: u32` constants for hit zones
-//!
-//! **Display sub-system** — `monitor_settings.rs`, `monitor_arrange.rs`,
-//! `output_manager.rs`, `wallpaper_picker.rs`.
-//!
-//! ## Adding a new panel
-//! 1. Create `<name>_panel.rs` with the two functions above.
-//! 2. Add `mod <name>_panel;` here.
-//! 3. Add a variant to `Panel` + an entry in `PANELS` in `wayland.rs`.
-//! 4. Wire `draw_*` into `wayland.rs::run()` and `handle_*` into
-//!    `click_router::route_panel_click`.
-//! 5. Add any new config fields to `config.rs` (with `sanitize` clamps).
+//! - `app.rs` — the [`lntrn_ui::Host`]: one editor, a sidebar of pages
+//!   on the left and the chosen page on the right, live saving.
+//! - `nav.rs` — the pages and the categories that group them.
+//! - `config/` — every section we own as a `props!` struct, loaded from
+//!   and merged back into `lantern.toml` without touching what we don't.
+//! - `themes.rs` — named looks under `~/.lantern/themes/`.
+//! - `pages/` — one module per page, plain widget code.
+//! - `widgets.rs` — the few helpers the pages share.
+//! - `machine.rs`, `fonts.rs` — what the hardware has, what fonts exist.
 
-mod appearance_animations;
-mod appearance_focus;
-mod appearance_layout;
-mod appearance_panel;
-mod appearance_themes;
-mod appearance_window_sizes;
-mod chrome;
-mod click_router;
+mod app;
 mod config;
-mod display_panel;
-mod hdr_client;
-mod hdr_panel;
-mod icon_panel;
-mod icons;
-mod input_panel;
-mod keybinds_panel;
-mod lock_style_panel;
-mod lock_wallpaper_panel;
+mod fonts;
 mod machine;
-mod monitor_arrange;
-mod monitor_settings;
-mod notifications_panel;
-mod output_manager;
-mod panels;
-mod popup_backend;
-mod power_panel;
-mod sidebar;
-mod test_window;
-mod text_edit;
+mod nav;
+mod pages;
 mod themes;
-mod wallpaper_picker;
-mod wayland;
-mod wayland_state;
+mod widgets;
+
+use std::path::PathBuf;
+
+use lntrn_app::{AppConfig, run};
+use lntrn_ui::Shell;
+
+use crate::app::{APP_ID, App, Editor};
+use crate::config::Config;
+
+unsafe extern "C" {
+    fn isatty(fd: i32) -> i32;
+    fn dup2(from: i32, to: i32) -> i32;
+}
+
+/// Panics go to `~/.lantern/log/lntrn-system-settings.log` with a
+/// backtrace, and so does everything else written to stderr when no
+/// terminal is attached, since an app launched from the desktop has
+/// nowhere else to print.
+fn log_panics() {
+    let path = std::env::var_os("HOME").map(PathBuf::from).map(|h| h.join(".lantern/log").join(format!("{APP_ID}.log")));
+    // SAFETY: plain libc calls on the standard descriptors.
+    if let Some(p) = &path
+        && unsafe { isatty(2) } == 0
+        && let Some(dir) = p.parent()
+        && std::fs::create_dir_all(dir).is_ok()
+        && let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(p)
+    {
+        use std::os::fd::AsRawFd;
+        unsafe {
+            dup2(f.as_raw_fd(), 2);
+        }
+        std::mem::forget(f);
+        eprintln!("---- {APP_ID} started, pid {} ----", std::process::id());
+    }
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if let Some(p) = &path {
+            let _ = std::fs::create_dir_all(p.parent().unwrap_or(p));
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            let text = format!("[{now}] {info}\n{}\n\n", std::backtrace::Backtrace::force_capture());
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
+                let _ = f.write_all(text.as_bytes());
+            }
+        }
+        default(info);
+    }));
+}
 
 fn main() {
-    // --test-window spawns a minimal 500x500 blank window so the user can
-    // see how the WM-tab sliders (titlebar height, corner radius, border
-    // width) affect a real SSD-decorated window. Every regular Lantern app
-    // uses CSD, so they don't react to these settings.
-    if std::env::args().any(|a| a == "--test-window") {
-        if let Err(e) = test_window::run() {
-            eprintln!("[test-window] fatal: {e}");
-            std::process::exit(1);
-        }
-        return;
-    }
-
-    if let Err(e) = wayland::run() {
-        eprintln!("[system-settings] fatal: {e}");
-        std::process::exit(1);
-    }
+    log_panics();
+    let config = Config::load();
+    let sans = fonts::effective_family(&config.appearance.font_family);
+    let opacity = config.windows.background_opacity.clamp(0.05, 1.0);
+    let app = App::new(config);
+    let app_config = AppConfig {
+        title: "System Settings".into(),
+        app_id: APP_ID.into(),
+        size: (1500.0, 1000.0),
+        maximized: false,
+        sans,
+        opacity,
+        transparent: true,
+        ..AppConfig::default()
+    };
+    run(app_config, app, Shell::new(Editor::Settings));
+    std::process::exit(0);
 }

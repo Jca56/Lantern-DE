@@ -2496,6 +2496,15 @@ name = "lntrn-core"
 version = "0.2.0"
 
 [[package]]
+name = "lntrn-data"
+version = "0.2.0"
+dependencies = [
+ "lntrn-core",
+ "lntrn-math",
+ "lntrn-props",
+]
+
+[[package]]
 name = "lntrn-dbus"
 version = "0.1.0"
 dependencies = [
@@ -2875,25 +2884,18 @@ dependencies = [
 
 [[package]]
 name = "lntrn-system-settings"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
- "anyhow",
- "image",
- "libc",
+ "lntrn-app",
+ "lntrn-core",
+ "lntrn-data",
  "lntrn-icons",
- "lntrn-render 0.1.0",
- "lntrn-theme",
- "lntrn-ui 0.1.0",
- "raw-window-handle",
- "resvg 0.47.0",
- "serde",
- "toml 0.8.2",
- "wayland-backend",
- "wayland-client",
- "wayland-protocols",
- "wayland-protocols-wlr",
- "wgpu 28.0.0",
- "xkbcommon 0.9.0",
+ "lntrn-image",
+ "lntrn-math",
+ "lntrn-props",
+ "lntrn-svg",
+ "lntrn-sys",
+ "lntrn-ui 0.2.0",
 ]
 
 [[package]]
