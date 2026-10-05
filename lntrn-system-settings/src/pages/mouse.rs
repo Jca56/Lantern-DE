@@ -5,17 +5,18 @@ use std::path::PathBuf;
 
 use lntrn_app::lntrn_render::{Gpu, ImageHandle, Images};
 use lntrn_image::Image;
-use lntrn_math::{Color, Vec2};
-use lntrn_ui::Ui;
+use lntrn_math::{Color, Rect, Vec2};
+use lntrn_ui::{CursorIcon, Metrics, Sense, Ui};
 
 use crate::config::Config;
+use crate::kit::{self, percent, pixels, times};
+use crate::look;
 use crate::pages::cursor_svg;
-use crate::widgets::{hex_color, note, section, slider_int, toggle_string};
 
 /// Pixels the previews are rendered at.
-const PREVIEW_PX: u32 = 96;
+const PREVIEW_PX: u32 = 128;
 /// Logical size they are shown at.
-const PREVIEW_SIZE: f64 = 60.0;
+const PREVIEW_SIZE: f64 = 72.0;
 
 pub struct CursorEntry {
     pub id: String,
@@ -125,76 +126,119 @@ pub fn draw(cfg: &mut Config, st: &mut MouseState, ui: &mut Ui) -> bool {
     st.refresh_default(cfg);
     let mut changed = false;
 
-    section(ui, "Pointer");
-    changed |= ui.slider("Speed", &mut cfg.input.mouse_speed, -1.0, 1.0, 0.05);
-    changed |= ui.toggle("Pointer acceleration", &mut cfg.input.pointer_acceleration);
-    note(ui, "On, the pointer moves further the faster the mouse goes; off, it is flat.");
-    changed |= ui.toggle("Focus follows mouse", &mut cfg.window_manager.focus_follows_mouse);
-    changed |= ui.slider("Scroll speed", &mut cfg.input.scroll_speed, 0.25, 3.0, 0.05);
+    let inp = &mut cfg.input;
+    kit::caption(ui, "Pointer");
+    kit::card(ui, "pointer", |c| {
+        changed |= c.slider("Pointer speed", "", &mut inp.mouse_speed, (-1.0, 1.0), 0.05, |v| format!("{v:+.2}"));
+        changed |= c.switch("Acceleration", "On, a faster flick travels further. Off, it is flat.", &mut inp.pointer_acceleration);
+        changed |= c.switch("Focus follows the pointer", "The window under the pointer takes the keyboard.", &mut cfg.window_manager.focus_follows_mouse);
+        changed |= c.slider("Scroll speed", "", &mut inp.scroll_speed, (0.25, 3.0), 0.05, times);
+    });
 
-    section(ui, "Clicking");
-    changed |= ui.toggle("Double-click to open files", &mut cfg.input.double_click_to_open);
-    changed |= ui.toggle("Ripple on click", &mut cfg.input.click_anim_enabled);
-    if cfg.input.click_anim_enabled {
-        changed |= ui.slider("Ripple size", &mut cfg.input.click_anim_size, 0.25, 3.0, 0.05);
-        changed |= toggle_string(ui, "Ripple has its own colour", &mut cfg.input.click_anim_color, &cfg.input.cursor_outline_color.clone());
-        if !cfg.input.click_anim_color.is_empty() {
-            changed |= hex_color(ui, "Ripple colour", &mut cfg.input.click_anim_color, Color::hex(0x2563EB));
-        } else {
-            note(ui, "The ripple takes the cursor's outline colour.");
+    kit::caption(ui, "Clicking");
+    kit::card(ui, "clicking", |c| {
+        changed |= c.switch("Double-click to open files", "", &mut inp.double_click_to_open);
+        changed |= c.switch("Ripple on click", "", &mut inp.click_anim_enabled);
+        if inp.click_anim_enabled {
+            changed |= c.slider("Ripple size", "", &mut inp.click_anim_size, (0.25, 3.0), 0.05, times);
+            let outline = inp.cursor_outline_color.clone();
+            changed |= c.switch_string("Its own colour", "Off, the ripple takes the cursor's outline colour.", &mut inp.click_anim_color, &outline);
+            if !inp.click_anim_color.is_empty() {
+                changed |= c.color("Ripple colour", "", &mut inp.click_anim_color, Color::hex(0x2563EB));
+            }
         }
-    }
+    });
 
-    section(ui, "Cursor");
-    changed |= slider_int(ui, "Size", &mut cfg.input.cursor_size, 16, 128, 1);
-    ui.push_id("cursors");
-    let is_default = cfg.input.cursor_theme == "default";
-    if cursor_row(ui, st.default_image, "Lantern (bundled)", is_default) {
-        cfg.input.cursor_theme = "default".to_owned();
-        changed = true;
-    }
-    for i in 0..st.cursors.len() {
-        ui.push_index(i);
-        let selected = cfg.input.cursor_theme == st.cursors[i].id;
-        if cursor_row(ui, st.cursors[i].image, &st.cursors[i].name, selected) {
-            cfg.input.cursor_theme = st.cursors[i].id.clone();
+    kit::caption(ui, "Cursor");
+    let is_default = inp.cursor_theme == "default";
+    kit::card(ui, "cursor", |c| {
+        changed |= c.slider_int("Size", "", &mut inp.cursor_size, (16, 128), 1, pixels);
+        let mut tiles = vec![("default", "Lantern", st.default_image)];
+        tiles.extend(st.cursors.iter().map(|e| (e.id.as_str(), e.name.as_str(), e.image)));
+        let (m, w) = (c.ui.m, c.ui.avail_width());
+        let h = cursor_tiles_height(m, w, tiles.len());
+        if let Some(id) = c.block(h, |ui, rect| cursor_tiles(ui, rect, &tiles, &inp.cursor_theme)) {
+            inp.cursor_theme = id;
             changed = true;
         }
-        ui.pop_id();
-    }
-    ui.pop_id();
+    });
     if st.cursors.is_empty() {
-        note(ui, "Drop SVG or PNG cursors into ~/.lantern/config/cursors to see them here.");
+        kit::note(ui, "Drop SVG or PNG cursors into ~/.lantern/config/cursors to see them here.");
     }
 
     if is_default {
-        section(ui, "Cursor Colours");
-        let inp = &mut cfg.input;
-        changed |= hex_color(ui, "Body, light", &mut inp.cursor_body_light, Color::WHITE);
-        changed |= hex_color(ui, "Body, dark", &mut inp.cursor_body_dark, Color::hex(0xABABAB));
-        changed |= hex_color(ui, "Accent, light", &mut inp.cursor_accent_light, Color::hex(0xFAB414));
-        changed |= hex_color(ui, "Accent, dark", &mut inp.cursor_accent_dark, Color::hex(0x9A6300));
-        changed |= hex_color(ui, "Outline", &mut inp.cursor_outline_color, Color::hex(0x0A0A0A));
-        changed |= ui.slider("Outline width", &mut inp.cursor_outline_scale, 0.0, 3.0, 0.1);
-        changed |= ui.slider("Roundness", &mut inp.cursor_corner_radius, 0.0, 1.0, 0.05);
-        note(ui, "The preview shows the colours; outline width and roundness show on the real pointer.");
+        kit::caption(ui, "Cursor colours");
+        kit::card(ui, "colours", |c| {
+            changed |= c.color("Body, light", "", &mut inp.cursor_body_light, Color::WHITE);
+            changed |= c.color("Body, dark", "", &mut inp.cursor_body_dark, Color::hex(0xABABAB));
+            changed |= c.color("Accent, light", "", &mut inp.cursor_accent_light, Color::hex(0xFAB414));
+            changed |= c.color("Accent, dark", "", &mut inp.cursor_accent_dark, Color::hex(0x9A6300));
+            changed |= c.color("Outline", "", &mut inp.cursor_outline_color, Color::hex(0x0A0A0A));
+            changed |= c.slider("Outline width", "", &mut inp.cursor_outline_scale, (0.0, 3.0), 0.1, times);
+            changed |= c.slider("Roundness", "", &mut inp.cursor_corner_radius, (0.0, 1.0), 0.05, percent);
+        });
+        kit::note(ui, "The preview shows the colours. Outline width and roundness show on the real pointer.");
     }
     changed
 }
 
-/// A cursor's picture beside its name; `true` when picked.
-fn cursor_row(ui: &mut Ui, image: Option<ImageHandle>, name: &str, selected: bool) -> bool {
-    let mut picked = false;
-    ui.row(|ui| {
-        match image {
-            Some(h) => {
-                ui.image_fit(h, Vec2::new(PREVIEW_SIZE, PREVIEW_SIZE));
-            }
-            None => {
-                ui.alloc(Vec2::new(ui.m.px(PREVIEW_SIZE), ui.m.px(PREVIEW_SIZE)));
-            }
+/// A cursor tile's side and the gap between tiles, in logical pixels.
+const TILE: f64 = 150.0;
+const TILE_GAP: f64 = 12.0;
+/// The room around the tiles inside their card.
+const TILE_PAD: f64 = 20.0;
+
+fn tiles_across(m: Metrics, width: f64) -> usize {
+    let (tile, gap) = (m.px(TILE), m.px(TILE_GAP));
+    (((width - m.px(TILE_PAD) * 2.0 + gap) / (tile + gap)).floor() as usize).max(1)
+}
+
+/// How tall the block of `count` cursor tiles is in a card `width` wide.
+fn cursor_tiles_height(m: Metrics, width: f64, count: usize) -> f64 {
+    let rows = count.div_ceil(tiles_across(m, width)).max(1) as f64;
+    rows * m.px(TILE) + (rows - 1.0) * m.px(TILE_GAP) + m.px(TILE_PAD) * 2.0
+}
+
+/// The cursors as tiles, `(id, name, picture)` each, the one in use
+/// ringed. Returns the id of one that was clicked and is not in use.
+fn cursor_tiles(ui: &mut Ui, rect: Rect, tiles: &[(&str, &str, Option<ImageHandle>)], current: &str) -> Option<String> {
+    let m = ui.m;
+    let (side, gap, pad) = (m.px(TILE), m.px(TILE_GAP), m.px(TILE_PAD));
+    let across = tiles_across(m, rect.width());
+    let small = kit::small_style(ui);
+    let radius = m.px(12.0);
+    let accent = ui.theme.accent;
+    let mut picked = None;
+    ui.push_id("cursors");
+    for (i, (id, name, image)) in tiles.iter().enumerate() {
+        let at = rect.min + Vec2::new(pad + (i % across) as f64 * (side + gap), pad + (i / across) as f64 * (side + gap));
+        let tile = Rect::from_min_size(at, Vec2::splat(side));
+        let wid = ui.id("tile").with_index(i);
+        let mut r = ui.interact(wid, tile, Sense::CLICK);
+        ui.focusable(wid, tile);
+        ui.key_click(wid, &mut r);
+        let in_use = *id == current;
+        if r.hovered {
+            ui.state.cursor_icon = CursorIcon::Pointer;
         }
-        picked = ui.selectable(name, selected).clicked;
-    });
+        if r.clicked && !in_use {
+            picked = Some((*id).to_owned());
+        }
+        ui.draw.rounded_rect(tile, radius, if r.hovered { look::BUTTON.scale_rgb(1.3) } else { look::BUTTON });
+        if in_use {
+            ui.draw.stroke_rect(tile, m.px(3.0), radius, accent);
+        }
+        let name_h = small.line_height() as f64 + m.px(12.0);
+        if let Some(image) = image {
+            let room = Rect::new(tile.min, Vec2::new(tile.max.x, tile.max.y - name_h));
+            let fit = m.px(PREVIEW_SIZE) / image.width.max(image.height).max(1) as f64;
+            let size = Vec2::new(image.width as f64 * fit, image.height as f64 * fit);
+            ui.draw.image(Rect::from_center_size(room.center() + Vec2::new(0.0, m.px(6.0)), size).round(), *image, 0.0, Color::WHITE);
+        }
+        let label = Rect::new(Vec2::new(tile.min.x + m.px(8.0), tile.max.y - name_h), Vec2::new(tile.max.x - m.px(8.0), tile.max.y - m.px(6.0)));
+        ui.text_centered(name, &small, label, if in_use { look::TEXT } else { look::TEXT_DIM });
+        ui.focus_ring(wid, tile);
+    }
+    ui.pop_id();
     picked
 }

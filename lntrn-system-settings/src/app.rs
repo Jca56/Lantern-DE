@@ -4,21 +4,20 @@
 //! one, and the compositor picks it up from the file's mtime.
 
 use lntrn_app::lntrn_render::{Gpu, Images};
-use lntrn_app::AppHost;
-use lntrn_math::{Rect, Vec2};
+use lntrn_app::{AppHost, Waker};
 use lntrn_ui::keymap::CTX_WINDOW;
 use lntrn_ui::{Action, AreaCx, FILL, Host, HostCx, Key, KeyConfig, KeyItem, KeyPress, Menu, MenuItem, Modifiers, Shell, Trigger, Ui, actions};
 
 use crate::config::Config;
-use crate::nav::{CATEGORIES, Page};
+use crate::look;
+use crate::nav::Page;
 use crate::pages;
 use crate::pages::mouse::MouseState;
-use crate::pages::themes::ThemesState;
+use crate::pages::wallpaper::WallpaperState;
+use crate::sidebar;
 
 pub const APP_ID: &str = "lntrn-system-settings";
 
-/// Logical width of the sidebar.
-const SIDEBAR_W: f64 = 320.0;
 /// Seconds after the last change before the file is written.
 const SAVE_DELAY: f64 = 0.3;
 /// How often, at most, the file is checked for outside changes.
@@ -34,10 +33,10 @@ const EDITORS: [Editor; 1] = [Editor::Settings];
 pub struct App {
     pub config: Config,
     pub page: Page,
-    pub themes: ThemesState,
+    pub wallpaper: WallpaperState,
     pub mouse: MouseState,
-    /// Text typed into the open dialog's field.
-    pub name_buf: String,
+    /// Font families found on disk, read when Appearance first shows.
+    pub fonts: Vec<String>,
     keys: KeyConfig,
     dirty: bool,
     dirty_since: f64,
@@ -49,7 +48,7 @@ impl App {
         let mut keys = KeyConfig::default();
         keys.bind(CTX_WINDOW, KeyItem::new(Trigger::key(Key::Char('q'), Modifiers::CTRL), actions::QUIT));
         keys.bind(CTX_WINDOW, KeyItem::new(Trigger::key(Key::F(3), Modifiers::NONE), actions::PALETTE));
-        Self { config, page: Page::Themes, themes: ThemesState::default(), mouse: MouseState::default(), name_buf: String::new(), keys, dirty: false, dirty_since: 0.0, last_disk_check: 0.0 }
+        Self { config, page: Page::Wallpaper, wallpaper: WallpaperState::default(), mouse: MouseState::default(), fonts: Vec::new(), keys, dirty: false, dirty_since: 0.0, last_disk_check: 0.0 }
     }
 
     /// Something changed: write it once the user pauses.
@@ -58,50 +57,12 @@ impl App {
         self.dirty_since = now;
     }
 
-    fn draw_sidebar(&mut self, ui: &mut Ui) {
-        let rect = Rect::from_min_size(ui.cursor(), Vec2::new(ui.avail_width(), ui.remaining_height()));
-        ui.fill_shaded(rect, ui.theme.header);
-        ui.push_id("sidebar");
-        ui.space(ui.m.pad);
-        let pad = ui.m.pad;
-        ui.indent(pad, |ui| {
-            for cat in CATEGORIES {
-                let pages: Vec<Page> = cat.pages.iter().copied().filter(|p| p.available()).collect();
-                if pages.len() == 1 {
-                    if ui.tree_leaf(cat.label, self.page == pages[0]).clicked {
-                        self.page = pages[0];
-                    }
-                    continue;
-                }
-                let inside = pages.contains(&self.page);
-                ui.tree_node(cat.label, false, |ui| {
-                    for page in &pages {
-                        if ui.tree_leaf(page.label(), self.page == *page).clicked {
-                            self.page = *page;
-                        }
-                    }
-                });
-                let _ = inside;
-            }
-        });
-        ui.pop_id();
-    }
-
     fn draw_content(&mut self, ui: &mut Ui, cx: &mut AreaCx<()>) {
-        let pad = ui.m.pad;
-        ui.indent(pad, |ui| {
-            ui.space(pad);
-            ui.heading(self.page.label());
-            ui.push_id(self.page.id());
-            let mut changed = false;
-            ui.scroll_area("page", None, |ui| {
-                changed = pages::draw(self, ui, cx);
-            });
-            ui.pop_id();
-            if changed {
-                self.mark_dirty(ui.now());
-            }
-        });
+        ui.push_id(self.page.id());
+        if pages::draw(self, ui, cx) {
+            self.mark_dirty(ui.now());
+        }
+        ui.pop_id();
     }
 
     /// Write a pending change once the user has paused, and pick up
@@ -122,7 +83,6 @@ impl App {
             self.last_disk_check = now;
             if self.config.changed_on_disk() {
                 self.config.reload();
-                self.themes.loaded = false;
             }
         }
     }
@@ -173,7 +133,6 @@ impl Host for App {
         let q = query.to_lowercase();
         Page::ALL
             .into_iter()
-            .filter(|p| p.available())
             .map(|p| (format!("page.{}", p.id()), format!("Go to {}", p.label())))
             .chain([(actions::QUIT.to_owned(), "Quit".to_owned())])
             .filter(|(_, label)| label.to_lowercase().contains(&q))
@@ -185,20 +144,13 @@ impl Host for App {
     }
 
     fn draw_body(&mut self, _editor: Editor, ui: &mut Ui, cx: &mut AreaCx<()>) -> bool {
-        let sidebar = ui.m.px(SIDEBAR_W);
-        ui.columns(&[sidebar, FILL], |ui, col| match col {
-            0 => self.draw_sidebar(ui),
+        let width = ui.m.px(sidebar::WIDTH);
+        ui.columns(&[width, FILL], |ui, col| match col {
+            0 => sidebar::draw(ui, &mut self.page),
             _ => self.draw_content(ui, cx),
         });
         self.housekeeping(ui, cx);
         false
-    }
-
-    fn draw_item(&mut self, key: &str, ui: &mut Ui, _cx: &mut HostCx) -> bool {
-        match key {
-            "theme_name" => ui.text_field_hint("Name", &mut self.name_buf, "Theme name").changed,
-            _ => false,
-        }
     }
 
     fn run(&mut self, action: &Action, cx: &mut HostCx) {
@@ -211,14 +163,20 @@ impl Host for App {
         match action.id.as_str() {
             "app.reload" => {
                 self.config.reload();
-                self.themes.loaded = false;
                 self.dirty = false;
                 cx.toast("Reloaded lantern.toml");
             }
             "app.open_config" => {
                 let _ = std::process::Command::new("xdg-open").arg(crate::config::path()).spawn();
             }
-            id if id.starts_with("theme.") => pages::themes::run(self, id, cx),
+            pages::wallpaper::PICK => {
+                let Some(path) = action.arg("path").and_then(|v| v.as_str()) else { return };
+                match pages::wallpaper::pick(&mut self.config, &mut self.wallpaper, path) {
+                    // Zero: long enough ago that it is written at once.
+                    Ok(()) => self.mark_dirty(0.0),
+                    Err(why) => cx.toast(why),
+                }
+            }
             other => cx.toast(&format!("unknown action {other}")),
         }
     }
@@ -229,11 +187,24 @@ impl Host for App {
 }
 
 impl AppHost for App {
+    fn waker(&mut self, waker: Waker) {
+        self.wallpaper.set_waker(waker);
+    }
+
     fn after_rebuild(&mut self, gpu: &Gpu, images: &mut Images, shell: &mut Shell<Self>) -> bool {
         let want = self.config.windows.background_opacity.clamp(0.05, 1.0);
         if (shell.opacity - want).abs() > 1e-3 {
             shell.opacity = want;
         }
-        self.mouse.upload(gpu, images)
+        // The shell's own parts wear the Lantern look with the desktop's
+        // accent, whatever was saved: a new accent shows as it is picked.
+        let theme = look::theme(look::accent(&self.config.appearance.accent));
+        let restyled = shell.prefs.theme != theme;
+        if restyled {
+            shell.prefs.theme = theme;
+        }
+        let cursors = self.mouse.upload(gpu, images);
+        let thumbs = self.wallpaper.upload(gpu, images);
+        restyled || cursors || thumbs
     }
 }

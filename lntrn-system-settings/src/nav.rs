@@ -1,32 +1,36 @@
-//! The pages and the categories that group them in the sidebar.
+//! The pages and the groups the sidebar lists them under.
 
-use crate::machine;
+use lntrn_ui::IconFn;
+
+use crate::glyphs;
 
 /// One screen of settings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
-    Themes,
-    WindowSizes,
+    Wallpaper,
+    Appearance,
+    Windows,
+    Effects,
     Animations,
     Mouse,
     Notifications,
-    LidIdle,
-    Battery,
+    Power,
 }
 
 impl Page {
-    pub const ALL: [Page; 7] = [Page::Themes, Page::WindowSizes, Page::Animations, Page::Mouse, Page::Notifications, Page::LidIdle, Page::Battery];
+    pub const ALL: [Page; 8] = [Page::Wallpaper, Page::Appearance, Page::Windows, Page::Effects, Page::Animations, Page::Mouse, Page::Notifications, Page::Power];
 
     /// A stable name for palette entries and actions.
     pub fn id(self) -> &'static str {
         match self {
-            Page::Themes => "themes",
-            Page::WindowSizes => "window_sizes",
+            Page::Wallpaper => "wallpaper",
+            Page::Appearance => "appearance",
+            Page::Windows => "windows",
+            Page::Effects => "effects",
             Page::Animations => "animations",
             Page::Mouse => "mouse",
             Page::Notifications => "notifications",
-            Page::LidIdle => "lid_idle",
-            Page::Battery => "battery",
+            Page::Power => "power",
         }
     }
 
@@ -34,40 +38,71 @@ impl Page {
         Page::ALL.into_iter().find(|p| p.id() == id)
     }
 
-    /// What the sidebar and the page heading call it, adapted to the
-    /// hardware: a desktop with no lid has only the idle rows.
+    /// What the sidebar and the page's title call it.
     pub fn label(self) -> &'static str {
         match self {
-            Page::Themes => "Themes",
-            Page::WindowSizes => "Window Sizes",
+            Page::Wallpaper => "Wallpaper",
+            Page::Appearance => "Appearance",
+            Page::Windows => "Windows",
+            Page::Effects => "Effects",
             Page::Animations => "Animations",
             Page::Mouse => "Mouse",
             Page::Notifications => "Notifications",
-            Page::LidIdle if machine::has_lid() => "Lid & Idle",
-            Page::LidIdle => "Idle",
-            Page::Battery => "Battery",
+            Page::Power => "Power",
         }
     }
 
-    /// Whether the page applies to this machine at all.
-    pub fn available(self) -> bool {
+    /// The line under the page's title.
+    pub fn blurb(self) -> &'static str {
         match self {
-            Page::Battery => machine::has_battery(),
-            _ => true,
+            Page::Wallpaper => "What sits behind everything.",
+            Page::Appearance => "Window style, accent colour and the font.",
+            Page::Windows => "Borders, corners, gaps and the sizes windows open at.",
+            Page::Effects => "Transparency, blur and the glows.",
+            Page::Animations => "How windows move.",
+            Page::Mouse => "Pointer, scrolling, clicking and the cursor.",
+            Page::Notifications => "Toasts: where they show, for how long, how loud.",
+            Page::Power => "What the machine does when it is left alone.",
+        }
+    }
+
+    /// Its picture in the sidebar.
+    pub fn glyph(self) -> IconFn {
+        match self {
+            Page::Wallpaper => glyphs::wallpaper,
+            Page::Appearance => glyphs::appearance,
+            Page::Windows => glyphs::windows,
+            Page::Effects => glyphs::effects,
+            Page::Animations => glyphs::animations,
+            Page::Mouse => glyphs::mouse,
+            Page::Notifications => glyphs::notifications,
+            Page::Power => glyphs::power,
         }
     }
 }
 
-/// A sidebar entry: a category with one page is a plain row, one with
-/// several opens to show them.
-pub struct Category {
+/// A captioned run of pages in the sidebar.
+pub struct Group {
     pub label: &'static str,
     pub pages: &'static [Page],
 }
 
-pub const CATEGORIES: &[Category] = &[
-    Category { label: "Appearance", pages: &[Page::Themes, Page::WindowSizes, Page::Animations] },
-    Category { label: "Input", pages: &[Page::Mouse] },
-    Category { label: "Notifications", pages: &[Page::Notifications] },
-    Category { label: "Power", pages: &[Page::LidIdle, Page::Battery] },
+pub const GROUPS: &[Group] = &[
+    Group { label: "Look", pages: &[Page::Wallpaper, Page::Appearance, Page::Windows, Page::Effects, Page::Animations] },
+    Group { label: "Input", pages: &[Page::Mouse] },
+    Group { label: "System", pages: &[Page::Notifications, Page::Power] },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_page_is_listed_once_and_found_by_id() {
+        let listed: Vec<Page> = GROUPS.iter().flat_map(|g| g.pages.iter().copied()).collect();
+        assert_eq!(listed, Page::ALL);
+        for p in Page::ALL {
+            assert_eq!(Page::from_id(p.id()), Some(p));
+        }
+    }
+}

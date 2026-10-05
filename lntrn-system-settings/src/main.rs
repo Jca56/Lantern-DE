@@ -3,24 +3,32 @@
 //!
 //! ## Layout
 //!
-//! - `app.rs` — the [`lntrn_ui::Host`]: one editor, a sidebar of pages
-//!   on the left and the chosen page on the right, live saving.
-//! - `nav.rs` — the pages and the categories that group them.
+//! - `app.rs` — the [`lntrn_ui::Host`]: one editor, the sidebar on the
+//!   left and the chosen page on the right, live saving.
+//! - `nav.rs`, `sidebar.rs`, `glyphs.rs` — the pages, the groups the
+//!   sidebar lists them under, and their pictures.
+//! - `look.rs` — the Lantern palette Settings wears, with the desktop's
+//!   accent on top.
+//! - `kit/` — the widgets pages are made of: cards, rows and controls.
+//! - `pages/` — one module per page.
 //! - `config/` — every section we own as a `props!` struct, loaded from
 //!   and merged back into `lantern.toml` without touching what we don't.
-//! - `themes.rs` — named looks under `~/.lantern/themes/`.
-//! - `pages/` — one module per page, plain widget code.
-//! - `widgets.rs` — the few helpers the pages share.
+//! - `thumbs.rs` — wallpaper thumbnails, made off the UI thread.
 //! - `machine.rs`, `fonts.rs` — what the hardware has, what fonts exist.
 
 mod app;
 mod config;
 mod fonts;
+mod glyphs;
+mod kit;
+mod look;
 mod machine;
 mod nav;
 mod pages;
-mod themes;
-mod widgets;
+mod sidebar;
+#[cfg(test)]
+mod smoke;
+mod thumbs;
 
 use std::path::PathBuf;
 
@@ -80,6 +88,7 @@ fn main() {
         title: "System Settings".into(),
         app_id: APP_ID.into(),
         size: (1500.0, 1000.0),
+        min_size: (1100.0, 700.0),
         maximized: false,
         sans,
         opacity,

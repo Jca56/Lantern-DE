@@ -1,8 +1,9 @@
 //! `lantern.toml`, the sections this app owns. Loading reads only our
 //! sections; saving parses the file again, replaces the keys we own
 //! inside each of them and writes everything back, so `[lockscreen]`,
-//! `[[monitors]]`, `[keybinds]` and anything another tool adds stay
-//! exactly as they were.
+//! `[keybinds]` and anything another tool adds stay exactly as they
+//! were. Of `[[monitors]]` we own one key, each screen's `wallpaper`;
+//! the rest of an entry is the compositor's.
 
 mod appearance;
 mod system;
@@ -15,12 +16,13 @@ use lntrn_data::{Doc, from_doc, to_doc, toml};
 use lntrn_props::Reflect;
 pub use system::{ANIMATION_PRESETS, Animations, Input, NOTIFICATION_POSITIONS, Notifications, Power};
 
-/// Wallpapers a theme preset chose, written into `[[monitors]]` on the
-/// next save. A per-output entry wins over the global one.
-#[derive(Clone, Debug, Default)]
-pub struct Wallpapers {
-    pub global: Option<String>,
-    pub per_output: Vec<(String, String)>,
+/// A `[[monitors]]` entry as far as this app goes: its name, and the
+/// wallpaper it shows instead of the global one (empty: the global one).
+/// Everything else in the entry is the compositor's and is left alone.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Monitor {
+    pub name: String,
+    pub wallpaper: String,
 }
 
 pub struct Config {
@@ -31,7 +33,8 @@ pub struct Config {
     pub power: Power,
     pub notifications: Notifications,
     pub animations: Animations,
-    pub pending_wallpapers: Option<Wallpapers>,
+    /// The screens the file lists, with their wallpaper overrides.
+    pub monitors: Vec<Monitor>,
     /// The file's modification time as of the last load or save.
     mtime: Option<SystemTime>,
 }
@@ -82,7 +85,7 @@ fn merge_section(doc: &mut Doc, name: &str, section: Doc) {
 }
 
 impl Config {
-    fn empty() -> Self {
+    pub(crate) fn empty() -> Self {
         Self {
             appearance: Appearance::default(),
             window_manager: WindowManager::default(),
@@ -91,7 +94,7 @@ impl Config {
             power: Power::default(),
             notifications: Notifications::default(),
             animations: Animations::default(),
-            pending_wallpapers: None,
+            monitors: Vec::new(),
             mtime: None,
         }
     }
@@ -136,7 +139,7 @@ impl Config {
             }
         }
         self.sanitize();
-        self.pending_wallpapers = None;
+        self.monitors = read_monitors(&doc);
         self.mtime = mtime_of(&path());
     }
 
@@ -171,9 +174,8 @@ impl Config {
         for (name, section) in self.sections() {
             merge_section(&mut doc, name, to_doc(section));
         }
-        if let Some(w) = self.pending_wallpapers.take() {
-            apply_wallpapers(&mut doc, &w);
-        }
+        retire_keys(&mut doc);
+        write_monitor_wallpapers(&mut doc, &self.monitors);
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
@@ -189,33 +191,47 @@ impl Config {
     }
 }
 
-/// Write a theme's wallpapers into every `[[monitors]]` entry: the
-/// per-output one when the theme names that output, else the global
-/// one, else leave it.
-fn apply_wallpapers(doc: &mut Doc, w: &Wallpapers) {
-    let Some(monitors) = doc.as_map_mut().and_then(|m| m.get_mut("monitors")) else { return };
-    let Doc::List(entries) = monitors else { return };
-    for entry in entries.iter_mut() {
-        let Some(m) = entry.as_map_mut() else { continue };
-        let name = m.get("name").and_then(Doc::as_str).unwrap_or("").to_owned();
-        let chosen = w.per_output.iter().find(|(n, _)| *n == name).map(|(_, p)| p.as_str()).or(w.global.as_deref());
-        if let Some(p) = chosen.filter(|p| !p.is_empty()) {
-            m.insert("wallpaper", Doc::Str(p.to_owned()));
+/// Keys this app used to own and no longer does, taken out of the file
+/// so nothing reads a stale value: `(section, key)`.
+const RETIRED: [(&str, &str); 1] = [("appearance", "active_theme")];
+
+fn retire_keys(doc: &mut Doc) {
+    for (section, key) in RETIRED {
+        if let Some(s) = doc.as_map_mut().and_then(|m| m.get_mut(section)).and_then(Doc::as_map_mut) {
+            s.remove(key);
         }
     }
 }
 
-/// The `[[monitors]]` entries on disk that have a wallpaper: `(name, path)`.
-pub fn monitor_wallpapers() -> Vec<(String, String)> {
-    let doc = read_doc();
+/// The `[[monitors]]` entries of `doc`, in the file's order.
+fn read_monitors(doc: &Doc) -> Vec<Monitor> {
     let Some(list) = doc.get("monitors").and_then(Doc::as_list) else { return Vec::new() };
     list.iter()
         .filter_map(|m| {
             let name = m.get("name")?.as_str()?.to_owned();
-            let wp = m.get("wallpaper")?.as_str()?.to_owned();
-            (!wp.is_empty()).then_some((name, wp))
+            let wallpaper = m.get("wallpaper").and_then(Doc::as_str).unwrap_or("").to_owned();
+            Some(Monitor { name, wallpaper })
         })
         .collect()
+}
+
+/// Put each monitor's wallpaper override into its `[[monitors]]` entry,
+/// touching only the entries where it differs from what the file has. No
+/// override is no key.
+fn write_monitor_wallpapers(doc: &mut Doc, monitors: &[Monitor]) {
+    let Some(Doc::List(entries)) = doc.as_map_mut().and_then(|m| m.get_mut("monitors")) else { return };
+    for entry in entries.iter_mut() {
+        let Some(m) = entry.as_map_mut() else { continue };
+        let Some(ours) = m.get("name").and_then(Doc::as_str).and_then(|n| monitors.iter().find(|x| x.name == n)) else { continue };
+        if m.get("wallpaper").and_then(Doc::as_str).unwrap_or("") == ours.wallpaper {
+            continue;
+        }
+        if ours.wallpaper.is_empty() {
+            m.remove("wallpaper");
+        } else {
+            m.insert("wallpaper", Doc::Str(ours.wallpaper.clone()));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -240,6 +256,29 @@ mod tests {
         assert!(cfg.save_to(&path).is_ok());
         assert!(toml::parse(&std::fs::read_to_string(&path).unwrap()).is_ok());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A monitor's wallpaper override goes into its own entry and comes
+    /// out again, the rest of the entry (and the entries we weren't asked
+    /// about) stays, and the retired theme key leaves the file.
+    #[test]
+    fn monitor_wallpapers_and_retired_keys() {
+        let text = "[appearance]\nactive_theme = \"fox\"\naccent = \"#FFC800\"\n\n[[monitors]]\nname = \"eDP-1\"\nscale = 1.5\n\n[[monitors]]\nname = \"DP-2\"\nwallpaper = \"/old.png\"\nvrr = true\n";
+        let mut doc = toml::parse(text).unwrap();
+        let mut monitors = read_monitors(&doc);
+        assert_eq!(monitors, vec![Monitor { name: "eDP-1".into(), wallpaper: String::new() }, Monitor { name: "DP-2".into(), wallpaper: "/old.png".into() }]);
+        monitors[0].wallpaper = "/new.jpg".into();
+        monitors[1].wallpaper.clear();
+        write_monitor_wallpapers(&mut doc, &monitors);
+        retire_keys(&mut doc);
+        let doc = toml::parse(&toml::write(&doc)).unwrap();
+        assert_eq!(read_monitors(&doc), monitors);
+        let list = doc.get("monitors").and_then(Doc::as_list).unwrap();
+        assert_eq!(list[0].get("scale").and_then(Doc::as_f64), Some(1.5));
+        assert_eq!(list[1].get("vrr").and_then(Doc::as_bool), Some(true));
+        assert!(list[1].get("wallpaper").is_none(), "no override is no key");
+        assert!(doc.path("appearance.active_theme").is_none());
+        assert_eq!(doc.path("appearance.accent").and_then(Doc::as_str), Some("#FFC800"));
     }
 
     /// Load and save on top of a copy of the real desktop config and
@@ -267,6 +306,7 @@ mod tests {
                     for (k, v) in x.iter() {
                         match y.get(k) {
                             Some(w) => walk(format!("{path}.{k}"), v, w, out),
+                            None if RETIRED.iter().any(|(s, key)| path == format!(".{s}") && k == *key) => {}
                             None => out.push(format!("MISSING {path}.{k}")),
                         }
                     }

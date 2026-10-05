@@ -16,8 +16,6 @@ props! {
         pub font_size: f64 = 16.0 => { id: 4, hard: 10.0..=32.0, step: 1.0 },
         /// Global wallpaper; per-monitor entries override it.
         pub wallpaper: String = String::new() => { id: 5 },
-        /// Slug of the theme preset last applied; empty when none.
-        pub active_theme: String = String::new() => { id: 6 },
         /// Window background override, hex; empty for the style's own.
         pub background_color: String = String::new() => { id: 7 },
         /// Five glow positions (top-left, top-right, bottom-left,
