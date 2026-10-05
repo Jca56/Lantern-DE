@@ -3,7 +3,8 @@
 //! inside each of them and writes everything back, so `[lockscreen]`,
 //! `[keybinds]` and anything another tool adds stay exactly as they
 //! were. Of `[[monitors]]` we own one key, each screen's `wallpaper`;
-//! the rest of an entry is the compositor's.
+//! the rest of an entry is the compositor's. Of `[terminal]` we own the
+//! keys on its page; the tabs it has pinned are the terminal's.
 
 mod appearance;
 mod system;
@@ -14,7 +15,7 @@ use std::time::SystemTime;
 pub use appearance::{Appearance, GRADIENT_STOPS, WindowManager, Windows};
 use lntrn_data::{Doc, from_doc, to_doc, toml};
 use lntrn_props::Reflect;
-pub use system::{ANIMATION_PRESETS, Animations, Input, NOTIFICATION_POSITIONS, Notifications, Power};
+pub use system::{ANIMATION_PRESETS, Animations, CURSOR_STYLES, Input, NOTIFICATION_POSITIONS, Notifications, Power, TERMINAL_FONT_SIZES, Terminal};
 
 /// A `[[monitors]]` entry as far as this app goes: its name, and the
 /// wallpaper it shows instead of the global one (empty: the global one).
@@ -33,6 +34,7 @@ pub struct Config {
     pub power: Power,
     pub notifications: Notifications,
     pub animations: Animations,
+    pub terminal: Terminal,
     /// The screens the file lists, with their wallpaper overrides.
     pub monitors: Vec<Monitor>,
     /// The file's modification time as of the last load or save.
@@ -94,12 +96,13 @@ impl Config {
             power: Power::default(),
             notifications: Notifications::default(),
             animations: Animations::default(),
+            terminal: Terminal::default(),
             monitors: Vec::new(),
             mtime: None,
         }
     }
 
-    fn sections(&self) -> [(&'static str, &dyn Reflect); 7] {
+    fn sections(&self) -> [(&'static str, &dyn Reflect); 8] {
         [
             ("appearance", &self.appearance),
             ("window_manager", &self.window_manager),
@@ -108,10 +111,11 @@ impl Config {
             ("power", &self.power),
             ("notifications", &self.notifications),
             ("animations", &self.animations),
+            ("terminal", &self.terminal),
         ]
     }
 
-    fn sections_mut(&mut self) -> [(&'static str, &mut dyn Reflect); 7] {
+    fn sections_mut(&mut self) -> [(&'static str, &mut dyn Reflect); 8] {
         [
             ("appearance", &mut self.appearance),
             ("window_manager", &mut self.window_manager),
@@ -120,6 +124,7 @@ impl Config {
             ("power", &mut self.power),
             ("notifications", &mut self.notifications),
             ("animations", &mut self.animations),
+            ("terminal", &mut self.terminal),
         ]
     }
 
@@ -137,6 +142,13 @@ impl Config {
             if let Some(d) = doc.get(name) {
                 from_doc(section, d);
             }
+        }
+        // A terminal that has not run since it moved in here still has
+        // its settings in its old file.
+        if doc.get("terminal").is_none()
+            && let Some(old) = std::fs::read_to_string(path().with_file_name("terminal.toml")).ok().and_then(|text| toml::parse(&text).ok())
+        {
+            self.terminal = Terminal::from_old_file(&old);
         }
         self.sanitize();
         self.monitors = read_monitors(&doc);
@@ -157,6 +169,7 @@ impl Config {
         self.power.clamp();
         self.notifications.clamp();
         self.animations.clamp();
+        self.terminal.clamp();
     }
 
     /// Merge our sections into the file on disk and write it back
@@ -279,6 +292,37 @@ mod tests {
         assert!(list[1].get("wallpaper").is_none(), "no override is no key");
         assert!(doc.path("appearance.active_theme").is_none());
         assert_eq!(doc.path("appearance.accent").and_then(Doc::as_str), Some("#FFC800"));
+    }
+
+    /// Of `[terminal]` we write the keys on its page and nothing else:
+    /// the tabs the terminal has pinned come through a save untouched.
+    /// Before the terminal has a section there, its old file is what it
+    /// is set to.
+    #[test]
+    fn the_terminals_section_keeps_what_is_the_terminals() {
+        let dir = std::env::temp_dir().join(format!("lntrn-settings-terminal-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("lantern.toml");
+        std::fs::write(&path, "[terminal]\nfont_size = 22.5\ncursor_style = \"beam\"\n\n[[terminal.pinned_tabs]]\nname = \"Notes\"\ncwd = \"/srv/notes\"\n").unwrap();
+        let mut cfg = Config::empty();
+        from_doc(&mut cfg.terminal, read_existing(&path).unwrap().get("terminal").unwrap());
+        assert_eq!((cfg.terminal.font_size, cfg.terminal.cursor_style.as_str(), cfg.terminal.open_bar_hidden), (22.5, "beam", false));
+        cfg.terminal.font_size = 99.0;
+        cfg.terminal.cursor_style = "wobbly".into();
+        cfg.terminal.open_bar_hidden = true;
+        cfg.save_to(&path).unwrap();
+        let doc = read_existing(&path).unwrap();
+        assert_eq!(doc.path("terminal.font_size").and_then(Doc::as_f64), Some(40.0), "kept to what the terminal takes");
+        assert_eq!(doc.path("terminal.cursor_style").and_then(Doc::as_str), Some("block"));
+        assert_eq!(doc.path("terminal.open_bar_hidden").and_then(Doc::as_bool), Some(true));
+        let pinned = doc.path("terminal.pinned_tabs").and_then(Doc::as_list).expect("the pinned tabs are still there");
+        assert_eq!((pinned.len(), pinned[0].get("cwd").and_then(Doc::as_str)), (1, Some("/srv/notes")));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let old = toml::parse("[font]\nsize = 20.5\n\n[general]\ncursor_style = \"underline\"\nopen_chrome_hidden = true\n").unwrap();
+        let t = Terminal::from_old_file(&old);
+        assert_eq!((t.font_size, t.cursor_style.as_str(), t.open_bar_hidden), (20.5, "underline", true));
+        assert_eq!(Terminal::from_old_file(&toml::parse("").unwrap()).font_size, 20.0);
     }
 
     /// Load and save on top of a copy of the real desktop config and

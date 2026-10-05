@@ -82,3 +82,10 @@ pub fn power(d: &mut DrawList, rect: Rect, color: Color, w: f64) {
     d.arc(at(rect, 0.0, 0.08), half(rect) * 0.72, -PI * 0.5 + gap, PI * 1.5 - gap, w, color);
     d.line(at(rect, 0.0, -0.9), at(rect, 0.0, -0.05), w, color);
 }
+
+/// A terminal: a prompt and the line being typed, in a window.
+pub fn terminal(d: &mut DrawList, rect: Rect, color: Color, w: f64) {
+    d.stroke_rect(Rect::new(at(rect, -0.9, -0.72), at(rect, 0.9, 0.72)), w, half(rect) * 0.22, color);
+    d.polyline(&[at(rect, -0.5, -0.28), at(rect, -0.14, 0.02), at(rect, -0.5, 0.32)], w, color, false);
+    d.line(at(rect, 0.08, 0.34), at(rect, 0.5, 0.34), w, color);
+}

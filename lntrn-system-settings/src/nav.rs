@@ -15,10 +15,11 @@ pub enum Page {
     Mouse,
     Notifications,
     Power,
+    Terminal,
 }
 
 impl Page {
-    pub const ALL: [Page; 8] = [Page::Wallpaper, Page::Appearance, Page::Windows, Page::Effects, Page::Animations, Page::Mouse, Page::Notifications, Page::Power];
+    pub const ALL: [Page; 9] = [Page::Wallpaper, Page::Appearance, Page::Windows, Page::Effects, Page::Animations, Page::Mouse, Page::Notifications, Page::Power, Page::Terminal];
 
     /// A stable name for palette entries and actions.
     pub fn id(self) -> &'static str {
@@ -31,6 +32,7 @@ impl Page {
             Page::Mouse => "mouse",
             Page::Notifications => "notifications",
             Page::Power => "power",
+            Page::Terminal => "terminal",
         }
     }
 
@@ -49,6 +51,7 @@ impl Page {
             Page::Mouse => "Mouse",
             Page::Notifications => "Notifications",
             Page::Power => "Power",
+            Page::Terminal => "Terminal",
         }
     }
 
@@ -63,6 +66,7 @@ impl Page {
             Page::Mouse => "Pointer, scrolling, clicking and the cursor.",
             Page::Notifications => "Toasts: where they show, for how long, how loud.",
             Page::Power => "What the machine does when it is left alone.",
+            Page::Terminal => "Text size, the cursor and how its window opens.",
         }
     }
 
@@ -77,6 +81,7 @@ impl Page {
             Page::Mouse => glyphs::mouse,
             Page::Notifications => glyphs::notifications,
             Page::Power => glyphs::power,
+            Page::Terminal => glyphs::terminal,
         }
     }
 }
@@ -91,6 +96,7 @@ pub const GROUPS: &[Group] = &[
     Group { label: "Look", pages: &[Page::Wallpaper, Page::Appearance, Page::Windows, Page::Effects, Page::Animations] },
     Group { label: "Input", pages: &[Page::Mouse] },
     Group { label: "System", pages: &[Page::Notifications, Page::Power] },
+    Group { label: "Apps", pages: &[Page::Terminal] },
 ];
 
 #[cfg(test)]

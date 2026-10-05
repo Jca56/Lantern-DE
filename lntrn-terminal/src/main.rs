@@ -1,52 +1,63 @@
+//! Lantern Terminal: shells in tabs and panes, on Lantern UI 2 with
+//! `lntrn-kit`'s look. The terminal itself (the pty, the screen, the
+//! escape codes, the drawing) is Lantern UI's `lntrn-term`, the same one
+//! Lantern Code has; this is the window around it.
+//!
+//! ## Layout
+//!
+//! - `app.rs` — the [`lntrn_ui::Host`]: one editor, a terminal, in the
+//!   shell's own panes and tabs. A tab's terminal lives in the tab.
+//! - `ops.rs` — what happens once a frame is built: panes and tabs
+//!   changed, every terminal's output taken in, tabs named and closed.
+//! - `menu.rs` — the right-click menu, the title bar's menus, the
+//!   palette's commands, and what they all do.
+//! - `settings.rs` — the `[terminal]` section of `lantern.toml`.
+//! - `look.rs` — the colours.
+
 mod app;
-mod config;
-mod dnd;
-mod events;
-mod git;
-mod git_app;
-mod git_sidebar;
-mod input;
-mod night_sky;
-mod render;
-mod render_app;
-mod sidebar;
-mod tab_bar;
-mod tabs;
-mod theme;
-mod ui_chrome;
+mod look;
+mod menu;
+mod ops;
+mod settings;
+#[cfg(test)]
+mod smoke;
 
-// The embeddable core is compiled once, in the lib, and shared with CC.
-use lntrn_terminal::{clipboard, pty, terminal};
+use std::ffi::OsString;
 
-use std::path::PathBuf;
+use lntrn_app::{AppConfig, run};
+use lntrn_ui::Shell;
 
-use winit::event_loop::EventLoop;
-
-#[derive(Debug)]
-pub enum UserEvent {
-    PtyOutput,
-    GitUpdate,
-    FilesDropped(Vec<PathBuf>),
-}
+use crate::app::{APP_ID, App, Editor};
 
 /// `lntrn-terminal -e <program> [args...]`: run this in the window's own
-/// tab instead of a shell. Everything after `-e` is the command, taken as
-/// it is (no shell reads it). The folder to run it in is the working
-/// directory the terminal was started with.
-fn startup_command() -> Option<Vec<std::ffi::OsString>> {
+/// tab instead of a shell. Everything after `-e` is the program's.
+fn command() -> Option<Vec<OsString>> {
     let mut args = std::env::args_os().skip(1);
     args.find(|arg| arg == "-e")?;
-    let command: Vec<std::ffi::OsString> = args.collect();
+    let command: Vec<OsString> = args.collect();
     (!command.is_empty()).then_some(command)
 }
 
 fn main() {
-    let event_loop = EventLoop::<UserEvent>::with_user_event()
-        .build()
-        .expect("Failed to create event loop");
-
-    let proxy = event_loop.create_proxy();
-    let mut app = app::App::new(proxy, startup_command());
-
-    event_loop.run_app(&mut app).expect("Event loop error");
+    lntrn_kit::startup::log_panics(APP_ID);
+    let mut app = App::new();
+    let mut shell = Shell::new(Editor::Terminal);
+    app.open_first(&mut shell, command());
+    let desktop = app.follow.desktop().clone();
+    let config = AppConfig {
+        title: "Terminal".into(),
+        app_id: APP_ID.into(),
+        size: (1200.0, 760.0),
+        min_size: (480.0, 300.0),
+        maximized: false,
+        title_bar: !app.bar_hidden,
+        sans: desktop.font,
+        opacity: desktop.opacity,
+        transparent: true,
+        // The tabs are this run's shells: nothing of them to bring back.
+        persist: false,
+        ..AppConfig::default()
+    };
+    run(config, app, shell);
+    std::process::exit(0);
 }

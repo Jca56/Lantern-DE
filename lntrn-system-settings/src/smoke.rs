@@ -14,7 +14,7 @@ use crate::config::Config;
 use crate::kit;
 use crate::look;
 use crate::nav::Page;
-use crate::pages::{effects, notifications};
+use crate::pages::{effects, notifications, terminal};
 
 /// Point the desktop's folders at a scratch tree holding two wallpapers
 /// (and a film, which is not one), so nothing here reads or writes the
@@ -260,4 +260,38 @@ fn the_glow_dots_and_the_corner_picker_set_what_they_show() {
         notifications::draw(&mut cfg, ui);
     });
     assert_eq!(cfg.notifications.position, "bottom-left");
+}
+
+#[test]
+fn the_terminal_page_sets_its_size_cursor_and_bar() {
+    let mut cfg = Config::empty();
+    let mut h = kit_at(1000.0, 1000.0);
+    assert_eq!((cfg.terminal.font_size, cfg.terminal.cursor_style.as_str(), cfg.terminal.open_bar_hidden), (20.0, "block", false));
+    clipped();
+    h.settle(4, |ui| {
+        terminal::draw(&mut cfg, ui);
+    });
+    // The size drags along its whole range, by halves.
+    let track = h.rect_of(WidgetId::ROOT.with("text").with("Text size")).unwrap();
+    let y = track.center().y;
+    h.drag(Vec2::new(track.center().x, y), Vec2::new(track.max.x + 40.0, y), 4, |ui| {
+        terminal::draw(&mut cfg, ui);
+    });
+    assert_eq!(cfg.terminal.font_size, 40.0);
+    h.key(Key::ArrowLeft);
+    h.settle(4, |ui| {
+        terminal::draw(&mut cfg, ui);
+    });
+    assert_eq!(cfg.terminal.font_size, 39.5);
+    // The biggest text still fits its sample line's well, and nothing on
+    // the page is cut short.
+    h.click_on(WidgetId::ROOT.with("text").with("Cursor").with_index(2), |ui| {
+        terminal::draw(&mut cfg, ui);
+    });
+    assert_eq!(cfg.terminal.cursor_style, "beam");
+    h.click_on(WidgetId::ROOT.with("window").with("Open with the title bar hidden"), |ui| {
+        terminal::draw(&mut cfg, ui);
+    });
+    assert!(cfg.terminal.open_bar_hidden);
+    assert!(clipped().is_empty());
 }

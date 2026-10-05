@@ -1,4 +1,5 @@
-//! `[input]`, `[power]`, `[notifications]` and `[animations]`. Choices
+//! `[input]`, `[power]`, `[notifications]`, `[animations]` and what we
+//! show of `[terminal]`. Choices
 //! are the strings the compositor and the notification daemon read, not
 //! enums, so the file keeps the words they already know.
 
@@ -129,5 +130,47 @@ impl Animations {
         if !ANIMATION_PRESETS.contains(&self.preset.as_str()) {
             self.preset = "cinematic".to_owned();
         }
+    }
+}
+
+props! {
+    /// The terminal, as far as this app goes. The rest of `[terminal]`
+    /// (the tabs it has pinned) is the terminal's own and is left alone.
+    pub struct Terminal {
+        /// Text size, logical pixels.
+        pub font_size: f64 = 20.0 => { id: 1, hard: 8.0..=40.0, step: 0.5 },
+        /// `block`, `underline` or `beam`: the cursor until a program
+        /// asks for another.
+        pub cursor_style: String = "block".to_owned() => { id: 2 },
+        /// Open with the title bar and the tab strips hidden.
+        pub open_bar_hidden: bool = false => { id: 3 },
+    }
+}
+
+pub const TERMINAL_FONT_SIZES: (f64, f64) = (8.0, 40.0);
+pub const CURSOR_STYLES: [&str; 3] = ["block", "underline", "beam"];
+
+impl Terminal {
+    pub fn clamp(&mut self) {
+        self.font_size = self.font_size.clamp(TERMINAL_FONT_SIZES.0, TERMINAL_FONT_SIZES.1);
+        if !CURSOR_STYLES.contains(&self.cursor_style.as_str()) {
+            self.cursor_style = "block".to_owned();
+        }
+    }
+
+    /// What the terminal's old file of its own (`terminal.toml`) said:
+    /// what it is set to until it has a section in `lantern.toml`, which
+    /// the terminal writes the first time it runs. Without this, saving
+    /// here before then would put the defaults in its way.
+    pub fn from_old_file(doc: &lntrn_data::Doc) -> Terminal {
+        use lntrn_data::Doc;
+        let d = Terminal::default();
+        let mut t = Terminal {
+            font_size: doc.path("font.size").and_then(Doc::as_f64).unwrap_or(d.font_size),
+            cursor_style: doc.path("general.cursor_style").and_then(Doc::as_str).map_or(d.cursor_style, str::to_owned),
+            open_bar_hidden: doc.path("general.open_chrome_hidden").and_then(Doc::as_bool).unwrap_or(false),
+        };
+        t.clamp();
+        t
     }
 }

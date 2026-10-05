@@ -8,6 +8,7 @@ pub mod effects;
 pub mod mouse;
 pub mod notifications;
 pub mod power;
+pub mod terminal;
 pub mod wallpaper;
 pub mod windows;
 
@@ -30,6 +31,7 @@ pub fn draw(app: &mut App, ui: &mut Ui, cx: &mut AreaCx<()>) -> bool {
             Page::Mouse => mouse::draw(&mut app.config, &mut app.mouse, ui),
             Page::Notifications => notifications::draw(&mut app.config, ui),
             Page::Power => power::draw(&mut app.config, ui),
+            Page::Terminal => terminal::draw(&mut app.config, ui),
         };
     });
     changed
