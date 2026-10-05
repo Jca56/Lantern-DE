@@ -67,7 +67,7 @@ pub struct Config {
     /// expanded panels close immediately.
     pub collapse_before_close: bool,
     /// Unified text size (logical px) used by every Command Center
-    /// view — terminal cells, Files rows, search input, etc. No UI
+    /// view — Files rows, search input, etc. No UI
     /// slider anymore; fixed at the 22pt default unless hand-edited.
     pub text_size: f32,
     /// View-switch slide duration in seconds.

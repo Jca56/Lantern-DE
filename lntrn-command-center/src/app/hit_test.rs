@@ -4,7 +4,7 @@
 //! module stays close to the 700-line guideline.
 
 use crate::app::{
-    AppState, HitTarget, MenuAction, PanelRect, PanelView, Selection, WindowAction,
+    AppState, HitTarget, MenuAction, PanelRect, Selection, WindowAction,
     WindowActionKind,
 };
 use crate::launcher::context_menu::{ContextMenu, MenuItem};
@@ -408,15 +408,6 @@ impl AppState {
                 });
             }
             MenuAction::Launch => self.launch_app(&menu.app_id, "context menu"),
-            MenuAction::TerminalCopy => {
-                let _ = self.terminal.copy_selection();
-            }
-            MenuAction::TerminalPaste => {
-                let _ = self.terminal.paste_from_clipboard();
-            }
-            MenuAction::TerminalClearSelection => {
-                self.terminal.clear_selection();
-            }
             MenuAction::FilesOpen => {
                 let path = std::path::PathBuf::from(&menu.app_id);
                 if path.is_dir() {
@@ -437,8 +428,8 @@ impl AppState {
                         .to_path_buf()
                 };
                 let s = dir.to_string_lossy().replace('\'', "'\\''");
-                self.pending_terminal_input = Some(format!("cd '{}'\n", s));
-                self.set_view(PanelView::Terminal);
+                spawn_detached(&format!("cd '{}' && exec lntrn-terminal", s));
+                self.close();
             }
             MenuAction::FilesRevealInFM => {
                 let exec = format!(
@@ -449,7 +440,7 @@ impl AppState {
                 self.close();
             }
             MenuAction::FilesCopyPath => {
-                if let Some(clip) = lntrn_terminal::clipboard::WaylandClipboard::new() {
+                if let Some(clip) = crate::wl_clipboard::WaylandClipboard::new() {
                     clip.set_text(&menu.app_id);
                 }
             }

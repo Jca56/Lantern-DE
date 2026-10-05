@@ -20,15 +20,9 @@ pub enum MenuAction {
     Launch,
     /// Close the foreign-toplevel window stored in `ContextMenu.window_title`.
     WindowClose,
-    /// Terminal: copy current selection to the Wayland clipboard.
-    TerminalCopy,
-    /// Terminal: paste clipboard contents into the PTY.
-    TerminalPaste,
-    /// Terminal: clear the visible selection highlight.
-    TerminalClearSelection,
     /// Files: open the targeted path (folder = navigate; file = xdg-open).
     FilesOpen,
-    /// Files: switch to Terminal view and `cd` to the targeted path.
+    /// Files: open a terminal window in the targeted folder.
     FilesOpenInTerminal,
     /// Files: launch `lntrn-file-manager` at the targeted path.
     FilesRevealInFM,

@@ -22,7 +22,6 @@ pub(super) fn render_frame(
     viewport: &Option<wp_viewport::WpViewport>,
     painter: &mut Painter,
     text: &mut TextRenderer,
-    mono_text: &mut TextRenderer,
     thumbs: &mut crate::thumbs::CcThumbsClient,
     icon_cache: &mut IconCache,
     tex_pass: &TexturePass,
@@ -48,7 +47,6 @@ pub(super) fn render_frame(
     // after the close animation finishes.
     painter.clear();
     text.clear();
-    mono_text.clear();
 
     // Floating sticky notes render on layer 0 — beneath everything.
     // The panel + outer chrome go on layer 1 (modals on 2), so the
@@ -92,7 +90,6 @@ pub(super) fn render_frame(
     }
     painter.set_layer(1);
     text.set_layer(1);
-    mono_text.set_layer(1);
 
     // Active workspace for the output WE are on (multi-monitor: each
     // output has its own). Resolve the connector name from wl_output
@@ -105,7 +102,6 @@ pub(super) fn render_frame(
         crate::render::draw_content(
             painter,
             text,
-            mono_text,
             app,
             p,
             phys_w,
@@ -224,10 +220,7 @@ pub(super) fn render_frame(
             // previously-queued text. Layer 0 is sticky notes; layer 1
             // is the panel + content; layer 2+ is modal overlays. See
             // lntrn-render/TEXT_OCCLUSION_FIX.md.
-            let layers = painter
-                .layer_count()
-                .max(text.layer_count())
-                .max(mono_text.layer_count());
+            let layers = painter.layer_count().max(text.layer_count());
 
             // Layer 0: sticky notes (this pass also clears the frame).
             painter.render_layer(
@@ -252,7 +245,6 @@ pub(super) fn render_frame(
                 tex_pass.render_pass(&gpu, frame.encoder_mut(), &view, &tex_draws, None);
             }
             text.render_layer(1, &gpu, frame.encoder_mut(), &view);
-            mono_text.render_layer(1, &gpu, frame.encoder_mut(), &view);
 
             // Overlay layers (modals).
             if layers > 2 {
@@ -262,7 +254,6 @@ pub(super) fn render_frame(
                 for li in 2..layers {
                     painter.render_layer(li, &gpu, frame.encoder_mut(), &view, None);
                     text.render_layer(li, &gpu, frame.encoder_mut(), &view);
-                    mono_text.render_layer(li, &gpu, frame.encoder_mut(), &view);
                 }
             }
 

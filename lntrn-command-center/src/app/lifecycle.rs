@@ -131,13 +131,6 @@ impl AppState {
             self.exit_toolbar_edit();
             return;
         }
-        // In the Terminal view, Esc is a normal byte the shell/child
-        // wants to receive (vim mode switch, readline cancel, etc.).
-        // Forward it instead of dismissing the panel.
-        if self.panel_view == PanelView::Terminal && self.terminal.is_spawned() {
-            self.terminal.write(b"\x1b");
-            return;
-        }
         if self.panel_view == PanelView::Files && self.files.filter_active {
             self.files.deactivate_filter();
             return;

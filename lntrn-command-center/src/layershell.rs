@@ -52,7 +52,7 @@ mod right_click;
 mod util;
 mod view_click;
 use click::handle_clicks;
-use drag::{handle_drag, handle_terminal_selection};
+use drag::handle_drag;
 use hover::track_hovers;
 use input::{apply_key_autorepeat, handle_keypress, handle_scroll};
 use render_tick::render_frame;
@@ -74,8 +74,8 @@ const KEY_ESC: u32 = 1;
 /// the shift state to the search input's char mapper.
 const KEY_LEFTSHIFT: u32 = 42;
 const KEY_RIGHTSHIFT: u32 = 54;
-/// Left / Right Ctrl evdev keycodes. We track Ctrl so the terminal
-/// view can build Ctrl-letter chord bytes (Ctrl-C → 0x03, etc.).
+/// Left / Right Ctrl evdev keycodes. We track Ctrl for the chord
+/// shortcuts (Ctrl+arrows, the notes editor's Ctrl-A/C/V/X).
 const KEY_LEFTCTRL: u32 = 29;
 const KEY_RIGHTCTRL: u32 = 97;
 /// Linux input button codes.
@@ -286,8 +286,8 @@ const IDLE_TICK: Duration = Duration::from_millis(50);
 /// Poll timeout while the panel is hidden. The poll also watches the
 /// IPC fd, so a Super-tap wakes us instantly regardless of this value;
 /// it only bounds how quickly we notice worker-side wake-ups (an
-/// incoming Bluetooth file / pair request) and pump the hidden
-/// terminal's PTY. 4 Hz instead of the old 20 Hz sleep loop.
+/// incoming Bluetooth file / pair request). 4 Hz instead of the old
+/// 20 Hz sleep loop.
 const HIDDEN_TICK: Duration = Duration::from_millis(250);
 
 /// How long we wait for the compositor's frame callback before treating
@@ -495,11 +495,6 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         .map_err(|e| anyhow!("GPU init failed: {e}"))?;
     let mut painter = Painter::new(&gpu);
     let mut text = TextRenderer::new(&gpu);
-    // Second, monospace-only text renderer used exclusively for the
-    // terminal grid. Keeps the rest of the panel on the sans family
-    // (where proportional metrics look right) while the terminal gets
-    // proper monospace alignment.
-    let mut mono_text = TextRenderer::new_monospace(&gpu);
     let tex_pass = TexturePass::new(&gpu);
     let mut icon_cache = IconCache::new(ICON_PHYS_SIZE);
 
@@ -650,12 +645,6 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                 continue;
             }
 
-            // Keep the terminal grid live while the panel is hidden.
-            // The PTY reader thread is always pulling bytes into its
-            // channel — pumping them through the VTE here means
-            // long-running commands (e.g. `yay -Syu`) stay current and
-            // we don't flood the grid on next open.
-            app.terminal.pump();
             continue;
         }
 
@@ -746,40 +735,6 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
             });
             wl.input_dirty = true;
         }
-        // PTY housekeeping for the Terminal view. We spawn lazily on
-        // first activation and resize whenever the body geometry
-        // changes so the child shell reflows correctly.
-        if app.panel_view == crate::app::PanelView::Terminal {
-            let scale_f = wl.fractional_scale() as f32;
-            let phys_w = wl.phys_width().max(1);
-            let panel = PanelRect::compute_with_dims(
-                phys_w,
-                scale_f,
-                app.desired_panel_w_logical(),
-                app.desired_panel_h_logical(),
-            );
-            let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
-            let top_y = crate::controls::content_top_y(panel_rect, scale_f);
-            // Single source of truth for cell metrics + grid size so the
-            // PTY's wrap column matches what we actually paint.
-            let (_, _, _, cols, rows) =
-                crate::terminal::body_metrics(panel_rect, top_y, scale_f, app.config.text_size);
-            app.terminal.ensure_spawned(cols.max(20), rows.max(5));
-        }
-        // Drain any pending PTY output into the grid so new bytes
-        // appear in the next render (and request one — a scrolling
-        // build log shouldn't wait for the 500 ms fallback).
-        if app.terminal.pump() {
-            wl.input_dirty = true;
-        }
-
-        // Flush any queued PTY input (e.g. from Files "Open in Terminal
-        // tab"). Only meaningful once the PTY has been spawned.
-        if app.terminal.is_spawned() {
-            if let Some(s) = app.pending_terminal_input.take() {
-                app.terminal.write(s.as_bytes());
-            }
-        }
         // Sysmon is the one control we *want* to be completely silent
         // when the panel is closed — pass visibility through so it can
         // drop its polling state instead of running on a timer.
@@ -813,7 +768,7 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
 
         // Drain accumulated scroll delta into whichever view is
         // currently scrolling (Wifi list, emoji grid, launcher results,
-        // notes editor, terminal scrollback, …).
+        // notes editor, …).
         handle_scroll(&mut wl, &mut app, &mut text);
 
         // Dispatch the next pending keypress.
@@ -829,9 +784,6 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         // synthesize fresh pending-key events at `REPEAT_INTERVAL`.
         apply_key_autorepeat(&mut wl);
         handle_keypress(&mut wl, &mut app, &mut thumbs, &mut text);
-
-        // Terminal body selection (press → drag → release).
-        handle_terminal_selection(&mut wl, &mut app);
 
         // Files-view click: toolbar (controls row) + body (sidebar + list).
         if app.panel_view == crate::app::PanelView::Files
@@ -1012,7 +964,6 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
             &viewport,
             &mut painter,
             &mut text,
-            &mut mono_text,
             &mut thumbs,
             &mut icon_cache,
             &tex_pass,

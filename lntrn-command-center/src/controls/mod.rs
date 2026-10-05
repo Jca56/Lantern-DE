@@ -27,7 +27,6 @@ pub mod gpu;
 pub mod network;
 pub mod sysmon;
 pub mod temp;
-pub mod terminal_header;
 pub mod tile;
 pub mod toolbar;
 pub mod toolbar_edit;
@@ -88,14 +87,10 @@ pub enum TileId {
     /// Chevron button that toggles the panel between full and
     /// just-the-row "mini" modes. Special-cased in click handling.
     Collapse,
-    /// "Clear" button (Terminal view header). Reserved — pattern-matched
-    /// for future wiring but not currently constructed anywhere.
-    #[allow(dead_code)]
-    TerminalClear,
 }
 
 /// Every widget the user can arrange in the toolbar (everything except
-/// the chrome: the collapse chevron + terminal-clear button).
+/// the chrome: the collapse chevron).
 pub fn arrangeable_widgets() -> &'static [TileId] {
     &[
         TileId::Workspace,
@@ -142,7 +137,6 @@ impl TileId {
             TileId::Disk => "disk",
             TileId::Gaming => "gaming",
             TileId::Collapse => "collapse",
-            TileId::TerminalClear => "terminal_clear",
         }
     }
 
@@ -182,7 +176,6 @@ impl TileId {
             TileId::Disk => "Disk",
             TileId::Gaming => "Gaming",
             TileId::Collapse => "Collapse",
-            TileId::TerminalClear => "Clear",
         }
     }
 
@@ -203,7 +196,6 @@ impl TileId {
             TileId::Disk => disk::TILE_WIDTH,
             TileId::Gaming => gaming::TILE_WIDTH,
             TileId::Collapse => collapse::TILE_WIDTH,
-            TileId::TerminalClear => terminal_header::TILE_WIDTH,
         }
     }
 }
@@ -262,7 +254,7 @@ impl Controls {
             // Always present — when the compositor socket is down the tile
             // renders dimmed rather than vanishing.
             TileId::Gaming => true,
-            TileId::Collapse | TileId::TerminalClear => true,
+            TileId::Collapse => true,
         }
     }
 
@@ -293,8 +285,8 @@ impl Controls {
 
     /// Ordered list of widgets currently rendered in the row, paired with
     /// their layout slot (zone + width). In the Default view this comes
-    /// from the user's `toolbar` layout (presence-filtered); Terminal and
-    /// Files own their own row, so only the collapse chevron rides along.
+    /// from the user's `toolbar` layout (presence-filtered); Files owns
+    /// its own row, so only the collapse chevron rides along.
     fn tile_slots(&self, panel_view: crate::app::PanelView) -> Vec<(TileId, tile::Slot)> {
         let mut out: Vec<(TileId, tile::Slot)> = Vec::new();
 
@@ -456,7 +448,7 @@ pub fn draw_row(
         // itself recolors, matching the waffle-button pattern.
         let is_hovered = hovered_tile == Some(*id);
         // Every navigable tile lights up when its expanded view is open.
-        // Collapse / TerminalClear never become the selected mode, so a
+        // Collapse never becomes the selected mode, so a
         // simple equality check covers them by default.
         let is_active = selected_tile == Some(*id);
         let lit = is_hovered || is_active;
@@ -620,7 +612,6 @@ pub fn draw_row(
                 lit,
             ),
             TileId::Collapse => {} // drawn separately so we can pass `collapsed` state
-            TileId::TerminalClear => terminal_header::draw_inline(painter, text, layout, ws, alpha),
         }
     }
 
@@ -750,6 +741,6 @@ pub fn draw_view(
         ),
         // Tiles that don't open an expanded view — their clicks are
         // intercepted in the input handler before reaching here.
-        TileId::Workspace | TileId::Gaming | TileId::Collapse | TileId::TerminalClear => top_y,
+        TileId::Workspace | TileId::Gaming | TileId::Collapse => top_y,
     };
 }

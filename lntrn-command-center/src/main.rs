@@ -27,12 +27,12 @@ mod power;
 mod render;
 mod search;
 mod settings;
-mod terminal;
 mod thumbs;
 mod toplevel;
 mod tray;
 mod view_arrows;
 mod view_indicator;
+mod wl_clipboard;
 mod workspace_ipc;
 
 fn main() {

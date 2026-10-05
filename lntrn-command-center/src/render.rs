@@ -11,7 +11,7 @@ use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
 use crate::app::{AppState, PanelRect, ANIM_SCALE_START, PANEL_CORNER_RADIUS};
 
-/// Panel surface color — Fox Dark `bg` from lntrn-terminal/src/theme.rs:29
+/// Panel surface color — the terminal's Fox Dark `bg`
 /// (#181818, rgb 24,24,24). Keeping the whole DE visually consistent.
 ///
 /// IMPORTANT: the wgpu surface format is `Bgra8UnormSrgb`, so the GPU
@@ -182,7 +182,6 @@ pub fn draw_panel(
 pub fn draw_content(
     painter: &mut Painter,
     text: &mut TextRenderer,
-    mono_text: &mut TextRenderer,
     state: &mut AppState,
     panel: &PanelDraw,
     surface_w: u32,
@@ -194,7 +193,6 @@ pub fn draw_content(
     let icons = draw_content_body(
         painter,
         text,
-        mono_text,
         state,
         panel,
         surface_w,
@@ -231,7 +229,6 @@ pub fn draw_content(
 fn draw_content_body(
     painter: &mut Painter,
     text: &mut TextRenderer,
-    mono_text: &mut TextRenderer,
     state: &mut AppState,
     panel: &PanelDraw,
     surface_w: u32,
@@ -265,29 +262,25 @@ fn draw_content_body(
             panel.rect.h,
         )
     };
-    let push_panel_clip =
-        |painter: &mut Painter, text: &mut TextRenderer, mono_text: &mut TextRenderer| {
-            painter.push_clip(original_panel_rect);
-            let r = [
-                original_panel_rect.x,
-                original_panel_rect.y,
-                original_panel_rect.w,
-                original_panel_rect.h,
-            ];
-            text.push_clip(r);
-            mono_text.push_clip(r);
-        };
-    let pop_panel_clip =
-        |painter: &mut Painter, text: &mut TextRenderer, mono_text: &mut TextRenderer| {
-            painter.pop_clip();
-            text.pop_clip();
-            mono_text.pop_clip();
-        };
+    let push_panel_clip = |painter: &mut Painter, text: &mut TextRenderer| {
+        painter.push_clip(original_panel_rect);
+        let r = [
+            original_panel_rect.x,
+            original_panel_rect.y,
+            original_panel_rect.w,
+            original_panel_rect.h,
+        ];
+        text.push_clip(r);
+    };
+    let pop_panel_clip = |painter: &mut Painter, text: &mut TextRenderer| {
+        painter.pop_clip();
+        text.pop_clip();
+    };
 
     // 1. Controls row + underline. When a slide is active each view
     //    is drawn in its own shifted rect; they glide past one another.
     if sliding {
-        push_panel_clip(painter, text, mono_text);
+        push_panel_clip(painter, text);
     }
     for (view, off_frac) in &view_pairs {
         crate::controls::draw_row(
@@ -307,7 +300,7 @@ fn draw_content_body(
         );
     }
     if sliding {
-        pop_panel_clip(painter, text, mono_text);
+        pop_panel_clip(painter, text);
     }
 
     // Visibility of "Default-view chrome" (power column, mini-dock,
@@ -356,7 +349,7 @@ fn draw_content_body(
         // both through the bottom-edge offset below so expanding the
         // panel sends the dock out the same way closing does. The view
         // slide deliberately does NOT factor in — the collapsed bar
-        // keeps its dock in every view (Terminal, Files, …).
+        // keeps its dock in every view (Default, Files).
         let slide = state.config.slide_anim;
         let collapse_vis = collapse_p.clamp(0.0, 1.0);
         let dock_alpha_mult = if any_overlay_open {
@@ -582,43 +575,13 @@ fn draw_content_body(
         state.view_arrow_hover,
     );
 
-    // 1f + 1c. Per-view chevron and (Terminal-only) cursor-row mirror.
+    // 1f + 1c. Per-view toolbar.
     // Same iteration as the tile row so they slide with it.
     if sliding {
-        push_panel_clip(painter, text, mono_text);
+        push_panel_clip(painter, text);
     }
     for (view, off_frac) in &view_pairs {
         let r = shift(*off_frac);
-        // Terminal input strip.
-        if *view == crate::app::PanelView::Terminal {
-            if let Some(chev) = state.controls.tile_layout(
-                crate::controls::TileId::Collapse,
-                r,
-                panel.scale_factor,
-                *view,
-            ) {
-                let gap = 12.0 * panel.scale_factor;
-                let pad = crate::controls::ROW_HORIZONTAL_PAD * panel.scale_factor;
-                let x = r.x + pad;
-                let right_edge = chev.x - gap;
-                let w = (right_edge - x).max(0.0);
-                let h = (44.0 * panel.scale_factor).min(chev.h - 4.0 * panel.scale_factor);
-                let y = chev.y + (chev.h - h) / 2.0;
-                if w > 0.0 {
-                    crate::terminal::draw_input_strip(
-                        painter,
-                        text,
-                        mono_text,
-                        &state.terminal,
-                        lntrn_render::Rect::new(x, y, w, h),
-                        panel.scale_factor,
-                        panel.alpha,
-                        surface_w,
-                        surface_h,
-                    );
-                }
-            }
-        }
         // Files toolbar — back/home, breadcrumb/search pathbar, magnifier, eye.
         // Lives in the top-most controls row so it's reachable even while collapsed.
         if *view == crate::app::PanelView::Files {
@@ -669,7 +632,7 @@ fn draw_content_body(
         }
     }
     if sliding {
-        pop_panel_clip(painter, text, mono_text);
+        pop_panel_clip(painter, text);
     }
 
     // 2. Body of the panel, based on mode. Faded out during collapse
@@ -776,7 +739,7 @@ fn draw_content_body(
     }
 
     if sliding {
-        push_panel_clip(painter, text, mono_text);
+        push_panel_clip(painter, text);
     }
 
     // Per-view body draw. When sliding, this loop runs twice: once for
@@ -873,21 +836,6 @@ fn draw_content_body(
                     );
                 }
             }
-        } else if *view == crate::app::PanelView::Terminal {
-            let top_y = crate::controls::content_top_y(r, panel.scale_factor);
-            crate::terminal::draw(
-                painter,
-                text,
-                mono_text,
-                &state.terminal,
-                r,
-                top_y,
-                panel.scale_factor,
-                alpha,
-                surface_w,
-                surface_h,
-                state.config.text_size,
-            );
         } else if *view == crate::app::PanelView::Files {
             let top_y = crate::controls::content_top_y(r, panel.scale_factor);
             crate::files::draw(
@@ -904,12 +852,12 @@ fn draw_content_body(
                 surface_h,
             );
         }
-        // Default + Terminal + Files each have their own body renderers
+        // Default and Files each have their own body renderers
         // above. No catch-all branch remains.
     }
 
     if sliding {
-        pop_panel_clip(painter, text, mono_text);
+        pop_panel_clip(painter, text);
         clamp_body_icon_clips(&mut icons, icons_before_body, original_panel_rect);
     }
 

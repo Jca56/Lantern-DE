@@ -245,9 +245,6 @@ pub struct AppState {
     /// True when the cursor is hovering the waffle (all-apps) button
     /// in the search row.
     pub waffle_hover: bool,
-    /// Mini-terminal state — input buffer, running child output, etc.
-    /// Only meaningful while `panel_view == PanelView::Terminal`.
-    pub terminal: crate::terminal::TerminalState,
     /// Files-tab state (cwd, entries, scroll, hover).
     pub files: crate::files::FilesState,
     /// Emojis overlay state (filter, category, scroll, hover).
@@ -256,15 +253,11 @@ pub struct AppState {
     /// whole CC so the background thread stays alive between copy ops —
     /// otherwise a per-click `WaylandClipboard::new()` lets the thread
     /// die before the compositor's eager-capture finishes reading.
-    pub clipboard_handle: Option<lntrn_terminal::clipboard::WaylandClipboard>,
+    pub clipboard_handle: Option<crate::wl_clipboard::WaylandClipboard>,
     /// Clipboard History overlay state (entries, filter, hover, scroll).
     pub clipboard: crate::clipboard::ClipboardState,
     /// Quick Notes overlay state (notes, filter, editor focus, selection).
     pub notes: crate::notes::NotesState,
-    /// Bytes queued to be written to the terminal PTY on the next loop
-    /// iteration. Used by Files "Open in Terminal tab" to defer the
-    /// `cd` until the PTY has been spawned.
-    pub pending_terminal_input: Option<String>,
     /// When `Some`, a confirm modal is up for this power action. Cancel
     /// or click-outside-card clears it; Confirm runs the action and
     /// closes the panel.
@@ -368,17 +361,15 @@ impl AppState {
             view_anim_dir: 1,
             hovered_control_tile: None,
             waffle_hover: false,
-            terminal: crate::terminal::TerminalState::new(),
             files: crate::files::FilesState::new(),
             emojis: crate::emojis::EmojisState::default(),
-            clipboard_handle: lntrn_terminal::clipboard::WaylandClipboard::new(),
+            clipboard_handle: crate::wl_clipboard::WaylandClipboard::new(),
             clipboard: crate::clipboard::ClipboardState::default(),
             notes: {
                 let mut s = crate::notes::NotesState::default();
                 s.load_from_disk();
                 s
             },
-            pending_terminal_input: None,
             workspace_ipc: crate::workspace_ipc::WorkspaceIpc::new(),
             media: crate::media::Media::new(),
             tray: crate::tray::Tray::new(),
@@ -586,12 +577,11 @@ pub enum HitTarget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanelView {
     Default,
-    Terminal,
     Files,
 }
 
 impl PanelView {
-    pub const ALL: [PanelView; 3] = [PanelView::Default, PanelView::Terminal, PanelView::Files];
+    pub const ALL: [PanelView; 2] = [PanelView::Default, PanelView::Files];
     pub fn next(self) -> Self {
         let idx = Self::ALL.iter().position(|v| *v == self).unwrap_or(0);
         Self::ALL[(idx + 1) % Self::ALL.len()]
@@ -604,7 +594,6 @@ impl PanelView {
     pub fn title(self) -> &'static str {
         match self {
             PanelView::Default => "Command Center",
-            PanelView::Terminal => "Terminal",
             PanelView::Files => "Files",
         }
     }

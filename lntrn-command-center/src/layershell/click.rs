@@ -829,9 +829,6 @@ pub(super) fn handle_clicks(
                     tracing::debug!("collapse chevron click → toggle");
                     app.toggle_collapsed();
                 }
-                crate::controls::TileId::TerminalClear => {
-                    app.terminal.clear();
-                }
                 crate::controls::TileId::Workspace => {
                     // Workspace number is a passive indicator — no view.
                 }

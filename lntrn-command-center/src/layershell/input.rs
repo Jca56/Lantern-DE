@@ -82,14 +82,6 @@ pub(super) fn handle_scroll(
             let max = crate::notes::list_max_scroll(visible.len(), list.h, scale_f) / scale_f;
             app.notes.list_scroll = (app.notes.list_scroll + dy).clamp(0.0, max);
         }
-    } else if app.panel_view == crate::app::PanelView::Terminal {
-        // libinput reports negative dy on wheel-up (toward older
-        // history) and positive on wheel-down. Convert to lines via a
-        // soft divisor so one notch ≈ 3 lines.
-        let lines = (-dy / 16.0).round() as i32;
-        if lines != 0 {
-            app.terminal.scroll_by(lines);
-        }
     } else if app.panel_view == crate::app::PanelView::Files {
         let top_y = crate::controls::content_top_y(panel_rect, scale_f);
         let max =
@@ -140,11 +132,10 @@ pub(super) fn apply_key_autorepeat(wl: &mut WlState) {
 ///   3. Notes overlay — supports text editing + Ctrl-A/V/C/X chord keys.
 ///   4. Clipboard overlay — filter input + Enter copies first hit.
 ///   5. Emojis overlay — filter input + Enter copies first hit.
-///   6. Terminal view — Ctrl-Shift-{C,V} copy/paste, else raw PTY input.
-///   7. SysMon / Temp view — typed chars edit the process filter.
-///   8. Calendar add-event input — typed chars edit the title.
-///   9. Files view — `Ctrl+H` toggles hidden, typing activates filter.
-///   10. Default — launcher selection (Up/Down/Left/Right/Enter) + search.
+///   6. SysMon / Temp view — typed chars edit the process filter.
+///   7. Calendar add-event input — typed chars edit the title.
+///   8. Files view — `Ctrl+H` toggles hidden, typing activates filter.
+///   9. Default — launcher selection (Up/Down/Left/Right/Enter) + search.
 pub(super) fn handle_keypress(
     wl: &mut WlState,
     app: &mut AppState,
@@ -158,7 +149,7 @@ pub(super) fn handle_keypress(
     use crate::search::input::*;
 
     // Global Ctrl+arrow chord shortcuts — intercept before any per-view
-    // routing so textboxes (terminal, chat, search) don't hijack them.
+    // routing so textboxes (search, notes) don't hijack them.
     //
     //   Ctrl+Up/Down         expand / collapse the panel
     //   Ctrl+Left/Right      cycle panel tabs
@@ -396,26 +387,6 @@ pub(super) fn handle_keypress(
                 let _ = app.emojis.filter.on_key(other, wl.shift_held, wl.caps_lock);
                 app.emojis.reset_scroll();
             }
-        }
-    } else if app.panel_view == crate::app::PanelView::Terminal {
-        // Copy / Paste chord keys take priority over normal PTY input.
-        // Ctrl-Shift-C copies the current selection; Ctrl-Shift-V
-        // pastes clipboard into the PTY (xterm convention).
-        use crate::search::input::keycode_to_char;
-        let chord = wl.ctrl_held && wl.shift_held;
-        let ch = keycode_to_char(key, false, false).map(|c| c.to_ascii_lowercase());
-        if chord && ch == Some('c') {
-            if app.terminal.copy_selection() {
-                tracing::info!("terminal: copied selection");
-            }
-        } else if chord && ch == Some('v') {
-            if app.terminal.paste_from_clipboard() {
-                tracing::info!("terminal: pasted from clipboard");
-            }
-        } else if let Some(bytes) =
-            crate::terminal::keycode_to_bytes(key, wl.shift_held, wl.ctrl_held, wl.caps_lock)
-        {
-            app.terminal.write(&bytes);
         }
     } else if matches!(
         app.mode,

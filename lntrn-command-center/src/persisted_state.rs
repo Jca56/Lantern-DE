@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum PanelViewKind {
     Default,
+    /// No longer a view: a state file from before it went may still name
+    /// it, and is read as the default one.
     Terminal,
     Files,
 }
@@ -22,7 +24,6 @@ impl From<crate::app::PanelView> for PanelViewKind {
     fn from(v: crate::app::PanelView) -> Self {
         match v {
             crate::app::PanelView::Default => Self::Default,
-            crate::app::PanelView::Terminal => Self::Terminal,
             crate::app::PanelView::Files => Self::Files,
         }
     }
@@ -32,7 +33,7 @@ impl From<PanelViewKind> for crate::app::PanelView {
     fn from(v: PanelViewKind) -> Self {
         match v {
             PanelViewKind::Default => Self::Default,
-            PanelViewKind::Terminal => Self::Terminal,
+            PanelViewKind::Terminal => Self::Default,
             PanelViewKind::Files => Self::Files,
         }
     }
