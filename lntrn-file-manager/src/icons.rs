@@ -1,3 +1,8 @@
+mod folders;
+mod kinds;
+mod theme;
+mod xattr;
+
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -7,12 +12,13 @@ use crate::fs::FileEntry;
 use crate::icon_store::{thumb_key, thumb_path, TextureStore};
 use crate::thumbs::{ThumbKind, ThumbPool};
 
-const ICON_RENDER_SIZE: u32 = 192;
+use folders::{icon_dir, is_standard_folder, load_folder_icon};
+use kinds::thumb_kind;
+pub use kinds::{is_audio_file, is_raster_image_file, is_video_file};
+use theme::ThemeIcons;
+pub use xattr::{clear_folder_icon, read_folder_attrs, set_folder_color, set_folder_icon};
 
-fn icon_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    PathBuf::from(home).join(".lantern/icons/folders")
-}
+const ICON_RENDER_SIZE: u32 = 192;
 
 // ── Icon cache ───────────────────────────────────────────────────────────────
 
@@ -29,6 +35,8 @@ pub struct IconCache {
     /// Keys whose generation failed — never retried this visit, so a corrupt
     /// or oversized file costs one attempt instead of one per frame.
     failed: HashSet<String>,
+    /// The icon theme's SVG for a name (icons/theme.rs).
+    theme: ThemeIcons,
 }
 
 impl IconCache {
@@ -38,6 +46,7 @@ impl IconCache {
             shown_dirs: Vec::new(),
             pool: ThumbPool::new(),
             failed: HashSet::new(),
+            theme: ThemeIcons::installed(),
         }
     }
 
@@ -102,7 +111,7 @@ impl IconCache {
 
     /// Check if an icon texture is already cached for this entry.
     pub fn has_icon(&self, entry: &FileEntry) -> bool {
-        self.cache.contains(&cache_key(entry))
+        texture_keys(&self.theme, entry).iter().flatten().any(|key| self.cache.contains(key))
     }
 
     /// Drop any cached icon entries that involve this path. Called when
@@ -117,29 +126,46 @@ impl IconCache {
 
     /// Read-only access to a cached icon texture.
     pub fn get(&self, entry: &FileEntry) -> Option<&GpuTexture> {
+        texture_keys(&self.theme, entry).iter().flatten().find_map(|key| self.cache.get(key))
+    }
+
+    /// A file's own thumbnail, once it is cached: `get` without the
+    /// theme's icon standing in. For what belongs on a real thumbnail
+    /// only, like a video's play badge.
+    pub fn thumb(&self, entry: &FileEntry) -> Option<&GpuTexture> {
+        if entry.is_dir || thumb_kind(&entry.name).is_none() {
+            return None;
+        }
         self.cache.get(&cache_key(entry))
     }
 
-    /// Get cached icon or start loading it. Folder icons (small embedded
-    /// SVGs) load synchronously; image and video thumbnails are queued on
-    /// the worker pool and return None until ready.
+    /// Get cached icon or start loading it. Folder and theme icons (small
+    /// SVGs, shared by every entry they are for) load synchronously; image
+    /// and video thumbnails are queued on the worker pool, and until one
+    /// is ready the theme's icon is returned in its place (None without a
+    /// theme).
     pub fn get_or_load(
         &mut self,
         entry: &FileEntry,
         gpu: &GpuContext,
         tex: &TexturePass,
     ) -> Option<&GpuTexture> {
+        let themed = self.load_themed(entry, gpu, tex);
         let key = cache_key(entry);
         // `want`: a thumbnail still on its way is asked for again every
         // frame its row is on screen, which keeps its job in the queue.
         if !self.cache.contains(&key) && !self.failed.contains(&key) && !self.pool.want(&key) {
             if entry.is_dir {
-                match load_folder_icon(entry, gpu, tex) {
-                    Some(texture) => {
-                        self.cache.insert(key.clone(), texture);
-                    }
-                    None => {
-                        self.failed.insert(key.clone());
+                // The stock folder is not drawn for a folder that has the
+                // theme's icon.
+                if !themed {
+                    match load_folder_icon(entry, gpu, tex) {
+                        Some(texture) => {
+                            self.cache.insert(key.clone(), texture);
+                        }
+                        None => {
+                            self.failed.insert(key.clone());
+                        }
                     }
                 }
             } else if let Some(kind) = thumb_kind(&entry.name) {
@@ -163,10 +189,29 @@ impl IconCache {
                         .submit(key.clone(), entry.path.clone(), kind, false);
                 }
             }
-            // Other file types: procedural fallback icon, no texture.
+            // Other file types: the theme's icon, or without a theme the
+            // procedural fallback icon, no texture.
         }
-        self.cache.get(&key)
+        self.get(entry)
     }
+
+    /// Load the theme's icon for `entry`, if it has one; true once it is
+    /// cached. An icon that does not draw is given up, and the entry gets
+    /// what the theme has next: for a file, the plain file.
+    fn load_themed(&mut self, entry: &FileEntry, gpu: &GpuContext, tex: &TexturePass) -> bool {
+        for _ in 0..2 {
+            let Some(svg) = self.theme.svg_for(entry) else {
+                return false;
+            };
+            self.ensure_svg_path(&svg, gpu, tex);
+            if self.cache.contains(&svg_key(&svg)) {
+                return true;
+            }
+            self.theme.give_up(&svg);
+        }
+        false
+    }
+
     /// Read-only access to a cached folder color texture.
     pub fn get_folder_color(&self, color: &str) -> Option<&GpuTexture> {
         let key = format!("folder_color:{color}");
@@ -184,7 +229,7 @@ impl IconCache {
         gpu: &GpuContext,
         tex: &TexturePass,
     ) -> bool {
-        let key = format!("svg:{}", svg_path.display());
+        let key = svg_key(svg_path);
         if !self.cache.contains(&key) && !self.failed.contains(&key) {
             match rasterize_svg(svg_path, gpu, tex) {
                 Some(t) => {
@@ -204,8 +249,7 @@ impl IconCache {
 
     /// Immutable lookup matching `ensure_svg_path`.
     pub fn get_svg_path(&self, svg_path: &Path) -> Option<&GpuTexture> {
-        let key = format!("svg:{}", svg_path.display());
-        self.cache.get(&key)
+        self.cache.get(&svg_key(svg_path))
     }
 
     /// Get or load a colored folder icon by color name (e.g. "red", "blue", "").
@@ -243,6 +287,28 @@ impl IconCache {
 
 // ── Cache key logic ──────────────────────────────────────────────────────────
 
+/// The keys of the textures an entry can be drawn with, the one to prefer
+/// first. A file's thumbnail comes before the theme's icon for its name,
+/// which stands in until the thumbnail is there (for good, when there
+/// never is one); a folder the theme has an icon for takes that, and the
+/// stock folder only if it could not be drawn.
+fn texture_keys(theme: &ThemeIcons, entry: &FileEntry) -> [Option<String>; 2] {
+    let themed = theme.svg_for(entry).map(|svg| svg_key(&svg));
+    if entry.is_dir {
+        [themed, Some(cache_key(entry))]
+    } else if thumb_kind(&entry.name).is_some() {
+        [Some(cache_key(entry)), themed]
+    } else {
+        [themed, None]
+    }
+}
+
+/// The key of an SVG file's texture: the picker's icons and the theme's.
+fn svg_key(svg_path: &Path) -> String {
+    format!("svg:{}", svg_path.display())
+}
+
+/// The key of an entry's own texture: a folder's icon, a file's thumbnail.
 fn cache_key(entry: &FileEntry) -> String {
     if entry.is_dir {
         // Custom icon and colour are part of the key so such folders get a
@@ -255,7 +321,7 @@ fn cache_key(entry: &FileEntry) -> String {
         // every folder's own name rasterised the same yellow SVG once per
         // distinct name, on the render thread, into a texture never freed.
         let name = entry.name.to_lowercase();
-        let standard = if STANDARD_FOLDERS.contains(&name.as_str()) {
+        let standard = if is_standard_folder(&name) {
             name.as_str()
         } else {
             ""
@@ -273,191 +339,23 @@ fn cache_key(entry: &FileEntry) -> String {
             .unwrap_or(0);
         thumb_key(&entry.path, entry.size, stamp)
     } else {
-        // File type icons are shared by extension
-        let ext = entry
-            .path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("unknown")
-            .to_lowercase();
-        format!("type:{ext}")
-    }
-}
-
-/// Folder names that have an icon of their own (see `folder_icon_embedded`).
-const STANDARD_FOLDERS: [&str; 7] = [
-    "desktop",
-    "documents",
-    "downloads",
-    "music",
-    "pictures",
-    "projects",
-    "videos",
-];
-
-// ── Loading ──────────────────────────────────────────────────────────────────
-
-/// Try to get embedded folder icon bytes. Returns None if the icon
-/// requires disk access (xattr custom icon path).
-fn folder_icon_embedded(entry: &FileEntry) -> Option<&'static [u8]> {
-    // xattr custom icon path? Must go to disk.
-    if entry.folder_icon.is_some() {
-        return None;
-    }
-    // xattr custom color? Try embedded.
-    if let Some(color) = &entry.folder_color {
-        return lntrn_icons::get(&format!("folders/Colors/lntrn-folder-{color}.svg"));
-    }
-    // Standard named folders
-    let icon_name = match entry.name.to_lowercase().as_str() {
-        "desktop" => "folders/Standard/lntrn-folder-desktop.svg",
-        "documents" => "folders/Standard/lntrn-folder-documents.svg",
-        "downloads" => "folders/Standard/lntrn-folder-downloads.svg",
-        "music" => "folders/Standard/lntrn-folder-music.svg",
-        "pictures" => "folders/Standard/lntrn-folder-pictures.svg",
-        "projects" => "folders/Standard/lntrn-folder-projects.svg",
-        "videos" => "folders/Standard/lntrn-folder-videos.svg",
-        _ => "folders/Colors/lntrn-folder-yellow.svg",
-    };
-    lntrn_icons::get(icon_name)
-}
-
-fn load_folder_icon(entry: &FileEntry, gpu: &GpuContext, tex: &TexturePass) -> Option<GpuTexture> {
-    // Try embedded first
-    if let Some(data) = folder_icon_embedded(entry) {
-        return rasterize_svg_bytes(data, gpu, tex);
-    }
-    // Fall back to disk (xattr custom icons)
-    let icon_path = folder_icon_path(entry);
-    if is_svg_file(&icon_path) {
-        rasterize_svg(&icon_path, gpu, tex)
-    } else {
-        // Custom image icon — one-off, goes through the shared thumbnail
-        // generator (disk cache + decode limits) synchronously.
-        let (rgba, w, h) = crate::thumbs::generate(&icon_path, ThumbKind::Image)?;
-        Some(tex.upload(gpu, &rgba, w, h))
-    }
-}
-
-fn folder_icon_path(entry: &FileEntry) -> PathBuf {
-    let base = icon_dir();
-
-    // Check xattr for custom icon path first (any image/SVG). This runs on
-    // the render thread (once per icon), so an image kept on a phone or a
-    // network share is not looked at: the folder gets the stock icon.
-    if let Some(icon_path) = &entry.folder_icon {
-        let p = PathBuf::from(icon_path);
-        if !crate::fs::is_slow_path(&p) && p.exists() {
-            return p;
-        }
-    }
-
-    // Check xattr for custom color
-    if let Some(color) = &entry.folder_color {
-        let color_svg = format!("lntrn-folder-{color}.svg");
-        let color_path = base.join("Colors").join(&color_svg);
-        if color_path.exists() {
-            return color_path;
-        }
-    }
-
-    // Special folder icons by name
-    let svg_name = match entry.name.to_lowercase().as_str() {
-        "desktop" => "lntrn-folder-desktop.svg",
-        "documents" => "lntrn-folder-documents.svg",
-        "downloads" => "lntrn-folder-downloads.svg",
-        "music" => "lntrn-folder-music.svg",
-        "pictures" => "lntrn-folder-pictures.svg",
-        "projects" => "lntrn-folder-projects.svg",
-        "videos" => "lntrn-folder-videos.svg",
-        _ => return base.join("Colors").join("lntrn-folder-yellow.svg"),
-    };
-    base.join("Standard").join(svg_name)
-}
-
-const XATTR_FOLDER_COLOR: &str = "user.lantern.folder_color";
-const XATTR_FOLDER_ICON: &str = "user.lantern.folder_icon";
-
-/// A folder's custom icon path and colour, straight from its attributes.
-/// Two syscalls, each a device round-trip on a slow mount: for listing and
-/// worker threads, never for drawing (entries carry the result).
-pub fn read_folder_attrs(path: &Path) -> (Option<String>, Option<String>) {
-    (
-        read_xattr(path, XATTR_FOLDER_ICON),
-        read_xattr(path, XATTR_FOLDER_COLOR),
-    )
-}
-
-/// Set a custom icon path xattr on a directory.
-pub fn set_folder_icon(path: &Path, icon_path: &str) {
-    write_xattr(path, XATTR_FOLDER_ICON, icon_path);
-}
-
-/// Remove a custom folder icon xattr — reverts to the default folder icon.
-pub fn clear_folder_icon(path: &Path) {
-    remove_xattr(path, XATTR_FOLDER_ICON);
-}
-
-/// Set a folder color xattr on a directory path.
-pub fn set_folder_color(path: &Path, color: &str) {
-    write_xattr(path, XATTR_FOLDER_COLOR, color);
-}
-
-fn read_xattr(path: &Path, attr: &str) -> Option<String> {
-    use std::ffi::CString;
-    let c_path = CString::new(path.as_os_str().as_encoded_bytes()).ok()?;
-    let c_name = CString::new(attr).ok()?;
-    let mut buf = [0u8; 512];
-    let len = unsafe {
-        libc::getxattr(
-            c_path.as_ptr(),
-            c_name.as_ptr(),
-            buf.as_mut_ptr() as *mut libc::c_void,
-            buf.len(),
-        )
-    };
-    if len > 0 {
-        Some(String::from_utf8_lossy(&buf[..len as usize]).to_string())
-    } else {
-        None
-    }
-}
-
-fn write_xattr(path: &Path, attr: &str, value: &str) {
-    use std::ffi::CString;
-    let Some(c_path) = CString::new(path.as_os_str().as_encoded_bytes()).ok() else {
-        return;
-    };
-    let Some(c_name) = CString::new(attr).ok() else {
-        return;
-    };
-    unsafe {
-        libc::setxattr(
-            c_path.as_ptr(),
-            c_name.as_ptr(),
-            value.as_ptr() as *const libc::c_void,
-            value.len(),
-            0,
-        );
-    }
-}
-
-fn remove_xattr(path: &Path, attr: &str) {
-    use std::ffi::CString;
-    let Some(c_path) = CString::new(path.as_os_str().as_encoded_bytes()).ok() else {
-        return;
-    };
-    let Some(c_name) = CString::new(attr).ok() else {
-        return;
-    };
-    unsafe {
-        libc::removexattr(c_path.as_ptr(), c_name.as_ptr());
+        // No texture of its own: the theme's icon for its name, if any
+        // (`texture_keys`). Nothing is ever stored under this.
+        "type:".to_string()
     }
 }
 
 // ── SVG rasterization ────────────────────────────────────────────────────────
 
 fn rasterize_svg_bytes(data: &[u8], gpu: &GpuContext, tex: &TexturePass) -> Option<GpuTexture> {
+    let (rgba, w, h) = svg_pixels(data)?;
+    Some(tex.upload(gpu, &rgba, w, h))
+}
+
+/// An SVG drawn to fit `ICON_RENDER_SIZE`: straight-alpha RGBA and its size.
+/// `None` for one that draws nothing at all: that is no icon, and what
+/// asked for it falls back as it does for a file that cannot be read.
+fn svg_pixels(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     let tree = resvg::usvg::Tree::from_data(data, &resvg::usvg::Options::default()).ok()?;
 
     let svg_size = tree.size();
@@ -472,51 +370,13 @@ fn rasterize_svg_bytes(data: &[u8], gpu: &GpuContext, tex: &TexturePass) -> Opti
 
     // Straight alpha for the texture shader (tiny-skia output is
     // premultiplied; uploading it as-is darkened every soft edge).
-    Some(tex.upload(gpu, &pixmap.take_demultiplied(), w, h))
+    let rgba = pixmap.take_demultiplied();
+    rgba.chunks_exact(4).any(|px| px[3] > 0).then_some((rgba, w, h))
 }
 
 fn rasterize_svg(path: &Path, gpu: &GpuContext, tex: &TexturePass) -> Option<GpuTexture> {
     let data = crate::thumbs::read_svg_capped(path)?;
     rasterize_svg_bytes(&data, gpu, tex)
-}
-
-// ── File type detection ──────────────────────────────────────────────────────
-
-fn is_image_file(name: &str) -> bool {
-    let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
-    matches!(
-        ext.as_str(),
-        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "svg" | "ico" | "tiff" | "tif"
-    )
-}
-
-/// Raster formats the compositor's wallpaper loader can decode — gates the
-/// "Set as Wallpaper" context-menu item (no SVG: the compositor decodes
-/// wallpapers with the `image` crate).
-pub fn is_raster_image_file(name: &str) -> bool {
-    let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
-    matches!(
-        ext.as_str(),
-        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "tiff" | "tif"
-    )
-}
-
-/// WAV / MP3 — anything `audio_tags` can pull cover art out of.
-pub fn is_audio_file(name: &str) -> bool {
-    crate::audio_tags::container_for(Path::new(name)).is_some()
-}
-
-/// Which thumbnail job a file name maps to, if any.
-fn thumb_kind(name: &str) -> Option<ThumbKind> {
-    if is_video_file(name) {
-        Some(ThumbKind::Video)
-    } else if is_audio_file(name) {
-        Some(ThumbKind::Audio)
-    } else if is_image_file(name) {
-        Some(ThumbKind::Image)
-    } else {
-        None
-    }
 }
 
 /// Eighth-note glyph, `u` = unit size (glyph spans roughly 10u × 12u).
@@ -527,20 +387,6 @@ pub fn draw_note_glyph(painter: &mut Painter, cx: f32, cy: f32, u: f32, stroke: 
     painter.line(cx - 2.0 * u, cy - 6.0 * u, cx + 4.0 * u, cy - 4.0 * u, stroke, color);
     painter.line(cx + 4.0 * u, cy - 4.0 * u, cx + 4.0 * u, cy + 1.0 * u, stroke, color);
     painter.circle_filled(cx + 2.0 * u, cy + 2.0 * u, 2.5 * u, color);
-}
-
-pub fn is_video_file(name: &str) -> bool {
-    let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
-    matches!(
-        ext.as_str(),
-        "mp4" | "m4v" | "mkv" | "avi" | "mov" | "webm" | "flv" | "wmv"
-    )
-}
-
-fn is_svg_file(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map_or(false, |e| e.eq_ignore_ascii_case("svg"))
 }
 
 // ── Texture draw helpers ─────────────────────────────────────────────────────

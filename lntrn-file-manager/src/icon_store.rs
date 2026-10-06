@@ -1,7 +1,9 @@
 //! The textures the icon cache holds, with a bound on the thumbnails.
 //!
-//! Folder icons and the picker's SVGs are few and shared, and stay for the
-//! life of the window. Thumbnails are one texture per file (up to about
+//! Folder icons, the icon theme's and the picker's SVGs are few and shared
+//! (one texture per icon, whatever the number of entries drawn with it),
+//! and stay for the life of the window. Thumbnails are one texture per
+//! file (up to about
 //! 147 KB each at 192 px RGBA): a folder of ten thousand photos scrolled
 //! from top to bottom used to leave every one of them on the GPU until the
 //! next navigation, over a gigabyte. Here the limit is kept when a

@@ -2,6 +2,10 @@
 //! by backtracking: anchors, `.`, classes (ranges, negation, `\d \w \s`),
 //! groups with alternation, `? * + {n} {n,m}`, and `\b`. Enough for every
 //! rule in the Atom Material tables; not a general engine.
+//!
+//! A table tries hundreds of patterns on every name, so two things are
+//! known about a pattern before any of that: where a match can start, and
+//! (`last_chars`) what a name has to end on for it to match at all.
 
 #[derive(Clone, Debug, PartialEq)]
 enum Node {
@@ -201,6 +205,69 @@ fn is_word(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
+/// What a piece of a pattern can end on: the last character it takes
+/// (`chars: None` is any character), and whether it can take none.
+struct Tail {
+    chars: Option<Vec<char>>,
+    empty: bool,
+}
+
+/// A class of more characters than this is not listed out.
+const TAIL_MAX: u32 = 128;
+
+fn either(a: Option<Vec<char>>, b: Option<Vec<char>>) -> Option<Vec<char>> {
+    let (mut a, b) = (a?, b?);
+    a.extend(b);
+    Some(a)
+}
+
+fn node_tail(node: &Node) -> Tail {
+    match node {
+        Node::Char(c) => Tail { chars: Some(vec![*c]), empty: false },
+        Node::Any | Node::Class { negated: true, .. } => Tail { chars: None, empty: false },
+        Node::Class { negated: false, items } => {
+            let mut chars = Vec::new();
+            for item in items {
+                match item {
+                    ClassItem::Range(lo, hi) if (*hi as u32).saturating_sub(*lo as u32) < TAIL_MAX => chars.extend(*lo..=*hi),
+                    ClassItem::Digit => chars.extend('0'..='9'),
+                    _ => return Tail { chars: None, empty: false },
+                }
+            }
+            Tail { chars: Some(chars), empty: false }
+        }
+        Node::Start | Node::End | Node::WordBoundary => Tail { chars: Some(Vec::new()), empty: true },
+        Node::Group(alts) => {
+            let mut all = Tail { chars: Some(Vec::new()), empty: false };
+            for seq in alts {
+                let tail = seq_tail(seq);
+                all.chars = either(all.chars, tail.chars);
+                all.empty |= tail.empty;
+            }
+            all
+        }
+        Node::Repeat { max: Some(0), .. } => Tail { chars: Some(Vec::new()), empty: true },
+        Node::Repeat { node, min, .. } => {
+            let tail = node_tail(node);
+            Tail { chars: tail.chars, empty: tail.empty || *min == 0 }
+        }
+    }
+}
+
+/// From the end backwards: whatever can take nothing lets the piece
+/// before it be the one a match ends on.
+fn seq_tail(seq: &[Node]) -> Tail {
+    let mut chars = Some(Vec::new());
+    for node in seq.iter().rev() {
+        let tail = node_tail(node);
+        chars = either(chars, tail.chars);
+        if !tail.empty {
+            return Tail { chars, empty: false };
+        }
+    }
+    Tail { chars, empty: true }
+}
+
 impl Pattern {
     pub fn new(src: &str) -> Option<Self> {
         let (src, ignore_case) = match src.strip_prefix("(?i)") {
@@ -218,15 +285,52 @@ impl Pattern {
     /// Whether the pattern matches somewhere in `text` (anchors decide
     /// where, as usual).
     pub fn is_match(&self, text: &str) -> bool {
-        let folded: String;
-        let text = if self.ignore_case {
-            folded = text.to_lowercase();
-            &folded
-        } else {
-            text
-        };
-        let chars: Vec<char> = text.chars().collect();
-        (0..=chars.len()).any(|start| self.alts.iter().any(|seq| self.seq(seq, 0, &chars, start, &mut |_| true)))
+        let chars: Vec<char> = if self.ignore_case { text.to_lowercase().chars().collect() } else { text.chars().collect() };
+        self.found(&chars)
+    }
+
+    /// `is_match(text)` for a caller that tries many patterns on one name
+    /// and has split it into `chars` once.
+    pub(crate) fn is_match_chars(&self, text: &str, chars: &[char]) -> bool {
+        if self.ignore_case { self.is_match(text) } else { self.found(chars) }
+    }
+
+    fn found(&self, chars: &[char]) -> bool {
+        self.alts.iter().any(|seq| {
+            let from = |start: usize| self.seq(seq, 0, chars, start, &mut |_| true);
+            match seq.first() {
+                // `^…` matches from the start or not at all.
+                Some(Node::Start) => from(0),
+                // `.*…` matching from somewhere matches from the start of
+                // that line too, the `.*` taking what lies between. Trying
+                // every start made such a pattern, most of the table,
+                // quadratic in the length of the name.
+                Some(Node::Repeat { node, min: 0, max: None }) if **node == Node::Any => (0..=chars.len()).filter(|&i| i == 0 || chars[i - 1] == '\n').any(from),
+                _ => (0..=chars.len()).any(from),
+            }
+        })
+    }
+
+    /// The characters a text has to end on for the pattern to match it,
+    /// when the pattern says so: each alternative ends in `$` with
+    /// something before it that takes a character. `None` when it may
+    /// match a text ending on anything.
+    pub(crate) fn last_chars(&self) -> Option<Vec<char>> {
+        if self.ignore_case {
+            return None;
+        }
+        let mut all = Vec::new();
+        for seq in &self.alts {
+            let Some((Node::End, body)) = seq.split_last() else { return None };
+            let tail = seq_tail(body);
+            if tail.empty {
+                return None;
+            }
+            all.extend(tail.chars?);
+        }
+        all.sort_unstable();
+        all.dedup();
+        Some(all)
     }
 
     fn one(&self, node: &Node, chars: &[char], i: usize, k: &mut dyn FnMut(usize) -> bool) -> bool {
@@ -289,11 +393,59 @@ impl Pattern {
 }
 
 #[cfg(test)]
+impl Pattern {
+    /// The plain way, every start tried: what `is_match` has to agree with.
+    pub(crate) fn is_match_plain(&self, text: &str) -> bool {
+        let chars: Vec<char> = if self.ignore_case { text.to_lowercase().chars().collect() } else { text.chars().collect() };
+        (0..=chars.len()).any(|start| self.alts.iter().any(|seq| self.seq(seq, 0, &chars, start, &mut |_| true)))
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     fn m(p: &str, t: &str) -> bool {
-        Pattern::new(p).unwrap_or_else(|| panic!("parse {p}")).is_match(t)
+        let pattern = Pattern::new(p).unwrap_or_else(|| panic!("parse {p}"));
+        let hit = pattern.is_match(t);
+        assert_eq!(hit, pattern.is_match_plain(t), "{p} on {t:?}");
+        // A pattern that names its endings takes nothing that ends otherwise.
+        if let (true, Some(last)) = (hit, pattern.last_chars()) {
+            assert!(t.chars().last().is_some_and(|c| last.contains(&c)), "{p} took {t:?}, which ends on none of {last:?}");
+        }
+        hit
+    }
+
+    fn last(p: &str) -> Option<String> {
+        Pattern::new(p).unwrap().last_chars().map(|chars| chars.into_iter().collect())
+    }
+
+    #[test]
+    fn a_leading_dot_star_is_tried_from_each_line_start_only() {
+        assert!(m(r".*\.rs$", "a/very/long/path/to/main.rs") && !m(r".*\.rs$", "main.rsx"));
+        assert!(m(r".*foo", "xxfoo") && m(r".*foo", "foo") && !m(r".*foo", "fo"));
+        // `.` stops at a line break: the match has to start past it.
+        assert!(m(r".*a$", "b\na") && m(r".*b$", "a\nb") && !m(r"^.*b$", "b\na"));
+        assert!(m(r".*x.*y$", "1\n2x3y") && !m(r".*x.*y$", "1x\n3y"));
+        assert!(m(r"^a|.*b$", "cb") && m(r"^a|.*b$", "ac") && !m(r"^a|.*b$", "ca"));
+        assert!(m(r".*", "") && m(r".*$", "\n") && m(r"^$", "") && !m(r"^$", "a"));
+    }
+
+    #[test]
+    fn a_pattern_knows_what_a_name_has_to_end_on() {
+        assert_eq!(last(r".*\.rs$").as_deref(), Some("s"));
+        assert_eq!(last(r".*\.(3fr|ari|cr[2w])$").as_deref(), Some("2irw"));
+        assert_eq!(last(r"^(README|readme)(\.(md|txt))?$").as_deref(), Some("Edet"));
+        assert_eq!(last(r".*\.h8(SX?|\d{3})?$").as_deref(), Some("0123456789SX"));
+        assert_eq!(last(r"^[\._]?(src|sources?)$").as_deref(), Some("ces"));
+        assert_eq!(last(r"^a$|^b$").as_deref(), Some("ab"));
+        assert_eq!(last(r"foo\b$").as_deref(), Some("o"));
+        assert_eq!(last(r"^ab{0}$").as_deref(), Some("a"));
+        // Nothing to go by: no `$`, one hidden in a group, any character
+        // last, nothing that has to be taken, case folded.
+        for open in [r".*\.muse", r"^(ant\.xml$|\.ant)", r"^a$|b", r"^foo.*$", r"^foo[^.]$", r"^foo\w$", r"a?$", r"^$", r"(?i)^readme$", r""] {
+            assert_eq!(last(open), None, "{open}");
+        }
     }
 
     #[test]

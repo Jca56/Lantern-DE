@@ -1203,7 +1203,7 @@ pub fn render_frame(
                 let content_h = icsz + 2.0 * s + label_font;
                 let top_pad = (ir.h - content_h) * 0.5;
                 let icon_y = ir.y + top_pad;
-                let tex = icon_cache.get(&entries[i])?;
+                let tex = icon_cache.thumb(&entries[i])?;
                 Some(icons::fit_in_box(tex, icon_x, icon_y, icsz, icsz))
             })
             .collect(),
@@ -1222,7 +1222,7 @@ pub fn render_frame(
                     let y = base_y + hdr_h + i as f32 * row_h;
                     let icon_x = content.x + 8.0 * m * s;
                     let icon_y = y + (row_h - list_icon_sz) * 0.5;
-                    let tex = icon_cache.get(&entries[i])?;
+                    let tex = icon_cache.thumb(&entries[i])?;
                     Some(icons::fit_in_box(
                         tex,
                         icon_x,
@@ -1247,7 +1247,7 @@ pub fn render_frame(
                     let x_offset = te.depth as f32 * tree_indent;
                     let icon_x = content.x + 8.0 * m * s + x_offset + 16.0 * m * s;
                     let icon_y = y + (row_h - tree_icon_sz) * 0.5;
-                    let tex = icon_cache.get(&te.entry)?;
+                    let tex = icon_cache.thumb(&te.entry)?;
                     Some(icons::fit_in_box(
                         tex,
                         icon_x,
@@ -1265,7 +1265,7 @@ pub fn render_frame(
     let mut preview_overlay: Option<(f32, f32, f32, f32)> = None;
     if let (Some(thumb), Some(entry)) = (preview_thumb_rect, preview_thumb_entry.as_ref()) {
         if is_video_entry(entry) {
-            if let Some(tex) = icon_cache.get(entry) {
+            if let Some(tex) = icon_cache.thumb(entry) {
                 preview_overlay = Some(icons::fit_in_box(tex, thumb.x, thumb.y, thumb.w, thumb.h));
             }
         }
@@ -1421,7 +1421,7 @@ pub fn render_frame(
     // ── Quick Look overlay (topmost modal) ─────────────────────────
     if let Some(ref ql) = app.quick_look {
         // A cache lookup, not a load: only what the view already has.
-        let thumbnail = ql.thumbnail_entry().and_then(|e| icon_cache.get(e));
+        let thumbnail = ql.thumbnail_entry().and_then(|e| icon_cache.thumb(e));
         if let Some(draw) = crate::quick_look::draw_quick_look(
             ql, thumbnail, painter, text, pal, input, wf, hf, s, w, h,
         ) {

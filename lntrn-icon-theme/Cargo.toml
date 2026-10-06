@@ -1,0 +1,6 @@
+[package]
+name = "lntrn-icon-theme"
+version = "0.1.0"
+description = "File and folder icon themes for Lantern apps: which icon a name gets"
+authors = ["Alva"]
+edition = "2024"

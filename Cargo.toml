@@ -27,6 +27,7 @@ members = [
     "lntrn-dbus",
     "lntrn-sysmon",
     "lntrn-icons",
+    "lntrn-icon-theme",
     "lntrn-screencopy",
     "lntrn-command-center",
     "lntrn-keychain",

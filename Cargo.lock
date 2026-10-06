@@ -2432,6 +2432,7 @@ version = "0.2.0"
 dependencies = [
  "lntrn-app",
  "lntrn-core",
+ "lntrn-icon-theme",
  "lntrn-image",
  "lntrn-math",
  "lntrn-props",
@@ -2554,6 +2555,7 @@ dependencies = [
  "anyhow",
  "image",
  "libc",
+ "lntrn-icon-theme",
  "lntrn-icons",
  "lntrn-render 0.1.0",
  "lntrn-theme",
@@ -2596,6 +2598,10 @@ dependencies = [
  "lntrn-sys",
  "lntrn-ui 0.2.0",
 ]
+
+[[package]]
+name = "lntrn-icon-theme"
+version = "0.1.0"
 
 [[package]]
 name = "lntrn-icons"

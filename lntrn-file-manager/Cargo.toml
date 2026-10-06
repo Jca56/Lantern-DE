@@ -13,6 +13,7 @@ path = "src/main.rs"
 anyhow = "1"
 libc = "0.2"
 lntrn-icons = { path = "../lntrn-icons" }
+lntrn-icon-theme = { path = "../lntrn-icon-theme" }
 lntrn-render = { path = "../lntrn-render" }
 lntrn-theme = { path = "../lntrn-theme" }
 lntrn-ui = { path = "../lntrn-ui" }

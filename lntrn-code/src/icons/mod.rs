@@ -1,37 +1,18 @@
 //! File and folder icons from an icon theme on disk
 //! (`~/.lantern/icons/atom-material/`, put there by
-//! `scripts/fetch-icons.py`): the theme's rules pick an SVG for a name,
-//! our renderer draws it at the size asked for, and the bitmap goes to
-//! the GPU once. No theme on disk means no icons, and the tree draws its
-//! chips as before.
-
-mod pattern;
-mod rules;
+//! `scripts/fetch-icons.py`): the theme's rules (`lntrn-icon-theme`) pick
+//! an SVG for a name, our renderer draws it at the size asked for, and
+//! the bitmap goes to the GPU once. No theme on disk means no icons, and
+//! the tree draws its chips as before.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use lntrn_app::lntrn_render::{Gpu, ImageHandle, Images};
-
-use rules::Rule;
-
-/// Where a theme is looked for.
-fn theme_dir() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    let dir = PathBuf::from(home).join(".lantern/icons/atom-material");
-    dir.is_dir().then_some(dir)
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum Kind {
-    File,
-    Folder,
-}
+use lntrn_icon_theme::{Kind, PLAIN_FOLDER, Theme};
 
 pub struct IconTheme {
-    dir: Option<PathBuf>,
-    files: Vec<Rule>,
-    folders: Vec<Rule>,
+    theme: Theme,
     /// Name (and kind) → the icon's SVG path, once looked up.
     resolved: HashMap<(Kind, String), Option<PathBuf>>,
     /// SVG path and pixel size → what is on the GPU.
@@ -43,40 +24,35 @@ pub struct IconTheme {
 impl IconTheme {
     /// The theme on disk, or an empty one.
     pub fn load() -> Self {
-        let dir = theme_dir();
-        let read = |name: &str| dir.as_ref().and_then(|d| std::fs::read_to_string(d.join(name)).ok()).map(|x| rules::parse(&x)).unwrap_or_default();
-        let files = read("icon_associations.xml");
-        let folders = read("folder_associations.xml");
-        if let Some(d) = &dir {
-            lntrn_core::log_info!("icons: {} file rules, {} folder rules from {}", files.len(), folders.len(), d.display());
+        let theme = Theme::installed();
+        if let Some(d) = theme.dir() {
+            lntrn_core::log_info!("icons: {} file rules, {} folder rules from {}", theme.rule_count(Kind::File), theme.rule_count(Kind::Folder), d.display());
         }
-        Self { dir, files, folders, resolved: HashMap::new(), handles: HashMap::new(), wanted: Vec::new() }
+        Self { theme, resolved: HashMap::new(), handles: HashMap::new(), wanted: Vec::new() }
     }
 
     #[cfg(test)]
     pub fn available(&self) -> bool {
-        self.dir.is_some()
+        self.theme.dir().is_some()
     }
 
     /// The SVG for `path`: by its name, then by its path relative to
     /// `root` (rules like `.github/…` need the folders). Names are matched
     /// in lower case, as the theme's rules are written.
     fn svg_for(&mut self, path: &Path, is_dir: bool, root: &Path) -> Option<PathBuf> {
-        let dir = self.dir.clone()?;
+        self.theme.dir()?;
         let name = path.file_name()?.to_string_lossy().into_owned();
         let kind = if is_dir { Kind::Folder } else { Kind::File };
         let key = (kind, name.clone());
         if let Some(hit) = self.resolved.get(&key) {
             return hit.clone();
         }
-        let (rules, sub, fallback) = match kind {
-            Kind::File => (&self.files, "files", None),
-            Kind::Folder => (&self.folders, "folders", Some("folder.svg")),
+        let fallback = match kind {
+            Kind::File => None,
+            Kind::Folder => Some(PLAIN_FOLDER),
         };
-        let rel = path.strip_prefix(root).map(|r| r.to_string_lossy().to_lowercase()).unwrap_or_default();
-        let lower = name.to_lowercase();
-        let pick = rules.iter().find(|r| r.pattern.is_match(&lower)).or_else(|| (!rel.is_empty()).then(|| rules.iter().find(|r| r.pattern.is_match(&rel))).flatten());
-        let file = pick.map(|r| r.icon.clone()).or_else(|| fallback.map(str::to_owned)).map(|f| dir.join(sub).join(f)).filter(|p| p.is_file());
+        let rel = path.strip_prefix(root).map(|r| r.to_string_lossy().into_owned()).unwrap_or_default();
+        let file = self.theme.rule_icon(kind, &name, &rel).or(fallback).and_then(|icon| self.theme.svg(kind, icon));
         self.resolved.insert(key, file.clone());
         file
     }
