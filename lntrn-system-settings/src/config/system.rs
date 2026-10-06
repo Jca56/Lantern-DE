@@ -174,3 +174,42 @@ impl Terminal {
         t
     }
 }
+
+props! {
+    /// Notepad: the keys of `[notepad]`, which its own View menu and a
+    /// drag of its page's edge write too.
+    pub struct Notepad {
+        /// `paper` or `dark`: the page it writes on.
+        pub theme: String = "paper".to_owned() => { id: 1 },
+        /// How wide the page is on its desk: 0 the narrowest, 1 all the
+        /// room there is.
+        pub page_width: f64 = 0.82 => { id: 2, hard: 0.0..=1.0, step: 0.01 },
+    }
+}
+
+pub const NOTEPAD_PAGES: [&str; 2] = ["paper", "dark"];
+
+impl Notepad {
+    pub fn clamp(&mut self) {
+        self.page_width = if self.page_width.is_finite() { self.page_width.clamp(0.0, 1.0) } else { 0.82 };
+        // The old Notepad's night page is the dark one now.
+        if self.theme == "night_sky" {
+            self.theme = "dark".to_owned();
+        }
+        if !NOTEPAD_PAGES.contains(&self.theme.as_str()) {
+            self.theme = "paper".to_owned();
+        }
+    }
+
+    /// What Notepad's old file of its own (`notepad.toml`) said, with
+    /// the same two keys at its top: what it is set to until it has a
+    /// section in `lantern.toml`, which Notepad writes the first time it
+    /// runs.
+    pub fn from_old_file(doc: &lntrn_data::Doc) -> Notepad {
+        use lntrn_data::Doc;
+        let d = Notepad::default();
+        let mut n = Notepad { theme: doc.get("theme").and_then(Doc::as_str).map_or(d.theme, str::to_owned), page_width: doc.get("page_width").and_then(Doc::as_f64).unwrap_or(d.page_width) };
+        n.clamp();
+        n
+    }
+}

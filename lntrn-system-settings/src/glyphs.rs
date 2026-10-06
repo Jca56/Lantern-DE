@@ -89,3 +89,11 @@ pub fn terminal(d: &mut DrawList, rect: Rect, color: Color, w: f64) {
     d.polyline(&[at(rect, -0.5, -0.28), at(rect, -0.14, 0.02), at(rect, -0.5, 0.32)], w, color, false);
     d.line(at(rect, 0.08, 0.34), at(rect, 0.5, 0.34), w, color);
 }
+
+/// A page: a sheet with a corner turned down and two lines of writing.
+pub fn notepad(d: &mut DrawList, rect: Rect, color: Color, w: f64) {
+    d.polyline(&[at(rect, -0.64, -0.9), at(rect, 0.2, -0.9), at(rect, 0.64, -0.46), at(rect, 0.64, 0.9), at(rect, -0.64, 0.9)], w, color, true);
+    d.polyline(&[at(rect, 0.2, -0.9), at(rect, 0.2, -0.46), at(rect, 0.64, -0.46)], w, color, false);
+    d.line(at(rect, -0.32, 0.08), at(rect, 0.32, 0.08), w, color);
+    d.line(at(rect, -0.32, 0.5), at(rect, 0.32, 0.5), w, color);
+}

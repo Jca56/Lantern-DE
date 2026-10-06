@@ -5,6 +5,7 @@
 //! were. Of `[[monitors]]` we own one key, each screen's `wallpaper`;
 //! the rest of an entry is the compositor's. Of `[terminal]` we own the
 //! keys on its page; the tabs it has pinned are the terminal's.
+//! `[notepad]` is shared with Notepad, which writes the same keys.
 
 mod appearance;
 mod system;
@@ -15,7 +16,7 @@ use std::time::SystemTime;
 pub use appearance::{Appearance, GRADIENT_STOPS, WindowManager, Windows};
 use lntrn_data::{Doc, from_doc, to_doc, toml};
 use lntrn_props::Reflect;
-pub use system::{ANIMATION_PRESETS, Animations, CURSOR_STYLES, Input, NOTIFICATION_POSITIONS, Notifications, Power, TERMINAL_FONT_SIZES, Terminal};
+pub use system::{ANIMATION_PRESETS, Animations, CURSOR_STYLES, Input, NOTEPAD_PAGES, NOTIFICATION_POSITIONS, Notepad, Notifications, Power, TERMINAL_FONT_SIZES, Terminal};
 
 /// A `[[monitors]]` entry as far as this app goes: its name, and the
 /// wallpaper it shows instead of the global one (empty: the global one).
@@ -35,6 +36,7 @@ pub struct Config {
     pub notifications: Notifications,
     pub animations: Animations,
     pub terminal: Terminal,
+    pub notepad: Notepad,
     /// The screens the file lists, with their wallpaper overrides.
     pub monitors: Vec<Monitor>,
     /// The file's modification time as of the last load or save.
@@ -97,12 +99,13 @@ impl Config {
             notifications: Notifications::default(),
             animations: Animations::default(),
             terminal: Terminal::default(),
+            notepad: Notepad::default(),
             monitors: Vec::new(),
             mtime: None,
         }
     }
 
-    fn sections(&self) -> [(&'static str, &dyn Reflect); 8] {
+    fn sections(&self) -> [(&'static str, &dyn Reflect); 9] {
         [
             ("appearance", &self.appearance),
             ("window_manager", &self.window_manager),
@@ -112,10 +115,11 @@ impl Config {
             ("notifications", &self.notifications),
             ("animations", &self.animations),
             ("terminal", &self.terminal),
+            ("notepad", &self.notepad),
         ]
     }
 
-    fn sections_mut(&mut self) -> [(&'static str, &mut dyn Reflect); 8] {
+    fn sections_mut(&mut self) -> [(&'static str, &mut dyn Reflect); 9] {
         [
             ("appearance", &mut self.appearance),
             ("window_manager", &mut self.window_manager),
@@ -125,6 +129,7 @@ impl Config {
             ("notifications", &mut self.notifications),
             ("animations", &mut self.animations),
             ("terminal", &mut self.terminal),
+            ("notepad", &mut self.notepad),
         ]
     }
 
@@ -150,6 +155,12 @@ impl Config {
         {
             self.terminal = Terminal::from_old_file(&old);
         }
+        // The same for a Notepad that has not.
+        if doc.get("notepad").is_none()
+            && let Some(old) = std::fs::read_to_string(path().with_file_name("notepad.toml")).ok().and_then(|text| toml::parse(&text).ok())
+        {
+            self.notepad = Notepad::from_old_file(&old);
+        }
         self.sanitize();
         self.monitors = read_monitors(&doc);
         self.mtime = mtime_of(&path());
@@ -170,6 +181,7 @@ impl Config {
         self.notifications.clamp();
         self.animations.clamp();
         self.terminal.clamp();
+        self.notepad.clamp();
     }
 
     /// Merge our sections into the file on disk and write it back
@@ -323,6 +335,29 @@ mod tests {
         let t = Terminal::from_old_file(&old);
         assert_eq!((t.font_size, t.cursor_style.as_str(), t.open_bar_hidden), (20.5, "underline", true));
         assert_eq!(Terminal::from_old_file(&toml::parse("").unwrap()).font_size, 20.0);
+    }
+
+    /// `[notepad]` is written as Notepad reads it, nonsense is put right
+    /// on the way, and its old file is understood.
+    #[test]
+    fn the_notepads_section_is_what_notepad_reads() {
+        let dir = std::env::temp_dir().join(format!("lntrn-settings-notepad-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("lantern.toml");
+        let mut cfg = Config::empty();
+        (cfg.notepad.theme, cfg.notepad.page_width) = ("dark".into(), 0.4);
+        cfg.save_to(&path).unwrap();
+        let doc = read_existing(&path).unwrap();
+        assert_eq!((doc.path("notepad.theme").and_then(Doc::as_str), doc.path("notepad.page_width").and_then(Doc::as_f64)), (Some("dark"), Some(0.4)));
+        (cfg.notepad.theme, cfg.notepad.page_width) = ("neon".into(), 7.0);
+        cfg.save_to(&path).unwrap();
+        let doc = read_existing(&path).unwrap();
+        assert_eq!((doc.path("notepad.theme").and_then(Doc::as_str), doc.path("notepad.page_width").and_then(Doc::as_f64)), (Some("paper"), Some(1.0)));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let old = Notepad::from_old_file(&toml::parse("theme = \"night_sky\"\npage_width = 0.820\n").unwrap());
+        assert_eq!((old.theme.as_str(), old.page_width), ("dark", 0.82));
+        assert_eq!(Notepad::from_old_file(&toml::parse("").unwrap()).theme, "paper");
     }
 
     /// Load and save on top of a copy of the real desktop config and

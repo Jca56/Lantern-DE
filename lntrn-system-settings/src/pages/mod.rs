@@ -6,6 +6,7 @@ pub mod appearance;
 pub mod cursor_svg;
 pub mod effects;
 pub mod mouse;
+pub mod notepad;
 pub mod notifications;
 pub mod power;
 pub mod terminal;
@@ -32,6 +33,7 @@ pub fn draw(app: &mut App, ui: &mut Ui, cx: &mut AreaCx<()>) -> bool {
             Page::Notifications => notifications::draw(&mut app.config, ui),
             Page::Power => power::draw(&mut app.config, ui),
             Page::Terminal => terminal::draw(&mut app.config, ui),
+            Page::Notepad => notepad::draw(&mut app.config, ui),
         };
     });
     changed

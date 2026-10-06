@@ -14,7 +14,7 @@ use crate::config::Config;
 use crate::kit;
 use crate::look;
 use crate::nav::Page;
-use crate::pages::{effects, notifications, terminal};
+use crate::pages::{effects, notepad, notifications, terminal};
 
 /// Point the desktop's folders at a scratch tree holding two wallpapers
 /// (and a film, which is not one), so nothing here reads or writes the
@@ -293,5 +293,33 @@ fn the_terminal_page_sets_its_size_cursor_and_bar() {
         terminal::draw(&mut cfg, ui);
     });
     assert!(cfg.terminal.open_bar_hidden);
+    assert!(clipped().is_empty());
+}
+
+#[test]
+fn the_notepad_page_sets_its_page_and_width() {
+    let mut cfg = Config::empty();
+    let mut h = kit_at(1000.0, 1000.0);
+    assert_eq!((cfg.notepad.theme.as_str(), cfg.notepad.page_width), ("paper", 0.82));
+    clipped();
+    h.settle(4, |ui| {
+        notepad::draw(&mut cfg, ui);
+    });
+    h.click_on(WidgetId::ROOT.with("page").with("Page").with_index(1), |ui| {
+        notepad::draw(&mut cfg, ui);
+    });
+    assert_eq!(cfg.notepad.theme, "dark");
+    // The width drags along its whole range, by hundredths.
+    let track = h.rect_of(WidgetId::ROOT.with("page").with("Page width")).unwrap();
+    let y = track.center().y;
+    h.drag(Vec2::new(track.center().x, y), Vec2::new(track.min.x - 40.0, y), 4, |ui| {
+        notepad::draw(&mut cfg, ui);
+    });
+    assert_eq!(cfg.notepad.page_width, 0.0);
+    h.key(Key::ArrowRight);
+    h.settle(4, |ui| {
+        notepad::draw(&mut cfg, ui);
+    });
+    assert!((cfg.notepad.page_width - 0.01).abs() < 1e-9, "{}", cfg.notepad.page_width);
     assert!(clipped().is_empty());
 }
