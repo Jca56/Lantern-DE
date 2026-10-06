@@ -7,4 +7,4 @@ Exec=lntrn-notepad %F
 Icon=lntrn-notepad
 Terminal=false
 Categories=Office;WordProcessor;
-MimeType=text/plain;text/x-readme;text/csv;text/tab-separated-values;application/x-lnote;
+MimeType=text/plain;text/x-readme;text/markdown;text/x-markdown;text/csv;text/tab-separated-values;application/x-lnote;application/vnd.openxmlformats-officedocument.wordprocessingml.document;

@@ -1,622 +1,296 @@
-use std::path::PathBuf;
+//! A document being edited: the caret and what is selected, typing and
+//! deleting, moving about, and undo. What dresses text and paragraphs is
+//! in `editor_ops.rs`.
+//!
+//! Nothing here draws or reads input: the view says what was pressed, and
+//! tests say the same.
 
-use crate::format::{Alignment, DocFormats, LineFormats, ParagraphAttrs, TextAttrs};
-use crate::layout::LineLayout;
-use crate::scrollbar::ScrollbarState;
+use std::sync::Arc;
 
-/// Default font size for editor text (logical pixels, scaled at draw time).
-/// Spans may override this per-run via `TextAttrs::font_size`.
-pub const FONT_SIZE: f32 = 24.0;
-/// Padding inside the editor area.
-pub const PAD: f32 = 14.0;
-/// Hanging indent (logical px) for bullet-list paragraphs: the text is pushed
-/// right by this much and the • glyph sits in the gap.
-pub const BULLET_INDENT: f32 = 28.0;
+use lntrn_core::Undo;
+use lntrn_text::TextEngine;
 
-/// A (line, byte_col) position in the document.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Pos {
-    pub line: usize,
-    pub col: usize,
+use crate::doc::{Doc, List, Para, Picture, Pos, Style, TextAttrs};
+use crate::view::layout::{Layout, Setting};
+
+/// Typing this soon after the last of it is the same undo step.
+const TYPING_STEP: f64 = 1.0;
+
+/// The document and where the caret was, to go back to.
+#[derive(Clone)]
+struct Snapshot {
+    doc: Doc,
+    caret: Pos,
+    anchor: Option<Pos>,
 }
 
-impl Pos {
-    pub fn new(line: usize, col: usize) -> Self {
-        Self { line, col }
-    }
+/// What was cut or copied: as text for anywhere, and as it was for
+/// another document of ours.
+#[derive(Clone, Default)]
+pub struct Clip {
+    pub text: String,
+    pub paras: Vec<Para>,
+    pub pictures: Vec<(u64, Arc<Picture>)>,
 }
 
-impl PartialOrd for Pos {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for Pos {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.line.cmp(&other.line).then(self.col.cmp(&other.col))
-    }
-}
-
-/// Rich text editor state with cursor, selection, formatting, and undo.
+#[derive(Default)]
 pub struct Editor {
-    pub lines: Vec<String>,
-    pub formats: DocFormats,
-    pub cursor_line: usize,
-    pub cursor_col: usize,
-    /// Selection anchor — when Some, text between anchor and cursor is selected.
-    pub sel_anchor: Option<Pos>,
-    /// Pending format attrs for next typed character (set when toggling with no selection).
-    pub pending_attrs: Option<TextAttrs>,
-    pub file_path: Option<PathBuf>,
-    pub filename: String,
-    pub modified: bool,
-    /// Stable identifier for this tab. Assigned by `TextHandler` when the
-    /// tab is created — `Editor::new` returns 0 and the host overwrites it.
-    pub tab_id: u64,
-    /// Animated scroll position drawn on screen. Eases toward `scroll_target`.
-    pub scroll_offset: f32,
-    /// Where the editor wants to be scrolled to. Updated by the wheel /
-    /// keyboard nav; `scroll_offset` interpolates toward it each frame.
-    pub scroll_target: f32,
-    /// Set when the caret moved and the view should follow it. Consumed by the
-    /// renderer, which is the only place wrap rows are guaranteed fresh — an
-    /// input handler running between an edit and the next frame would measure
-    /// against stale rows and scroll to the wrong place.
-    pub follow_caret: bool,
-    /// Per-line geometry cache — wrap rows, advances, row sizes, stacking.
-    /// Maintained by `layout::compute`, which rebuilds a line only when its
-    /// content signature changes, NOT the whole document every frame.
-    pub layout: Vec<LineLayout>,
-    /// Global layout inputs (width/scale/font-size bits) the cache was built
-    /// against. Any change invalidates every line.
-    pub layout_key: Option<(u32, u32, u32)>,
-    /// Stacked height of every line including paragraph spacing, excluding the
-    /// editor's own padding. Maintained by `layout::compute`.
-    pub total_h: f32,
-    pub scrollbar: ScrollbarState,
-    pub(crate) undo_stack: Vec<crate::history::Snapshot>,
-    pub(crate) redo_stack: Vec<crate::history::Snapshot>,
+    pub doc: Doc,
+    pub caret: Pos,
+    /// Where a selection started; it runs from here to the caret.
+    pub anchor: Option<Pos>,
+    /// What the next typed character is to have: set by a format chosen
+    /// with nothing selected, forgotten when the caret moves.
+    pub pending: Option<TextAttrs>,
+    pub layout: Layout,
+    /// The x the caret keeps to through Up and Down.
+    goal_x: Option<f32>,
+    undo: Undo<Snapshot>,
+    /// Counts every change, and what it was at when last saved.
+    pub rev: u64,
+    pub saved: u64,
+    /// The frame's time, for typing to be one undo step.
+    pub now: f64,
+    /// The caret moved: the view should keep it in sight.
+    pub follow: bool,
 }
 
 impl Editor {
-    pub fn new() -> Self {
-        Self {
-            lines: vec![String::new()],
-            formats: DocFormats::new(1),
-            cursor_line: 0,
-            cursor_col: 0,
-            sel_anchor: None,
-            pending_attrs: None,
-            file_path: None,
-            filename: "Untitled".to_string(),
-            modified: false,
-            tab_id: 0,
-            scroll_offset: 0.0,
-            scroll_target: 0.0,
-            follow_caret: false,
-            layout: Vec::new(),
-            layout_key: None,
-            total_h: 0.0,
-            scrollbar: ScrollbarState::new(),
-            undo_stack: Vec::new(),
-            redo_stack: Vec::new(),
-        }
+    pub fn of(doc: Doc) -> Editor {
+        Editor { doc, ..Editor::default() }
     }
 
-    fn cursor_pos(&self) -> Pos {
-        Pos::new(self.cursor_line, self.cursor_col)
+    pub fn modified(&self) -> bool {
+        self.rev != self.saved
     }
 
-    fn set_cursor(&mut self, p: Pos) {
-        self.cursor_line = p.line;
-        self.cursor_col = p.col;
+    /// Set the document on a page: the caret's moves up and down need it.
+    pub fn sync(&mut self, text: &mut TextEngine, setting: Setting) -> bool {
+        self.layout.sync(text, &self.doc, setting)
     }
 
-    // ── Selection ──────────────────────────────────────────────────────
+    // ---- selection ----
 
-    /// Returns the ordered (start, end) of the selection, or None.
-    pub fn selection_range(&self) -> Option<(Pos, Pos)> {
-        let anchor = self.sel_anchor?;
-        let cursor = self.cursor_pos();
-        if anchor == cursor {
-            return None;
-        }
-        Some(if anchor < cursor {
-            (anchor, cursor)
-        } else {
-            (cursor, anchor)
-        })
+    /// The selection's ends in order, when something is selected.
+    pub fn selection(&self) -> Option<(Pos, Pos)> {
+        let anchor = self.anchor.filter(|a| *a != self.caret)?;
+        Some(if anchor <= self.caret { (anchor, self.caret) } else { (self.caret, anchor) })
     }
 
-    pub fn has_selection(&self) -> bool {
-        self.selection_range().is_some()
-    }
-
-    /// Get the selected text as a String. Defensively clamps the selection
-    /// to valid line bounds so a stale anchor (e.g. left over from a
-    /// find/replace operation) cannot cause a panic.
-    pub fn selected_text(&self) -> Option<String> {
-        let (start, end) = self.selection_range()?;
-        let last_line = self.lines.len().saturating_sub(1);
-        let s_line = start.line.min(last_line);
-        let e_line = end.line.min(last_line);
-        let clamp_col = |line_idx: usize, col: usize| -> usize {
-            let line = &self.lines[line_idx];
-            let mut c = col.min(line.len());
-            while c > 0 && !line.is_char_boundary(c) {
-                c -= 1;
-            }
-            c
-        };
-        let s_col = clamp_col(s_line, start.col);
-        let e_col = clamp_col(e_line, end.col);
-        if s_line == e_line {
-            return Some(self.lines[s_line][s_col..e_col].to_string());
-        }
-        let mut result = String::new();
-        result.push_str(&self.lines[s_line][s_col..]);
-        for line in &self.lines[s_line + 1..e_line] {
-            result.push('\n');
-            result.push_str(line);
-        }
-        result.push('\n');
-        result.push_str(&self.lines[e_line][..e_col]);
-        Some(result)
-    }
-
-    /// Delete the selected text, leaving cursor at the start of the selection.
-    /// Like `selected_text`, defensively clamps to valid line bounds and char
-    /// boundaries so a stale anchor cannot cause a slicing panic.
-    pub fn delete_selection(&mut self) {
-        let (raw_start, raw_end) = match self.selection_range() {
-            Some(r) => r,
-            None => return,
-        };
-        let last_line = self.lines.len().saturating_sub(1);
-        let clamp = |p: Pos| -> Pos {
-            let line_idx = p.line.min(last_line);
-            let line = &self.lines[line_idx];
-            let mut c = p.col.min(line.len());
-            while c > 0 && !line.is_char_boundary(c) {
-                c -= 1;
-            }
-            Pos::new(line_idx, c)
-        };
-        let start = clamp(raw_start);
-        let end = clamp(raw_end);
-        if start >= end {
-            self.sel_anchor = None;
-            return;
-        }
-        self.push_undo();
-        if start.line == end.line {
-            self.formats
-                .get_mut(start.line)
-                .delete_range(start.col, end.col);
-            self.lines[start.line].replace_range(start.col..end.col, "");
-        } else {
-            // Delete from start.col to end of start line in formats
-            let start_line_len = self.lines[start.line].len();
-            self.formats
-                .get_mut(start.line)
-                .delete_range(start.col, start_line_len);
-            // Delete from 0 to end.col in end line, then grab remaining formats
-            self.formats.get_mut(end.line).delete_range(0, end.col);
-            let end_fmts = self.formats.remove_line(end.line);
-            // Remove middle lines' formats
-            for _ in (start.line + 1)..end.line {
-                self.formats.remove_line(start.line + 1);
-            }
-            // Append end line formats to start line
-            let start_len_after = start.col; // start line was truncated to start.col
-            self.formats
-                .get_mut(start.line)
-                .append(end_fmts, start_len_after);
-
-            let tail = self.lines[end.line][end.col..].to_string();
-            self.lines[start.line].truncate(start.col);
-            self.lines[start.line].push_str(&tail);
-            self.lines.drain(start.line + 1..=end.line);
-        }
-        self.set_cursor(start);
-        self.sel_anchor = None;
-        self.modified = true;
-    }
-
-    pub fn clear_selection(&mut self) {
-        self.sel_anchor = None;
-    }
-
-    /// Start or extend selection from the current cursor.
-    pub fn begin_selection(&mut self) {
-        if self.sel_anchor.is_none() {
-            self.sel_anchor = Some(self.cursor_pos());
-        }
+    pub fn select(&mut self, from: Pos, to: Pos) {
+        (self.anchor, self.caret) = (Some(self.doc.clamp(from)), self.doc.clamp(to));
+        self.moved();
     }
 
     pub fn select_all(&mut self) {
-        self.sel_anchor = Some(Pos::new(0, 0));
-        self.cursor_line = self.lines.len() - 1;
-        self.cursor_col = self.lines[self.cursor_line].len();
+        (self.anchor, self.caret) = (Some(Pos::default()), self.doc.end());
+        self.pending = None;
     }
 
-    // ── Text editing ───────────────────────────────────────────────────
-
-    /// The attrs newly typed text at the cursor inherits: the char left of
-    /// the cursor's formatting, falling back to the char at the cursor at
-    /// the start of a line. Standard word-processor insertion behavior —
-    /// typing at the end of a 32px run continues at 32px, click or no click.
-    pub fn typing_attrs(&self) -> TextAttrs {
-        let lf = self.formats.get(self.cursor_line);
-        // Any byte inside the previous char resolves its span.
-        lf.attrs_at(self.cursor_col.saturating_sub(1))
+    pub(crate) fn moved(&mut self) {
+        (self.pending, self.goal_x, self.follow) = (None, None, true);
     }
 
-    pub fn insert_char(&mut self, ch: char) {
-        if self.has_selection() {
-            self.delete_selection();
-        } else {
-            self.push_undo();
-        }
-        let attrs = self.pending_attrs.unwrap_or_else(|| self.typing_attrs());
-        if ch == '\n' {
-            let right_fmts = self
-                .formats
-                .get_mut(self.cursor_line)
-                .split_at(self.cursor_col);
-            let rest = self.lines[self.cursor_line][self.cursor_col..].to_string();
-            self.lines[self.cursor_line].truncate(self.cursor_col);
-            self.cursor_line += 1;
-            self.lines.insert(self.cursor_line, rest);
-            self.formats.insert_line(self.cursor_line, right_fmts);
-            self.cursor_col = 0;
-            // Carry the insertion format onto the new line, where there is
-            // no left-hand char to inherit from.
-            self.pending_attrs = if attrs.is_default() {
-                None
-            } else {
-                Some(attrs)
-            };
-        } else {
-            let len = ch.len_utf8();
-            self.formats
-                .get_mut(self.cursor_line)
-                .insert_formatted(self.cursor_col, len, attrs);
-            self.lines[self.cursor_line].insert(self.cursor_col, ch);
-            self.cursor_col += len;
-        }
-        self.modified = true;
+    /// Put the caret at `to`; with `selecting`, what it passes over is
+    /// selected.
+    pub fn move_to(&mut self, to: Pos, selecting: bool) {
+        self.anchor = if selecting { self.anchor.or(Some(self.caret)) } else { None };
+        self.caret = self.doc.clamp(to);
+        self.moved();
     }
 
-    pub fn insert_str(&mut self, s: &str) {
-        if self.has_selection() {
-            self.delete_selection();
-        } else {
-            self.push_undo();
-        }
-        self.pending_attrs = None;
-        if s.is_empty() {
-            return;
-        }
-        self.modified = true;
-        // Pasted plain text takes the insertion point's format, same as typing.
-        let inherited = self.typing_attrs();
-
-        // Bulk insertion. The old per-char loop was O(line²) per pasted line
-        // (String::insert shifts the whole tail every char) and froze the app
-        // for minutes on big pastes. Here each segment is spliced in whole.
-        let mut segments = s.split('\n');
-        let first = segments.next().unwrap_or("");
-        if !first.is_empty() {
-            self.formats.get_mut(self.cursor_line).insert_formatted(
-                self.cursor_col,
-                first.len(),
-                inherited,
-            );
-            self.lines[self.cursor_line].insert_str(self.cursor_col, first);
-            self.cursor_col += first.len();
-        }
-        let rest: Vec<&str> = segments.collect();
-        if rest.is_empty() {
-            return;
-        }
-
-        // Newlines present: split the current line once at the cursor; the
-        // tail (text + formats) moves to the end of the last pasted segment.
-        // Every new line inherits the origin line's paragraph attrs, matching
-        // what repeated `insert_char('\n')` calls produced.
-        let right_fmts = self
-            .formats
-            .get_mut(self.cursor_line)
-            .split_at(self.cursor_col);
-        let tail = self.lines[self.cursor_line][self.cursor_col..].to_string();
-        self.lines[self.cursor_line].truncate(self.cursor_col);
-        let para = self.formats.get(self.cursor_line).para;
-
-        let n = rest.len();
-        let mut new_lines: Vec<String> = Vec::with_capacity(n);
-        let mut new_fmts: Vec<LineFormats> = Vec::with_capacity(n);
-        for seg in &rest[..n - 1] {
-            let mut lf = LineFormats::new();
-            lf.para = para;
-            lf.insert_formatted(0, seg.len(), inherited);
-            new_lines.push((*seg).to_string());
-            new_fmts.push(lf);
-        }
-        let last = rest[n - 1];
-        let mut lf = LineFormats::new();
-        lf.para = para;
-        lf.insert_formatted(0, last.len(), inherited);
-        lf.append(right_fmts, last.len());
-        let mut text = String::with_capacity(last.len() + tail.len());
-        text.push_str(last);
-        text.push_str(&tail);
-        new_lines.push(text);
-        new_fmts.push(lf);
-
-        let at = self.cursor_line + 1;
-        self.lines.splice(at..at, new_lines);
-        self.formats.insert_lines(at, new_fmts);
-        self.cursor_line += n;
-        self.cursor_col = last.len();
-    }
-
-    pub fn backspace(&mut self) {
-        if self.has_selection() {
-            self.delete_selection();
-            return;
-        }
-        self.push_undo();
-        if self.cursor_col > 0 {
-            let prev = self.lines[self.cursor_line][..self.cursor_col]
-                .char_indices()
-                .last()
-                .map(|(i, _)| i)
-                .unwrap_or(0);
-            self.formats
-                .get_mut(self.cursor_line)
-                .delete_range(prev, self.cursor_col);
-            self.lines[self.cursor_line].remove(prev);
-            self.cursor_col = prev;
-            self.modified = true;
-        } else if self.cursor_line > 0 {
-            let removed_fmts = self.formats.remove_line(self.cursor_line);
-            let removed = self.lines.remove(self.cursor_line);
-            self.cursor_line -= 1;
-            self.cursor_col = self.lines[self.cursor_line].len();
-            self.formats
-                .get_mut(self.cursor_line)
-                .append(removed_fmts, self.cursor_col);
-            self.lines[self.cursor_line].push_str(&removed);
-            self.modified = true;
-        }
-    }
-
-    pub fn delete(&mut self) {
-        if self.has_selection() {
-            self.delete_selection();
-            return;
-        }
-        self.push_undo();
-        let line_len = self.lines[self.cursor_line].len();
-        if self.cursor_col < line_len {
-            let ch_len = self.lines[self.cursor_line][self.cursor_col..]
-                .chars()
-                .next()
-                .map(|c| c.len_utf8())
-                .unwrap_or(1);
-            self.formats
-                .get_mut(self.cursor_line)
-                .delete_range(self.cursor_col, self.cursor_col + ch_len);
-            self.lines[self.cursor_line].remove(self.cursor_col);
-            self.modified = true;
-        } else if self.cursor_line + 1 < self.lines.len() {
-            let next_fmts = self.formats.remove_line(self.cursor_line + 1);
-            let next = self.lines.remove(self.cursor_line + 1);
-            let cur_len = self.lines[self.cursor_line].len();
-            self.formats
-                .get_mut(self.cursor_line)
-                .append(next_fmts, cur_len);
-            self.lines[self.cursor_line].push_str(&next);
-            self.modified = true;
-        }
-    }
-
-    // ── Cursor movement — every move drops `pending_attrs`: a not-yet-typed
-    // format toggle belongs to the position where it was toggled. ──────────
-
-    pub fn move_left(&mut self, selecting: bool) {
-        if selecting {
-            self.begin_selection();
-        } else {
-            self.clear_selection();
-        }
-        self.pending_attrs = None;
-        if self.cursor_col > 0 {
-            let prev = self.lines[self.cursor_line][..self.cursor_col]
-                .char_indices()
-                .last()
-                .map(|(i, _)| i)
-                .unwrap_or(0);
-            self.cursor_col = prev;
-        } else if self.cursor_line > 0 {
-            self.cursor_line -= 1;
-            self.cursor_col = self.lines[self.cursor_line].len();
-        }
-    }
-
-    pub fn move_right(&mut self, selecting: bool) {
-        if selecting {
-            self.begin_selection();
-        } else {
-            self.clear_selection();
-        }
-        self.pending_attrs = None;
-        let line_len = self.lines[self.cursor_line].len();
-        if self.cursor_col < line_len {
-            let ch_len = self.lines[self.cursor_line][self.cursor_col..]
-                .chars()
-                .next()
-                .map(|c| c.len_utf8())
-                .unwrap_or(1);
-            self.cursor_col += ch_len;
-        } else if self.cursor_line + 1 < self.lines.len() {
-            self.cursor_line += 1;
-            self.cursor_col = 0;
-        }
-    }
-
-    pub fn move_up(&mut self, selecting: bool) {
-        if selecting {
-            self.begin_selection();
-        } else {
-            self.clear_selection();
-        }
-        self.pending_attrs = None;
-        if self.cursor_line > 0 {
-            self.cursor_line -= 1;
-            self.cursor_col = self.cursor_col.min(self.lines[self.cursor_line].len());
-        }
-    }
-
-    pub fn move_down(&mut self, selecting: bool) {
-        if selecting {
-            self.begin_selection();
-        } else {
-            self.clear_selection();
-        }
-        self.pending_attrs = None;
-        if self.cursor_line + 1 < self.lines.len() {
-            self.cursor_line += 1;
-            self.cursor_col = self.cursor_col.min(self.lines[self.cursor_line].len());
-        }
-    }
-
-    pub fn home(&mut self, selecting: bool) {
-        if selecting {
-            self.begin_selection();
-        } else {
-            self.clear_selection();
-        }
-        self.pending_attrs = None;
-        self.cursor_col = 0;
-    }
-
-    pub fn end(&mut self, selecting: bool) {
-        if selecting {
-            self.begin_selection();
-        } else {
-            self.clear_selection();
-        }
-        self.pending_attrs = None;
-        self.cursor_col = self.lines[self.cursor_line].len();
-    }
-
-    // ── Formatting ─────────────────────────────────────────────────────
-
-    /// Toggle a format attribute on the selection. If no selection, sets
-    /// pending_attrs so the next typed character gets the toggled format.
-    pub fn toggle_format(&mut self, toggle_fn: impl Fn(&mut TextAttrs)) {
-        if let Some((start, end)) = self.selection_range() {
-            self.push_undo();
-            let line_lens: Vec<usize> = self.lines.iter().map(|l| l.len()).collect();
-            self.formats.apply_format_range(
-                start.line, start.col, end.line, end.col, &line_lens, &toggle_fn,
-            );
-            self.modified = true;
-        } else {
-            // No selection — toggle pending attrs for next typed character,
-            // starting from what typing would inherit at this position.
-            let base = self.pending_attrs.unwrap_or_else(|| self.typing_attrs());
-            let mut attrs = base;
-            toggle_fn(&mut attrs);
-            self.pending_attrs = Some(attrs);
-        }
-    }
-
-    /// Set font size on the selection. If no selection, sets pending_attrs.
-    pub fn set_font_size(&mut self, size: f32) {
-        self.toggle_format(|a| a.font_size = Some(size));
-    }
-
-    /// Set the font family (a `fonts::FONTS` index, or `None` for default) on
-    /// the selection. If no selection, applies to pending_attrs.
-    pub fn set_font_family(&mut self, font: Option<u8>) {
-        self.toggle_format(|a| a.font = font);
-    }
-
-    /// Query the uniform format state across the current selection.
-    /// Returns default if no selection.
-    pub fn selection_format_state(&self) -> TextAttrs {
-        if let Some((start, end)) = self.selection_range() {
-            let line_lens: Vec<usize> = self.lines.iter().map(|l| l.len()).collect();
-            self.formats
-                .query_uniform_range(start.line, start.col, end.line, end.col, &line_lens)
-        } else if let Some(pending) = self.pending_attrs {
-            pending
-        } else {
-            // Show what typing here would produce, not the char to the right.
-            self.typing_attrs()
-        }
-    }
-
-    // ── Paragraph formatting ────────────────────────────────────────────
-
-    /// Apply a paragraph attribute change to the current line or all lines
-    /// touched by the selection.
-    pub fn set_paragraph_attr(&mut self, apply_fn: impl Fn(&mut ParagraphAttrs)) {
-        self.push_undo();
-        if let Some((start, end)) = self.selection_range() {
-            for i in start.line..=end.line {
-                apply_fn(&mut self.formats.get_mut(i).para);
-            }
-        } else {
-            apply_fn(&mut self.formats.get_mut(self.cursor_line).para);
-        }
-        self.modified = true;
-    }
-
-    pub fn set_alignment(&mut self, align: Alignment) {
-        self.set_paragraph_attr(|p| p.alignment = align);
-    }
-
-    /// Toggle bullet-list state on the current paragraph(s). If any touched
-    /// line is not yet a bullet, turn all on; otherwise turn all off.
-    pub fn toggle_bullet(&mut self) {
-        let (lo, hi) = if let Some((start, end)) = self.selection_range() {
-            (start.line, end.line)
-        } else {
-            (self.cursor_line, self.cursor_line)
+    /// A step left or right. With something selected and not selecting,
+    /// the caret goes to that end of it instead.
+    pub fn step(&mut self, right: bool, word: bool, selecting: bool) {
+        let to = match (self.selection(), selecting) {
+            (Some((a, b)), false) => if right { b } else { a },
+            _ => match (right, word) {
+                (false, false) => self.doc.left(self.caret),
+                (true, false) => self.doc.right(self.caret),
+                (false, true) => self.doc.word_left(self.caret),
+                (true, true) => self.doc.word_right(self.caret),
+            },
         };
-        let all_bullet = (lo..=hi).all(|i| self.formats.get(i).para.bullet);
-        let target = !all_bullet;
-        self.push_undo();
-        for i in lo..=hi {
-            self.formats.get_mut(i).para.bullet = target;
+        self.move_to(to, selecting);
+    }
+
+    /// Up or down by `pixels` of the page (a row is one of its own
+    /// height), keeping to the x the caret set out from.
+    pub fn climb(&mut self, pixels: f32, selecting: bool) {
+        let (x, y, h) = self.layout.caret(self.caret);
+        let goal = self.goal_x.unwrap_or(x);
+        let to = if pixels.abs() <= 1.0 {
+            self.layout.step(self.caret, if pixels < 0.0 { -1 } else { 1 }, goal)
+        } else {
+            Some(self.layout.hit(goal, (y + h * 0.5 + pixels).clamp(0.0, (self.layout.height() - 1.0).max(0.0))))
+        };
+        // From the first row up is the row's start; from the last down,
+        // its end.
+        let to = to.unwrap_or(if pixels < 0.0 { Pos::default() } else { self.doc.end() });
+        self.move_to(to, selecting);
+        self.goal_x = Some(goal);
+    }
+
+    /// Home and End: the row's ends, or with `whole` the document's.
+    pub fn edge(&mut self, end: bool, whole: bool, selecting: bool) {
+        let (start, rest) = if whole { (Pos::default(), self.doc.end()) } else { self.layout.row_ends(self.caret) };
+        self.move_to(if end { rest } else { start }, selecting);
+    }
+
+    // ---- changing ----
+
+    /// Remember things as they are before a change. Typing soon after
+    /// typing is one step.
+    pub(crate) fn step_back(&mut self, typing: bool) {
+        let snapshot = Snapshot { doc: self.doc.clone(), caret: self.caret, anchor: self.anchor };
+        if typing { self.undo.record(snapshot, self.now, TYPING_STEP) } else { self.undo.push(snapshot) }
+        self.rev += 1;
+    }
+
+    fn restore(&mut self, s: Snapshot) {
+        (self.doc, self.caret, self.anchor) = (s.doc, s.caret, s.anchor);
+        self.rev += 1;
+        self.moved();
+    }
+
+    pub fn undo(&mut self) -> bool {
+        let now = Snapshot { doc: self.doc.clone(), caret: self.caret, anchor: self.anchor };
+        self.undo.undo(now).map(|s| self.restore(s)).is_some()
+    }
+
+    pub fn redo(&mut self) -> bool {
+        let now = Snapshot { doc: self.doc.clone(), caret: self.caret, anchor: self.anchor };
+        self.undo.redo(now).map(|s| self.restore(s)).is_some()
+    }
+
+    pub fn can_undo(&self) -> (bool, bool) {
+        (self.undo.can_undo(), self.undo.can_redo())
+    }
+
+    /// Take the selection out, if there is one. The caller has taken the
+    /// undo step.
+    pub(crate) fn cut_selection(&mut self) -> bool {
+        let Some((a, b)) = self.selection() else { return false };
+        self.caret = self.doc.delete(a, b);
+        self.anchor = None;
+        true
+    }
+
+    /// What typing at the caret has: what was asked for, else what the
+    /// text there has.
+    pub fn typing_attrs(&self) -> TextAttrs {
+        self.pending.unwrap_or_else(|| self.doc.typing_attrs(self.selection().map_or(self.caret, |(a, _)| self.doc.right(a))))
+    }
+
+    /// Type `text` over the selection. Typed text keeps what was pending;
+    /// a paste does not need it to.
+    pub fn type_text(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
         }
-        self.modified = true;
+        let attrs = self.typing_attrs();
+        let typed = !text.contains('\n');
+        if typed && self.selection().is_some() {
+            // Over a selection: a step of its own, which the typing that
+            // follows joins, so one undo gives the selection back.
+            let snapshot = Snapshot { doc: self.doc.clone(), caret: self.caret, anchor: self.anchor };
+            self.undo.record(snapshot, self.now, 0.0);
+            self.rev += 1;
+        } else {
+            self.step_back(typed);
+        }
+        self.cut_selection();
+        self.caret = self.doc.insert_text(self.caret, text, attrs);
+        let keep = self.pending;
+        self.moved();
+        self.pending = keep;
+        if text == " " {
+            self.shorthand();
+        }
     }
 
-    /// True if the cursor line is an empty (text-less) bullet item.
-    pub fn cursor_on_empty_bullet(&self) -> bool {
-        let lf = self.formats.get(self.cursor_line);
-        lf.para.bullet && self.lines[self.cursor_line].is_empty()
+    /// A paragraph that starts with a mark and a blank becomes what the
+    /// mark stands for: `- ` a bullet, `1. ` a number, `[] ` a box, `# `
+    /// the title and `## ` to `#### ` the headings (as a Markdown file
+    /// has them), `> ` a quote. Undo gives the characters back.
+    fn shorthand(&mut self) {
+        let p = self.doc.para(self.caret.para);
+        if p.attrs.list != List::None || p.attrs.style != Style::Body || p.is_picture() {
+            return;
+        }
+        let (list, style) = match &p.text[..self.caret.byte] {
+            "- " | "* " => (List::Bullet, Style::Body),
+            "1. " | "1) " => (List::Number, Style::Body),
+            "[] " | "[ ] " => (List::Check(false), Style::Body),
+            "# " => (List::None, Style::Title),
+            "## " => (List::None, Style::Heading1),
+            "### " => (List::None, Style::Heading2),
+            "#### " => (List::None, Style::Heading3),
+            "> " => (List::None, Style::Quote),
+            _ => return,
+        };
+        self.undo.push(Snapshot { doc: self.doc.clone(), caret: self.caret, anchor: None });
+        let start = Pos::new(self.caret.para, 0);
+        self.caret = self.doc.delete(start, self.caret);
+        self.doc.set_paras(start.para, start.para, |a| (a.list, a.style) = (list, style));
     }
 
-    /// True if the cursor is at the very start of a bullet line.
-    pub fn cursor_at_bullet_start(&self) -> bool {
-        self.cursor_col == 0 && self.formats.get(self.cursor_line).para.bullet
+    /// Enter. On a list item with nothing in it the list ends there.
+    pub fn enter(&mut self) {
+        self.step_back(false);
+        self.cut_selection();
+        let p = self.doc.para(self.caret.para);
+        if p.attrs.list != List::None && p.text.is_empty() {
+            let para = self.caret.para;
+            self.doc.set_paras(para, para, |a| if a.level > 0 { a.level -= 1 } else { a.list = List::None });
+        } else {
+            self.caret = self.doc.split(self.caret);
+        }
+        self.moved();
     }
 
-    /// Clear bullet state on the cursor's line (used to "exit" the list).
-    pub fn clear_bullet_here(&mut self) {
-        self.push_undo();
-        self.formats.get_mut(self.cursor_line).para.bullet = false;
-        self.modified = true;
+    /// Backspace (`back`) or Delete, a character or a `word`. At the
+    /// start of a list item Backspace takes the item's mark first.
+    pub fn erase(&mut self, back: bool, word: bool) {
+        if self.selection().is_some() {
+            self.step_back(false);
+            self.cut_selection();
+            return self.moved();
+        }
+        let attrs = self.doc.para(self.caret.para).attrs;
+        if back && self.caret.byte == 0 && (attrs.list != List::None || attrs.style != Style::Body) {
+            self.step_back(false);
+            let para = self.caret.para;
+            self.doc.set_paras(para, para, |a| if a.list != List::None { a.list = List::None } else { a.style = Style::Body });
+            self.doc.set_paras(para, para, |a| a.level = 0);
+            return self.moved();
+        }
+        let to = match (back, word) {
+            (true, false) => self.doc.left(self.caret),
+            (true, true) => self.doc.word_left(self.caret),
+            (false, false) => self.doc.right(self.caret),
+            (false, true) => self.doc.word_right(self.caret),
+        };
+        if to == self.caret {
+            return;
+        }
+        self.step_back(!word);
+        self.caret = self.doc.delete(self.caret, to);
+        self.moved();
     }
 
-    /// Get the paragraph attrs of the line the cursor is on.
-    pub fn current_para(&self) -> ParagraphAttrs {
-        self.formats.get(self.cursor_line).para
+    /// Tab: a list item goes a level in (or out, with `back`); anywhere
+    /// else it is a tab in the text.
+    pub fn tab(&mut self, back: bool) {
+        let (from, to) = self.selection().map_or((self.caret.para, self.caret.para), |(a, b)| (a.para, b.para));
+        if (from..=to).any(|i| self.doc.para(i).attrs.list != List::None) {
+            self.nest(if back { -1 } else { 1 });
+        } else if !back {
+            self.type_text("\t");
+        }
     }
 }
+
+#[cfg(test)]
+#[path = "editor_tests.rs"]
+mod tests;
