@@ -51,6 +51,19 @@ pub(super) fn handle_scroll(
         let viewport_h = (panel_rect.y + panel_rect.h - list_top).max(0.0);
         let max = crate::controls::wifi::max_scroll(&app.controls.wifi, viewport_h, scale_f);
         app.controls.wifi.scroll = (app.controls.wifi.scroll + dy).clamp(0.0, max);
+    } else if matches!(
+        app.mode,
+        crate::app::PanelMode::Control(crate::controls::TileId::Bluetooth)
+    ) {
+        let view_top_y = crate::controls::content_top_y(panel_rect, scale_f);
+        crate::controls::bluetooth::scroll_by(
+            &mut app.controls.bluetooth,
+            dy,
+            panel_rect,
+            view_top_y,
+            scale_f,
+            app.config.text_size,
+        );
     } else if app.clipboard.open {
         let top_y = crate::controls::content_top_y(panel_rect, scale_f);
         let panel_bottom = panel_rect.y + panel_rect.h;

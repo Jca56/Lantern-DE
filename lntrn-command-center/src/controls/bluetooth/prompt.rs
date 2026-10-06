@@ -10,7 +10,8 @@
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
-use super::render::{body_font, draw_pill_button, truncate_name, ROW_INNER_PAD};
+use super::layout::{body_font, ROW_INNER_PAD};
+use super::render::{draw_pill_button, truncate_name};
 use super::{Bluetooth, Device};
 
 // ── Strip geometry constants ───────────────────────────────────────────

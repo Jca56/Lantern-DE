@@ -9,7 +9,8 @@
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
-use super::render::{body_font, draw_pill_button, ROW_INNER_PAD, ROW_RIGHT_GAP};
+use super::layout::{body_font, ROW_INNER_PAD, ROW_RIGHT_GAP};
+use super::render::draw_pill_button;
 use super::{Bluetooth, Device};
 
 /// Padding inside the expanded panel.

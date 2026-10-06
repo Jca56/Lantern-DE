@@ -19,6 +19,8 @@ use std::time::{Duration, Instant};
 
 mod detail;
 mod glyph;
+mod hit;
+mod layout;
 mod obex;
 mod prompt;
 mod render;
@@ -28,7 +30,9 @@ mod worker;
 // Re-export public items so callers can keep saying
 // `crate::controls::bluetooth::draw_view` etc. as before.
 pub use glyph::{draw_inline, TILE_WIDTH};
-pub use render::{draw_view, hit_test, BtClick};
+pub use hit::{hit_test, BtClick};
+pub use layout::scroll_by;
+pub use render::draw_view;
 
 #[derive(Debug, Clone, Default)]
 pub struct Device {
@@ -248,6 +252,14 @@ pub struct Bluetooth {
     /// MAC of the device the cursor is currently over. Used for a
     /// subtle hover highlight on rows.
     pub hovered_mac: Option<String>,
+    /// Vertical scroll offset of the device list in logical px. Moved by
+    /// the layershell wheel handler through `scroll_by`; the view clamps
+    /// it to the content it has each frame.
+    scroll: f32,
+    /// Keep the row with a live request strip (pair / file Accept-Reject)
+    /// scrolled into view. Raised when a request arrives, dropped the
+    /// moment the user scrolls by hand.
+    follow_request: bool,
     cmd_tx: mpsc::Sender<BtCmd>,
     event_rx: mpsc::Receiver<BtEvent>,
 }
@@ -352,6 +364,8 @@ impl Bluetooth {
             last_received: None,
             expanded_mac: None,
             hovered_mac: None,
+            scroll: 0.0,
+            follow_request: false,
             cmd_tx,
             event_rx,
         }
@@ -496,6 +510,7 @@ impl Bluetooth {
                     // so the name comes from the row itself — no need to
                     // resolve it here.
                     self.pair_prompt = Some(PairPrompt::new(mac, kind));
+                    self.follow_request = true;
                 }
                 BtEvent::PairDone { mac: _ } => {
                     self.pair_prompt = None;
@@ -571,6 +586,7 @@ impl Bluetooth {
                         size,
                     });
                     self.last_received = None;
+                    self.follow_request = true;
                     // Guarantee a row to render the inline Accept/Reject
                     // on, even if the sender isn't in the snapshot or its
                     // name doesn't match a known device.
@@ -600,6 +616,7 @@ impl Bluetooth {
                         name: display,
                         passkey,
                     });
+                    self.follow_request = true;
                     // Surface the requesting device's row even if it's
                     // not in the snapshot yet (brand-new device).
                     self.ensure_pending_pair_device();
