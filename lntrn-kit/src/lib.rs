@@ -22,12 +22,14 @@
 //! - `controls`: switch, slider, segmented control, buttons, text field.
 //! - `pickers`: the dropdown and the colour chip.
 //! - `bits`: badges and banners.
+//! - `chart`: graphs, meters and dashboard tiles.
 //! - `nav`: a sidebar's shade, captions and rows.
 //! - `probe`: what a headless test can ask about a layout.
 //! - `startup`: where an app's panics and complaints go.
 
 pub mod bits;
 pub mod card;
+pub mod chart;
 pub mod controls;
 pub mod desktop;
 pub mod layout;

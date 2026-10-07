@@ -36,6 +36,12 @@ pub fn caption(ui: &mut Ui, s: &str) {
 /// `showing` sits on an accent pill. `id` tells rows with the same label
 /// apart. `true` when it was clicked.
 pub fn row(ui: &mut Ui, id: &str, label: &str, glyph: Option<IconFn>, showing: bool) -> bool {
+    row_value(ui, id, label, glyph, showing, "")
+}
+
+/// [`row`] with `value` small at its right end: what the page behind it
+/// reads right now ("37%"). The label gives way to it.
+pub fn row_value(ui: &mut Ui, id: &str, label: &str, glyph: Option<IconFn>, showing: bool, value: &str) -> bool {
     let m = ui.m;
     let full = ui.alloc(Vec2::new(FILL, m.px(ROW_H)));
     let rect = Rect::new(full.min, Vec2::new(full.max.x - m.px(EDGE), full.max.y));
@@ -59,8 +65,16 @@ pub fn row(ui: &mut Ui, id: &str, label: &str, glyph: Option<IconFn>, showing: b
         glyph(ui.draw, picture, ink, m.px(2.5));
         text_x = rect.min.x + m.px(64.0);
     }
+    let mut text_end = rect.max.x - m.px(10.0);
+    if !value.is_empty() {
+        let small = small_style(ui);
+        let end = rect.max.x - m.px(14.0);
+        text_end = end - ui.measure(value, &small) - m.px(8.0);
+        let dim = if showing { ink.fade(0.75) } else { look::TEXT_DIM };
+        ui.text_right(value, &small, Rect::new(Vec2::new(text_end, rect.min.y), Vec2::new(end, rect.max.y)), dim);
+    }
     let style = ui.text_style();
-    ui.text_in_rect(label, &style, Rect::new(Vec2::new(text_x, rect.min.y), Vec2::new(rect.max.x - m.px(10.0), rect.max.y)), ink);
+    ui.text_in_rect(label, &style, Rect::new(Vec2::new(text_x, rect.min.y), Vec2::new(text_end.max(text_x), rect.max.y)), ink);
     ui.focus_ring(id, rect);
     r.clicked
 }

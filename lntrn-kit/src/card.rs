@@ -5,8 +5,8 @@
 use lntrn_math::{Color, Rect, Vec2};
 use lntrn_ui::{FILL, TextResponse, Ui};
 
-use crate::layout::small_style;
-use crate::{controls, look, pickers, probe};
+use crate::layout::{Keep, elide, small_style};
+use crate::{chart, controls, look, pickers, probe};
 
 /// The least a row is tall, and the room inside a card's left and right.
 const ROW_H: f64 = 70.0;
@@ -17,6 +17,8 @@ const CARD_RADIUS: f64 = 15.0;
 const HINT_MIN_W: f64 = 260.0;
 /// A text row's field.
 const FIELD_W: f64 = 440.0;
+/// A meter row's bar.
+const METER_W: f64 = 240.0;
 
 /// A card being filled. Rows go in through its methods, which know
 /// whether a line belongs above them.
@@ -227,6 +229,33 @@ impl Card<'_, '_> {
             let rect = Rect::from_min_size(Vec2::new(slot.min.x, (slot.center().y - h * 0.5).round()), Vec2::new(slot.width(), h));
             controls::text_field(ui, id, rect, value, placeholder)
         })
+    }
+
+    /// A row that only says something: `value` at its right, cut short
+    /// with an ellipsis when the card is too narrow for all of it.
+    pub fn value(&mut self, label: &str, hint: &str, value: &str) {
+        let style = self.ui.text_style();
+        let w = self.ui.measure(value, &style) + self.ui.m.px(2.0);
+        self.row(label, hint, w, |ui, slot| {
+            let shown = elide(ui, value, &style, slot.width(), Keep::Start);
+            ui.text_right(&shown, &style, slot, look::TEXT_DIM);
+        });
+    }
+
+    /// A row that says how full something is: `text` (the reading, as
+    /// words), then a meter filled with `color` to `frac` (0 to 1). The
+    /// meters of a card's rows line up, whatever their readings say.
+    pub fn meter(&mut self, label: &str, hint: &str, frac: f64, text: &str, color: Color) {
+        let m = self.ui.m;
+        let id = self.ui.id(label);
+        let style = self.ui.text_style();
+        let (bar_w, between) = (m.px(METER_W), m.px(18.0));
+        let w = bar_w + between + self.ui.measure(text, &style);
+        self.row(label, hint, w, |ui, slot| {
+            let (bar, words) = slot.take_right(bar_w.min(slot.width()));
+            chart::meter(ui, id, bar, frac, color);
+            ui.text_right(text, &style, Rect::new(words.min, Vec2::new(words.max.x - between, words.max.y)), look::TEXT_DIM);
+        });
     }
 
     /// A row that does something: `text` on a button. `true` when pressed.
