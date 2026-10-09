@@ -12,6 +12,8 @@
 //! - `config/` — every section we own as a `props!` struct, loaded from
 //!   and merged back into `lantern.toml` without touching what we don't.
 //! - `thumbs.rs` — wallpaper thumbnails, made off the UI thread.
+//! - `outputs/` — the compositor's monitors, asked and told over
+//!   wlr-output-management on a connection of our own.
 //! - `machine.rs`, `fonts.rs` — what the hardware has, what fonts exist.
 
 mod app;
@@ -20,6 +22,7 @@ mod fonts;
 mod glyphs;
 mod machine;
 mod nav;
+mod outputs;
 mod pages;
 mod sidebar;
 #[cfg(test)]

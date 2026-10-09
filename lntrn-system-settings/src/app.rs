@@ -1,7 +1,9 @@
 //! The app as the shell sees it: one editor showing a sidebar of pages
 //! and the chosen page, menus, the palette, and live saving. Every
 //! change marks the config dirty; it is written a moment after the last
-//! one, and the compositor picks it up from the file's mtime.
+//! one, and the compositor picks it up from the file's mtime. The one
+//! other editor is the number Identify puts on a monitor, in a layer
+//! surface of its own (see `pages::monitors::badge`).
 
 use lntrn_app::lntrn_render::{Gpu, Images};
 use lntrn_app::{AppHost, Waker};
@@ -12,6 +14,7 @@ use crate::config::Config;
 use crate::look;
 use crate::nav::Page;
 use crate::pages;
+use crate::pages::monitors::{MonitorsState, badge};
 use crate::pages::mouse::MouseState;
 use crate::pages::wallpaper::WallpaperState;
 use crate::sidebar;
@@ -26,6 +29,8 @@ const DISK_CHECK: f64 = 1.0;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Editor {
     Settings,
+    /// The number on a monitor, by the monitor's place among them.
+    Badge(u8),
 }
 
 const EDITORS: [Editor; 1] = [Editor::Settings];
@@ -35,6 +40,7 @@ pub struct App {
     pub page: Page,
     pub wallpaper: WallpaperState,
     pub mouse: MouseState,
+    pub monitors: MonitorsState,
     /// Font families found on disk, read when Appearance first shows.
     pub fonts: Vec<String>,
     keys: KeyConfig,
@@ -48,7 +54,7 @@ impl App {
         let mut keys = KeyConfig::default();
         keys.bind(CTX_WINDOW, KeyItem::new(Trigger::key(Key::Char('q'), Modifiers::CTRL), actions::QUIT));
         keys.bind(CTX_WINDOW, KeyItem::new(Trigger::key(Key::F(3), Modifiers::NONE), actions::PALETTE));
-        Self { config, page: Page::Wallpaper, wallpaper: WallpaperState::default(), mouse: MouseState::default(), fonts: Vec::new(), keys, dirty: false, dirty_since: 0.0, last_disk_check: 0.0 }
+        Self { config, page: Page::Wallpaper, wallpaper: WallpaperState::default(), mouse: MouseState::default(), monitors: MonitorsState::default(), fonts: Vec::new(), keys, dirty: false, dirty_since: 0.0, last_disk_check: 0.0 }
     }
 
     /// Something changed: write it once the user pauses.
@@ -96,8 +102,26 @@ impl Host for App {
         &EDITORS
     }
 
-    fn editor_label(&self, _editor: Editor) -> &str {
-        "Settings"
+    fn editor_label(&self, editor: Editor) -> &str {
+        match editor {
+            Editor::Settings => "Settings",
+            Editor::Badge(_) => "Monitor",
+        }
+    }
+
+    fn editor_id(&self, editor: Editor) -> String {
+        match editor {
+            Editor::Settings => "Settings".to_owned(),
+            Editor::Badge(index) => badge::editor_id(index),
+        }
+    }
+
+    fn editor_from_id(&self, id: &str) -> Option<Editor> {
+        if id == "Settings" { Some(Editor::Settings) } else { badge::index_of(id).map(Editor::Badge) }
+    }
+
+    fn pickable(&self, editor: Editor) -> bool {
+        editor == Editor::Settings
     }
 
     fn title(&self) -> String {
@@ -143,7 +167,15 @@ impl Host for App {
         self.keys.hint_for(action)
     }
 
-    fn draw_body(&mut self, _editor: Editor, ui: &mut Ui, cx: &mut AreaCx<()>) -> bool {
+    fn draw_body(&mut self, editor: Editor, ui: &mut Ui, cx: &mut AreaCx<()>) -> bool {
+        if let Editor::Badge(index) = editor {
+            self.monitors.identify.draw(index, ui, cx);
+            return false;
+        }
+        // Whatever page shows: a setup on trial is counted down here.
+        if let Some(soon) = self.monitors.tick(&self.config.monitors, ui.now()) {
+            ui.state.request_redraw_after(soon);
+        }
         let width = ui.m.px(sidebar::WIDTH);
         ui.columns(&[width, FILL], |ui, col| match col {
             0 => sidebar::draw(ui, &mut self.page),
@@ -188,7 +220,8 @@ impl Host for App {
 
 impl AppHost for App {
     fn waker(&mut self, waker: Waker) {
-        self.wallpaper.set_waker(waker);
+        self.wallpaper.set_waker(waker.clone());
+        self.monitors.set_waker(waker);
     }
 
     fn after_rebuild(&mut self, gpu: &Gpu, images: &mut Images, shell: &mut Shell<Self>) -> bool {

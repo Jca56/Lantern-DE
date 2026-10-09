@@ -13,6 +13,7 @@ pub enum Page {
     Effects,
     Animations,
     Mouse,
+    Monitors,
     Notifications,
     Power,
     Terminal,
@@ -20,7 +21,7 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 10] = [Page::Wallpaper, Page::Appearance, Page::Windows, Page::Effects, Page::Animations, Page::Mouse, Page::Notifications, Page::Power, Page::Terminal, Page::Notepad];
+    pub const ALL: [Page; 11] = [Page::Wallpaper, Page::Appearance, Page::Windows, Page::Effects, Page::Animations, Page::Mouse, Page::Monitors, Page::Notifications, Page::Power, Page::Terminal, Page::Notepad];
 
     /// A stable name for palette entries and actions.
     pub fn id(self) -> &'static str {
@@ -31,6 +32,7 @@ impl Page {
             Page::Effects => "effects",
             Page::Animations => "animations",
             Page::Mouse => "mouse",
+            Page::Monitors => "monitors",
             Page::Notifications => "notifications",
             Page::Power => "power",
             Page::Terminal => "terminal",
@@ -51,6 +53,7 @@ impl Page {
             Page::Effects => "Effects",
             Page::Animations => "Animations",
             Page::Mouse => "Mouse",
+            Page::Monitors => "Monitors",
             Page::Notifications => "Notifications",
             Page::Power => "Power",
             Page::Terminal => "Terminal",
@@ -67,6 +70,7 @@ impl Page {
             Page::Effects => "Transparency, blur and the glows.",
             Page::Animations => "How windows move.",
             Page::Mouse => "Pointer, scrolling, clicking and the cursor.",
+            Page::Monitors => "Where each one sits, and its resolution, refresh rate and scale.",
             Page::Notifications => "Toasts: where they show, for how long, how loud.",
             Page::Power => "What the machine does when it is left alone.",
             Page::Terminal => "Text size, the cursor and how its window opens.",
@@ -83,6 +87,7 @@ impl Page {
             Page::Effects => glyphs::effects,
             Page::Animations => glyphs::animations,
             Page::Mouse => glyphs::mouse,
+            Page::Monitors => glyphs::monitors,
             Page::Notifications => glyphs::notifications,
             Page::Power => glyphs::power,
             Page::Terminal => glyphs::terminal,
@@ -100,7 +105,7 @@ pub struct Group {
 pub const GROUPS: &[Group] = &[
     Group { label: "Look", pages: &[Page::Wallpaper, Page::Appearance, Page::Windows, Page::Effects, Page::Animations] },
     Group { label: "Input", pages: &[Page::Mouse] },
-    Group { label: "System", pages: &[Page::Notifications, Page::Power] },
+    Group { label: "System", pages: &[Page::Monitors, Page::Notifications, Page::Power] },
     Group { label: "Apps", pages: &[Page::Terminal, Page::Notepad] },
 ];
 

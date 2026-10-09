@@ -64,6 +64,13 @@ pub fn mouse(d: &mut DrawList, rect: Rect, color: Color, w: f64) {
     d.line(at(rect, 0.0, -0.55), at(rect, 0.0, -0.2), w, color);
 }
 
+/// A monitor on its stand.
+pub fn monitors(d: &mut DrawList, rect: Rect, color: Color, w: f64) {
+    d.stroke_rect(Rect::new(at(rect, -0.9, -0.8), at(rect, 0.9, 0.4)), w, half(rect) * 0.2, color);
+    d.line(at(rect, 0.0, 0.4), at(rect, 0.0, 0.8), w, color);
+    d.line(at(rect, -0.45, 0.8), at(rect, 0.45, 0.8), w, color);
+}
+
 /// A bell.
 pub fn notifications(d: &mut DrawList, rect: Rect, color: Color, w: f64) {
     let s = half(rect);

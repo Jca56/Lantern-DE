@@ -38,7 +38,7 @@ fn sandbox() {
 }
 
 /// The app in a window `width` × `height` logical pixels at `scale`.
-fn app_at(width: f64, height: f64, scale: f64) -> (Harness, Shell<App>, App) {
+pub(crate) fn app_at(width: f64, height: f64, scale: f64) -> (Harness, Shell<App>, App) {
     sandbox();
     kit::probe::watch();
     let mut h = Harness::new(width * scale, height * scale);
@@ -49,11 +49,11 @@ fn app_at(width: f64, height: f64, scale: f64) -> (Harness, Shell<App>, App) {
 }
 
 /// The id of something `path` deep inside the app's one area.
-fn in_body(h: &Harness, path: impl Fn(WidgetId) -> WidgetId) -> WidgetId {
+pub(crate) fn in_body(h: &Harness, path: impl Fn(WidgetId) -> WidgetId) -> WidgetId {
     (0..8).map(|area| path(WidgetId::ROOT.with_u64(area).with("body"))).find(|id| h.rect_of(*id).is_some()).expect("laid out in the body")
 }
 
-fn click(h: &mut Harness, shell: &mut Shell<App>, app: &mut App, at: Vec2) {
+pub(crate) fn click(h: &mut Harness, shell: &mut Shell<App>, app: &mut App, at: Vec2) {
     h.move_to(at);
     h.press();
     h.shell_frame(shell, app);
@@ -61,11 +61,11 @@ fn click(h: &mut Harness, shell: &mut Shell<App>, app: &mut App, at: Vec2) {
     h.shell_settle(shell, app, 8);
 }
 
-fn clipped() -> Vec<String> {
+pub(crate) fn clipped() -> Vec<String> {
     kit::probe::take_clipped()
 }
 
-fn stacked() -> Vec<String> {
+pub(crate) fn stacked() -> Vec<String> {
     kit::probe::take_stacked()
 }
 

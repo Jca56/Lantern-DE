@@ -319,7 +319,7 @@ mod tests {
     fn a_click_is_for_one_screen_or_all_of_them() {
         let mut cfg = Config::empty();
         cfg.appearance.wallpaper = "/a.png".into();
-        cfg.monitors = vec![Monitor { name: "eDP-1".into(), wallpaper: String::new() }, Monitor { name: "DP-2".into(), wallpaper: "/b.png".into() }];
+        cfg.monitors = vec![Monitor { name: "eDP-1".into(), ..Monitor::default() }, Monitor { name: "DP-2".into(), wallpaper: "/b.png".into(), ..Monitor::default() }];
         assert_eq!((current(&cfg, 0), current(&cfg, 1), current(&cfg, 2)), ("/a.png", "/a.png", "/b.png"));
         apply(&mut cfg, 1, "/c.png");
         assert_eq!((current(&cfg, 1), cfg.appearance.wallpaper.as_str()), ("/c.png", "/a.png"));

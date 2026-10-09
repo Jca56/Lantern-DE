@@ -2,12 +2,14 @@
 //! sections; saving parses the file again, replaces the keys we own
 //! inside each of them and writes everything back, so `[lockscreen]`,
 //! `[keybinds]` and anything another tool adds stay exactly as they
-//! were. Of `[[monitors]]` we own one key, each screen's `wallpaper`;
-//! the rest of an entry is the compositor's. Of `[terminal]` we own the
-//! keys on its page; the tabs it has pinned are the terminal's.
-//! `[notepad]` is shared with Notepad, which writes the same keys.
+//! were. Of `[[monitors]]` we own each screen's wallpaper and how it
+//! is set up (see `monitors.rs`); the rest of an entry is the
+//! compositor's. Of `[terminal]` we own the keys on its page; the tabs
+//! it has pinned are the terminal's. `[notepad]` is shared with Notepad,
+//! which writes the same keys.
 
 mod appearance;
+mod monitors;
 mod system;
 
 use std::path::PathBuf;
@@ -16,16 +18,8 @@ use std::time::SystemTime;
 pub use appearance::{Appearance, GRADIENT_STOPS, WindowManager, Windows};
 use lntrn_data::{Doc, from_doc, to_doc, toml};
 use lntrn_props::Reflect;
+pub use monitors::Monitor;
 pub use system::{ANIMATION_PRESETS, Animations, CURSOR_STYLES, Input, NOTEPAD_PAGES, NOTIFICATION_POSITIONS, Notepad, Notifications, Power, TERMINAL_FONT_SIZES, Terminal};
-
-/// A `[[monitors]]` entry as far as this app goes: its name, and the
-/// wallpaper it shows instead of the global one (empty: the global one).
-/// Everything else in the entry is the compositor's and is left alone.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Monitor {
-    pub name: String,
-    pub wallpaper: String,
-}
 
 pub struct Config {
     pub appearance: Appearance,
@@ -37,7 +31,8 @@ pub struct Config {
     pub animations: Animations,
     pub terminal: Terminal,
     pub notepad: Notepad,
-    /// The screens the file lists, with their wallpaper overrides.
+    /// The screens the file lists: their wallpapers and how each is set
+    /// up.
     pub monitors: Vec<Monitor>,
     /// The file's modification time as of the last load or save.
     mtime: Option<SystemTime>,
@@ -162,7 +157,7 @@ impl Config {
             self.notepad = Notepad::from_old_file(&old);
         }
         self.sanitize();
-        self.monitors = read_monitors(&doc);
+        self.monitors = monitors::read(&doc);
         self.mtime = mtime_of(&path());
     }
 
@@ -200,7 +195,7 @@ impl Config {
             merge_section(&mut doc, name, to_doc(section));
         }
         retire_keys(&mut doc);
-        write_monitor_wallpapers(&mut doc, &self.monitors);
+        monitors::write(&mut doc, &self.monitors);
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
@@ -224,37 +219,6 @@ fn retire_keys(doc: &mut Doc) {
     for (section, key) in RETIRED {
         if let Some(s) = doc.as_map_mut().and_then(|m| m.get_mut(section)).and_then(Doc::as_map_mut) {
             s.remove(key);
-        }
-    }
-}
-
-/// The `[[monitors]]` entries of `doc`, in the file's order.
-fn read_monitors(doc: &Doc) -> Vec<Monitor> {
-    let Some(list) = doc.get("monitors").and_then(Doc::as_list) else { return Vec::new() };
-    list.iter()
-        .filter_map(|m| {
-            let name = m.get("name")?.as_str()?.to_owned();
-            let wallpaper = m.get("wallpaper").and_then(Doc::as_str).unwrap_or("").to_owned();
-            Some(Monitor { name, wallpaper })
-        })
-        .collect()
-}
-
-/// Put each monitor's wallpaper override into its `[[monitors]]` entry,
-/// touching only the entries where it differs from what the file has. No
-/// override is no key.
-fn write_monitor_wallpapers(doc: &mut Doc, monitors: &[Monitor]) {
-    let Some(Doc::List(entries)) = doc.as_map_mut().and_then(|m| m.get_mut("monitors")) else { return };
-    for entry in entries.iter_mut() {
-        let Some(m) = entry.as_map_mut() else { continue };
-        let Some(ours) = m.get("name").and_then(Doc::as_str).and_then(|n| monitors.iter().find(|x| x.name == n)) else { continue };
-        if m.get("wallpaper").and_then(Doc::as_str).unwrap_or("") == ours.wallpaper {
-            continue;
-        }
-        if ours.wallpaper.is_empty() {
-            m.remove("wallpaper");
-        } else {
-            m.insert("wallpaper", Doc::Str(ours.wallpaper.clone()));
         }
     }
 }
@@ -283,25 +247,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A monitor's wallpaper override goes into its own entry and comes
-    /// out again, the rest of the entry (and the entries we weren't asked
-    /// about) stays, and the retired theme key leaves the file.
+    /// A key this app gave up leaves the file, and nothing beside it does.
     #[test]
-    fn monitor_wallpapers_and_retired_keys() {
-        let text = "[appearance]\nactive_theme = \"fox\"\naccent = \"#FFC800\"\n\n[[monitors]]\nname = \"eDP-1\"\nscale = 1.5\n\n[[monitors]]\nname = \"DP-2\"\nwallpaper = \"/old.png\"\nvrr = true\n";
-        let mut doc = toml::parse(text).unwrap();
-        let mut monitors = read_monitors(&doc);
-        assert_eq!(monitors, vec![Monitor { name: "eDP-1".into(), wallpaper: String::new() }, Monitor { name: "DP-2".into(), wallpaper: "/old.png".into() }]);
-        monitors[0].wallpaper = "/new.jpg".into();
-        monitors[1].wallpaper.clear();
-        write_monitor_wallpapers(&mut doc, &monitors);
+    fn retired_keys_leave_the_file() {
+        let mut doc = toml::parse("[appearance]\nactive_theme = \"fox\"\naccent = \"#FFC800\"\n").unwrap();
         retire_keys(&mut doc);
         let doc = toml::parse(&toml::write(&doc)).unwrap();
-        assert_eq!(read_monitors(&doc), monitors);
-        let list = doc.get("monitors").and_then(Doc::as_list).unwrap();
-        assert_eq!(list[0].get("scale").and_then(Doc::as_f64), Some(1.5));
-        assert_eq!(list[1].get("vrr").and_then(Doc::as_bool), Some(true));
-        assert!(list[1].get("wallpaper").is_none(), "no override is no key");
         assert!(doc.path("appearance.active_theme").is_none());
         assert_eq!(doc.path("appearance.accent").and_then(Doc::as_str), Some("#FFC800"));
     }
