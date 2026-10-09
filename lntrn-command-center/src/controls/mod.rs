@@ -479,6 +479,7 @@ pub fn draw_row(
                 surface_w,
                 surface_h,
                 workspace_num,
+                lit,
             ),
             TileId::Clock => clock::draw_inline(
                 painter,

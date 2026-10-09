@@ -830,7 +830,9 @@ pub(super) fn handle_clicks(
                     app.toggle_collapsed();
                 }
                 crate::controls::TileId::Workspace => {
-                    // Workspace number is a passive indicator — no view.
+                    // Step to the next populated workspace on our output
+                    // (wraps) — no expanded view.
+                    app.workspace_ipc.send_cycle(wl.current_output_name(), 1);
                 }
                 crate::controls::TileId::Gaming => {
                     // Toggle Gaming Mode via IPC — no expanded view.

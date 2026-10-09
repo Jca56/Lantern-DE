@@ -1,6 +1,7 @@
 //! Workspace-number tile: the active workspace shown as a bold digit in
 //! a rounded square box. The value comes from the compositor's workspace
-//! IPC (`app.workspace_ipc.active_id()`), passed in at draw time.
+//! IPC (`app.workspace_ipc.active_id_for()`), passed in at draw time.
+//! Clicking the box cycles through the populated workspaces.
 
 use lntrn_render::{Color, FontStyle, FontWeight, Painter, Rect, TextRenderer};
 
@@ -13,6 +14,8 @@ pub const TILE_WIDTH: f32 = 56.0;
 const BOX_SIZE: f32 = 46.0;
 /// Bold digit font inside the box.
 const NUM_FONT: f32 = 30.0;
+/// Accent gold #C8860A — matches the toolbar/calendar accent.
+const GOLD: (u8, u8, u8) = (0xc8, 0x86, 0x0a);
 
 #[allow(clippy::too_many_arguments)]
 pub fn draw_inline(
@@ -24,6 +27,7 @@ pub fn draw_inline(
     surface_w: u32,
     surface_h: u32,
     workspace: Option<u32>,
+    lit: bool,
 ) {
     // Nothing to show until the compositor reports an active workspace.
     let Some(ws) = workspace else {
@@ -37,13 +41,21 @@ pub fn draw_inline(
     let box_rect = Rect::new(box_x, box_y, box_size, box_size);
     let radius = 12.0 * scale;
 
-    painter.rect_filled(box_rect, radius, Color::rgba(1.0, 1.0, 1.0, 0.06 * alpha));
-    painter.rect_stroke_sdf(
-        box_rect,
-        radius,
-        1.5 * scale,
-        Color::rgba(1.0, 1.0, 1.0, 0.14 * alpha),
-    );
+    // Hovered with somewhere to cycle to: the box brightens and its
+    // border turns gold, like the other tiles' lit state.
+    let (fill, stroke) = if lit {
+        (
+            Color::rgba(1.0, 1.0, 1.0, 0.12 * alpha),
+            Color::from_rgb8(GOLD.0, GOLD.1, GOLD.2).with_alpha(alpha),
+        )
+    } else {
+        (
+            Color::rgba(1.0, 1.0, 1.0, 0.06 * alpha),
+            Color::rgba(1.0, 1.0, 1.0, 0.14 * alpha),
+        )
+    };
+    painter.rect_filled(box_rect, radius, fill);
+    painter.rect_stroke_sdf(box_rect, radius, 1.5 * scale, stroke);
 
     let num = ws.to_string();
     let num_font = NUM_FONT * scale;

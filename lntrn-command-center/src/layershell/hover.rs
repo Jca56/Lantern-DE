@@ -193,9 +193,15 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
         } else {
             app.clipboard.hover_idx = None;
         }
-        app.hovered_control_tile =
-            app.controls
-                .hit_test(panel_rect, scale_f, phys_cx, phys_cy, app.panel_view);
+        app.hovered_control_tile = app
+            .controls
+            .hit_test(panel_rect, scale_f, phys_cx, phys_cy, app.panel_view)
+            // The workspace box only lights up when a click would cycle
+            // somewhere, i.e. more than one workspace is populated.
+            .filter(|id| {
+                *id != crate::controls::TileId::Workspace
+                    || app.workspace_ipc.can_cycle(wl.current_output_name())
+            });
         // Waffle "all apps" button hover (search row).
         let waffle = crate::search::input::waffle_rect(panel_rect, scale_f);
         app.waffle_hover = phys_cx >= waffle.x
