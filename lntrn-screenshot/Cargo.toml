@@ -9,7 +9,9 @@ edition = "2021"
 anyhow = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 libc = "0.2"
+lntrn-data = { path = "../../lantern-ui-2/crates/lntrn-data" }
 lntrn-render = { path = "../lntrn-render" }
+lntrn-sys = { path = "../../lantern-ui-2/crates/lntrn-sys" }
 raw-window-handle = "0.6"
 wayland-backend = { version = "0.3", features = ["client_system"] }
 wayland-client = "0.31"

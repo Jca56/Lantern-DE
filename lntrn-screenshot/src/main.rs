@@ -24,6 +24,7 @@ mod clipboard;
 mod export;
 mod render;
 mod selection;
+mod settings;
 mod toolbar;
 mod wayland;
 mod window_query;
@@ -77,13 +78,16 @@ fn main() -> Result<()> {
     let mut painter = Painter::new(&gpu);
     let mut text = TextRenderer::new(&gpu);
     let tex_pass = TexturePass::new(&gpu);
-    let screenshot_tex = tex_pass.upload(&gpu, &cap.data, cap.width, cap.height);
+    let plain_tex = tex_pass.upload(&gpu, &cap.data, cap.width, cap.height);
+    let cursor_tex = tex_pass.upload(&gpu, &cap.data_with_cursor, cap.width, cap.height);
 
     let mut ui = SelectionUi {
         selection: None,
         drag_mode: DragMode::None,
         cursor: (0.0, 0.0),
         capture_data: cap.data,
+        capture_with_cursor: cap.data_with_cursor,
+        hide_mouse: settings::hide_mouse(),
         capture_width: cap.width,
         capture_height: cap.height,
         output_path,
@@ -117,12 +121,17 @@ fn main() -> Result<()> {
 
         if window.state.frame_done {
             window.request_frame();
+            let screenshot_tex = if ui.hide_mouse {
+                &plain_tex
+            } else {
+                &cursor_tex
+            };
             match ui.render(
                 &mut gpu,
                 &mut painter,
                 &mut text,
                 &tex_pass,
-                &screenshot_tex,
+                screenshot_tex,
                 scale,
             ) {
                 Ok(()) => {
@@ -150,7 +159,8 @@ fn main() -> Result<()> {
 
     // Drop GPU resources before destroying the surface so wgpu's wayland
     // handle isn't holding a dangling pointer when the surface goes away.
-    drop(screenshot_tex);
+    drop(plain_tex);
+    drop(cursor_tex);
     drop(tex_pass);
     drop(text);
     drop(painter);
@@ -189,7 +199,11 @@ struct SelectionUi {
     selection: Option<Selection>,
     drag_mode: DragMode,
     cursor: (f32, f32),
+    /// The captured frame without the mouse cursor, and the same frame
+    /// with it; `hide_mouse` picks which one is shown and saved.
     capture_data: Vec<u8>,
+    capture_with_cursor: Vec<u8>,
+    hide_mouse: bool,
     capture_width: u32,
     capture_height: u32,
     output_path: Option<PathBuf>,
@@ -220,6 +234,13 @@ impl SelectionUi {
                 self.mode = UiMode::Normal;
                 return None;
             }
+            // With a region drawn, Esc drops it first, which brings the
+            // toolbar back; the next Esc cancels.
+            if self.selection.is_some() {
+                self.selection = None;
+                self.drag_mode = DragMode::None;
+                return None;
+            }
             return Some(CommitAction::Cancel);
         }
         if input.enter {
@@ -231,8 +252,6 @@ impl SelectionUi {
         if input.ctrl_s {
             return Some(CommitAction::SaveOnly);
         }
-
-        let toolbar = ToolbarLayout::compute(screen_w, screen_h, scale);
 
         if input.cursor_moved {
             self.cursor = (input.cursor_x, input.cursor_y);
@@ -246,11 +265,14 @@ impl SelectionUi {
         if input.left_pressed {
             let (cx, cy) = self.cursor;
             // The toolbar sits on top of everything and absorbs presses.
-            if toolbar.panel_contains(cx, cy) {
-                if let Some(action) = toolbar.button_at(cx, cy) {
-                    self.on_toolbar_action(action);
+            if self.toolbar_visible() {
+                let toolbar = ToolbarLayout::compute(screen_w, screen_h, scale);
+                if toolbar.panel_contains(cx, cy) {
+                    if let Some(action) = toolbar.button_at(cx, cy) {
+                        self.on_toolbar_action(action);
+                    }
+                    return None;
                 }
-                return None;
             }
             match self.mode {
                 UiMode::PickWindow => self.on_pick_window_click(cx, cy),
@@ -262,6 +284,12 @@ impl SelectionUi {
             self.on_left_released();
         }
         None
+    }
+
+    /// The toolbar shows only while no region is drawn, so it is never in
+    /// the way of setting one.
+    fn toolbar_visible(&self) -> bool {
+        self.selection.is_none()
     }
 
     fn on_toolbar_action(&mut self, action: ToolbarAction) {
@@ -284,6 +312,12 @@ impl SelectionUi {
                 self.mode = UiMode::PickWindow;
                 self.hover_window = None;
                 self.update_hover_window(self.cursor.0, self.cursor.1);
+            }
+            ToolbarAction::HideMouse => {
+                self.hide_mouse = !self.hide_mouse;
+                if let Err(e) = settings::set_hide_mouse(self.hide_mouse) {
+                    eprintln!("Failed to remember hide mouse: {e}");
+                }
             }
         }
     }

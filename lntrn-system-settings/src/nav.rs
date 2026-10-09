@@ -18,10 +18,11 @@ pub enum Page {
     Power,
     Terminal,
     Notepad,
+    Screenshot,
 }
 
 impl Page {
-    pub const ALL: [Page; 11] = [Page::Wallpaper, Page::Appearance, Page::Windows, Page::Effects, Page::Animations, Page::Mouse, Page::Monitors, Page::Notifications, Page::Power, Page::Terminal, Page::Notepad];
+    pub const ALL: [Page; 12] = [Page::Wallpaper, Page::Appearance, Page::Windows, Page::Effects, Page::Animations, Page::Mouse, Page::Monitors, Page::Notifications, Page::Power, Page::Terminal, Page::Notepad, Page::Screenshot];
 
     /// A stable name for palette entries and actions.
     pub fn id(self) -> &'static str {
@@ -37,6 +38,7 @@ impl Page {
             Page::Power => "power",
             Page::Terminal => "terminal",
             Page::Notepad => "notepad",
+            Page::Screenshot => "screenshot",
         }
     }
 
@@ -58,6 +60,7 @@ impl Page {
             Page::Power => "Power",
             Page::Terminal => "Terminal",
             Page::Notepad => "Notepad",
+            Page::Screenshot => "Screenshot",
         }
     }
 
@@ -75,6 +78,7 @@ impl Page {
             Page::Power => "What the machine does when it is left alone.",
             Page::Terminal => "Text size, the cursor and how its window opens.",
             Page::Notepad => "The page it writes on and how wide that is.",
+            Page::Screenshot => "What ends up in a screenshot.",
         }
     }
 
@@ -92,6 +96,7 @@ impl Page {
             Page::Power => glyphs::power,
             Page::Terminal => glyphs::terminal,
             Page::Notepad => glyphs::notepad,
+            Page::Screenshot => glyphs::screenshot,
         }
     }
 }
@@ -106,7 +111,7 @@ pub const GROUPS: &[Group] = &[
     Group { label: "Look", pages: &[Page::Wallpaper, Page::Appearance, Page::Windows, Page::Effects, Page::Animations] },
     Group { label: "Input", pages: &[Page::Mouse] },
     Group { label: "System", pages: &[Page::Monitors, Page::Notifications, Page::Power] },
-    Group { label: "Apps", pages: &[Page::Terminal, Page::Notepad] },
+    Group { label: "Apps", pages: &[Page::Terminal, Page::Notepad, Page::Screenshot] },
 ];
 
 #[cfg(test)]

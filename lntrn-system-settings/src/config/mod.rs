@@ -6,7 +6,8 @@
 //! is set up (see `monitors.rs`); the rest of an entry is the
 //! compositor's. Of `[terminal]` we own the keys on its page; the tabs
 //! it has pinned are the terminal's. `[notepad]` is shared with Notepad,
-//! which writes the same keys.
+//! which writes the same keys, and `[screenshot]` with the screenshot
+//! tool.
 
 mod appearance;
 mod monitors;
@@ -19,7 +20,7 @@ pub use appearance::{Appearance, GRADIENT_STOPS, WindowManager, Windows};
 use lntrn_data::{Doc, from_doc, to_doc, toml};
 use lntrn_props::Reflect;
 pub use monitors::Monitor;
-pub use system::{ANIMATION_PRESETS, Animations, CURSOR_STYLES, Input, NOTEPAD_PAGES, NOTIFICATION_POSITIONS, Notepad, Notifications, Power, TERMINAL_FONT_SIZES, Terminal};
+pub use system::{ANIMATION_PRESETS, Animations, CURSOR_STYLES, Input, NOTEPAD_PAGES, NOTIFICATION_POSITIONS, Notepad, Notifications, Power, Screenshot, TERMINAL_FONT_SIZES, Terminal};
 
 pub struct Config {
     pub appearance: Appearance,
@@ -31,6 +32,7 @@ pub struct Config {
     pub animations: Animations,
     pub terminal: Terminal,
     pub notepad: Notepad,
+    pub screenshot: Screenshot,
     /// The screens the file lists: their wallpapers and how each is set
     /// up.
     pub monitors: Vec<Monitor>,
@@ -95,12 +97,13 @@ impl Config {
             animations: Animations::default(),
             terminal: Terminal::default(),
             notepad: Notepad::default(),
+            screenshot: Screenshot::default(),
             monitors: Vec::new(),
             mtime: None,
         }
     }
 
-    fn sections(&self) -> [(&'static str, &dyn Reflect); 9] {
+    fn sections(&self) -> [(&'static str, &dyn Reflect); 10] {
         [
             ("appearance", &self.appearance),
             ("window_manager", &self.window_manager),
@@ -111,10 +114,11 @@ impl Config {
             ("animations", &self.animations),
             ("terminal", &self.terminal),
             ("notepad", &self.notepad),
+            ("screenshot", &self.screenshot),
         ]
     }
 
-    fn sections_mut(&mut self) -> [(&'static str, &mut dyn Reflect); 9] {
+    fn sections_mut(&mut self) -> [(&'static str, &mut dyn Reflect); 10] {
         [
             ("appearance", &mut self.appearance),
             ("window_manager", &mut self.window_manager),
@@ -125,6 +129,7 @@ impl Config {
             ("animations", &mut self.animations),
             ("terminal", &mut self.terminal),
             ("notepad", &mut self.notepad),
+            ("screenshot", &mut self.screenshot),
         ]
     }
 
@@ -309,6 +314,24 @@ mod tests {
         let old = Notepad::from_old_file(&toml::parse("theme = \"night_sky\"\npage_width = 0.820\n").unwrap());
         assert_eq!((old.theme.as_str(), old.page_width), ("dark", 0.82));
         assert_eq!(Notepad::from_old_file(&toml::parse("").unwrap()).theme, "paper");
+    }
+
+    /// `[screenshot]` is written as the screenshot tool reads it: the
+    /// mouse is hidden until it says otherwise, and what the tool wrote
+    /// is what we show.
+    #[test]
+    fn the_screenshots_section_is_what_the_tool_reads() {
+        let dir = std::env::temp_dir().join(format!("lntrn-settings-screenshot-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("lantern.toml");
+        let mut cfg = Config::empty();
+        assert!(cfg.screenshot.hide_mouse);
+        cfg.save_to(&path).unwrap();
+        assert_eq!(read_existing(&path).unwrap().path("screenshot.hide_mouse").and_then(Doc::as_bool), Some(true));
+        std::fs::write(&path, "[screenshot]\nhide_mouse = false\n").unwrap();
+        from_doc(&mut cfg.screenshot, read_existing(&path).unwrap().get("screenshot").unwrap());
+        assert!(!cfg.screenshot.hide_mouse);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Load and save on top of a copy of the real desktop config and

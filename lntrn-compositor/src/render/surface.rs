@@ -1472,6 +1472,10 @@ pub fn render_surface(
             );
         }
     }
+    // The pointer takes the leading slots of `elements`: the cursor image,
+    // then its click ripple and loading spinner. Counted so a capture that
+    // didn't ask for the cursor can leave them out.
+    let mut cursor_image_slots = elements.len();
 
     // Click ripple: under the cursor, above switcher/windows. Tick + reschedule
     // happen earlier (before the udev borrow); here we just collect elements.
@@ -1504,6 +1508,7 @@ pub fn render_surface(
                 .map(CustomRenderElements::Memory),
         );
     }
+    let mut pointer_slots = elements.len();
 
     // Hot corner glow feedback (above windows, below cursor)
     if let (Some(corner), Some(ref glow_shader)) = (hot_corner, &hot_corner_glow_shader) {
@@ -2359,6 +2364,7 @@ pub fn render_surface(
         // the "cleared frame" the protocol requires before confirming the lock.
         elements.clear();
         nocapture_indices.clear();
+        (cursor_image_slots, pointer_slots) = (0, 0);
         let out_name = output.name();
         if let Some(data) = state.session_lock.as_ref() {
             if let Some(ls) = data.surfaces.get(&out_name) {
@@ -2512,41 +2518,25 @@ pub fn render_surface(
             .partition(|p| p.output == output && (rendered || !p.with_damage));
         state.pending_screencopy = remaining;
         if !matching.is_empty() {
-            // With the cursor on its own plane the primary framebuffer has
-            // no cursor in it; a request that asked for `overlay_cursor`
-            // must go through the offscreen composite, which draws the
-            // cursor element like everything else.
-            let needs_cursor_composite =
-                cursor_on_plane && matching.iter().any(|p| p.overlay_cursor);
-            if nocapture_indices.is_empty() && rendered && !needs_cursor_composite {
-                // Nothing to hide → cheap direct-framebuffer readback, and
-                // any leftover offscreen target from a finished recording
-                // can be freed.
-                state.screencopy_offscreen.remove(&output.name());
-                crate::screencopy_render::start_screencopy_readback(
-                    renderer,
-                    &output,
-                    matching,
-                    &mut state.screencopy_pbos,
-                );
-            } else {
-                // Recording badge on screen (or a no-damage frame): serve
-                // the capture from a badge-free offscreen composite instead.
-                let filtered: Vec<&CustomRenderElements> = elements
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, _)| !nocapture_indices.contains(i))
-                    .map(|(_, e)| e)
-                    .collect();
-                crate::screencopy_render::start_screencopy_filtered(
-                    renderer,
-                    &output,
-                    matching,
-                    &filtered,
-                    &mut state.screencopy_offscreen,
-                    &mut state.screencopy_pbos,
-                );
-            }
+            // The pointer is in the primary framebuffer unless it is the
+            // cursor image alone and that went onto its own plane.
+            let pointer_in_fb =
+                pointer_slots > 0 && !(cursor_on_plane && pointer_slots == cursor_image_slots);
+            crate::screencopy_render::start_screencopy(
+                renderer,
+                &output,
+                matching,
+                &elements,
+                crate::screencopy_render::CaptureFrame {
+                    rendered,
+                    nocapture: &nocapture_indices,
+                    pointer_slots,
+                    pointer_in_fb,
+                    cursor_on_plane,
+                },
+                &mut state.screencopy_offscreen,
+                &mut state.screencopy_pbos,
+            );
             screencopy_started = true;
         }
     }

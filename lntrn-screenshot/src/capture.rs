@@ -12,19 +12,32 @@ use wayland_protocols_wlr::screencopy::v1::client::{
 pub struct ScreenCapture {
     pub width: u32,
     pub height: u32,
-    /// RGBA8 pixel data, row-major, top-to-bottom.
+    /// RGBA8 pixel data, row-major, top-to-bottom, without the mouse cursor.
     pub data: Vec<u8>,
+    /// The same frame with the mouse cursor in it.
+    pub data_with_cursor: Vec<u8>,
+}
+
+// The two frames we ask for, by the user data on their protocol objects
+// (and their index in `State::frames`).
+const WITHOUT_CURSOR: usize = 0;
+const WITH_CURSOR: usize = 1;
+
+/// What the compositor has told us about one screencopy frame.
+#[derive(Default)]
+struct Frame {
+    format: Option<wl_shm::Format>,
+    width: u32,
+    height: u32,
+    stride: u32,
+    buffer_done: bool,
+    ready: bool,
+    failed: bool,
+    y_invert: bool,
 }
 
 struct State {
-    buf_format: Option<wl_shm::Format>,
-    buf_width: u32,
-    buf_height: u32,
-    buf_stride: u32,
-    buffer_done: bool,
-    copy_ready: bool,
-    copy_failed: bool,
-    y_invert: bool,
+    frames: [Frame; 2],
 
     /// All wl_outputs we've bound, keyed by their proxy id, with their
     /// advertised name (wl_output v4 `name` event). The screenshot tool
@@ -32,7 +45,71 @@ struct State {
     outputs: Vec<(wl_output::WlOutput, Option<String>)>,
 }
 
-/// Capture the screen contents of a specific wl_output by name.
+/// A frame's shm buffer, mapped so its pixels can be read back.
+struct ShmBuffer {
+    pool: wl_shm_pool::WlShmPool,
+    buffer: wl_buffer::WlBuffer,
+    ptr: *mut libc::c_void,
+    size: usize,
+    _fd: OwnedFd,
+}
+
+impl ShmBuffer {
+    fn new(shm: &wl_shm::WlShm, qh: &QueueHandle<State>, frame: &Frame) -> Result<Self> {
+        let format = frame
+            .format
+            .ok_or_else(|| anyhow::anyhow!("compositor advertised no supported shm format"))?;
+        let size = (frame.stride * frame.height) as usize;
+
+        let fd = create_shm_fd(size)?;
+        let pool = shm.create_pool(fd.as_fd(), size as i32, qh, ());
+        let buffer = pool.create_buffer(
+            0,
+            frame.width as i32,
+            frame.height as i32,
+            frame.stride as i32,
+            format,
+            qh,
+            (),
+        );
+
+        let ptr = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                size,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                fd.as_raw_fd(),
+                0,
+            )
+        };
+        if ptr == libc::MAP_FAILED {
+            bail!("mmap failed: {}", std::io::Error::last_os_error());
+        }
+        Ok(Self {
+            pool,
+            buffer,
+            ptr,
+            size,
+            _fd: fd,
+        })
+    }
+
+    fn bytes(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.ptr as *const u8, self.size) }
+    }
+}
+
+impl Drop for ShmBuffer {
+    fn drop(&mut self) {
+        unsafe { libc::munmap(self.ptr, self.size) };
+        self.buffer.destroy();
+        self.pool.destroy();
+    }
+}
+
+/// Capture the screen contents of a specific wl_output by name, once
+/// without the mouse cursor and once with it, so the UI can offer either.
 /// When `target_name` is `None`, falls back to the first enumerated
 /// output (used only as a last resort — multi-monitor callers should
 /// always pass the output the UI surface was placed on).
@@ -46,14 +123,7 @@ pub fn capture_screen(target_name: Option<&str>) -> Result<ScreenCapture> {
         globals.bind(&qh, 1..=3, ())?;
 
     let mut state = State {
-        buf_format: None,
-        buf_width: 0,
-        buf_height: 0,
-        buf_stride: 0,
-        buffer_done: false,
-        copy_ready: false,
-        copy_failed: false,
-        y_invert: false,
+        frames: Default::default(),
         outputs: Vec::new(),
     };
 
@@ -64,101 +134,82 @@ pub fn capture_screen(target_name: Option<&str>) -> Result<ScreenCapture> {
 
     let output = pick_output(&state, target_name)?;
 
-    // Request frame capture (0 = don't include cursor overlay)
-    let frame = manager.capture_output(0, &output, &qh, ());
+    // Request both frames (the argument: 0 = don't include the cursor
+    // overlay, 1 = include it).
+    let frames = [
+        manager.capture_output(0, &output, &qh, WITHOUT_CURSOR),
+        manager.capture_output(1, &output, &qh, WITH_CURSOR),
+    ];
 
     // Wait for buffer format advertisement
-    while !state.buffer_done {
+    while !state.frames.iter().all(|f| f.buffer_done) {
         queue.blocking_dispatch(&mut state)?;
     }
 
-    let format = state
-        .buf_format
-        .ok_or_else(|| anyhow::anyhow!("compositor advertised no supported shm format"))?;
-    let size = (state.buf_stride * state.buf_height) as usize;
+    let buffers = [
+        ShmBuffer::new(&shm, &qh, &state.frames[WITHOUT_CURSOR])?,
+        ShmBuffer::new(&shm, &qh, &state.frames[WITH_CURSOR])?,
+    ];
 
-    // Create shared memory buffer
-    let fd = create_shm_fd(size)?;
-    let pool = shm.create_pool(fd.as_fd(), size as i32, &qh, ());
-    let buffer = pool.create_buffer(
-        0,
-        state.buf_width as i32,
-        state.buf_height as i32,
-        state.buf_stride as i32,
-        format,
-        &qh,
-        (),
-    );
-
-    // Map the shared memory
-    let ptr = unsafe {
-        libc::mmap(
-            std::ptr::null_mut(),
-            size,
-            libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_SHARED,
-            fd.as_raw_fd(),
-            0,
-        )
-    };
-    if ptr == libc::MAP_FAILED {
-        bail!("mmap failed: {}", std::io::Error::last_os_error());
+    // Start the copies. Both requests go out in the same flush, so the
+    // compositor fills them from one frame: the two captures differ only
+    // by the cursor.
+    for (frame, buffer) in frames.iter().zip(&buffers) {
+        frame.copy(&buffer.buffer);
     }
-
-    // Start the copy
-    frame.copy(&buffer);
 
     // Wait for completion
-    while !state.copy_ready && !state.copy_failed {
+    while !state.frames.iter().all(|f| f.ready) {
+        if state.frames.iter().any(|f| f.failed) {
+            bail!("screencopy capture failed");
+        }
         queue.blocking_dispatch(&mut state)?;
     }
 
-    if state.copy_failed {
-        unsafe { libc::munmap(ptr, size) };
-        bail!("screencopy capture failed");
+    let [plain, with_cursor] = &state.frames;
+    if (plain.width, plain.height) != (with_cursor.width, with_cursor.height) {
+        bail!("screencopy captures differ in size");
     }
+    let capture = ScreenCapture {
+        width: plain.width,
+        height: plain.height,
+        data: to_rgba(plain, buffers[WITHOUT_CURSOR].bytes()),
+        data_with_cursor: to_rgba(with_cursor, buffers[WITH_CURSOR].bytes()),
+    };
 
-    // Convert captured pixels to RGBA8
-    let raw = unsafe { std::slice::from_raw_parts(ptr as *const u8, size) };
-    let pixel_count = (state.buf_width * state.buf_height) as usize;
+    // Clean up Wayland objects
+    drop(buffers);
+    manager.destroy();
+
+    Ok(capture)
+}
+
+/// Convert a frame's captured pixels to RGBA8, top row first.
+fn to_rgba(frame: &Frame, raw: &[u8]) -> Vec<u8> {
+    let pixel_count = (frame.width * frame.height) as usize;
     let mut rgba = vec![0u8; pixel_count * 4];
+    let opaque = frame.format == Some(wl_shm::Format::Xrgb8888);
 
-    for y in 0..state.buf_height {
-        let src_y = if state.y_invert {
-            state.buf_height - 1 - y
+    for y in 0..frame.height {
+        let src_y = if frame.y_invert {
+            frame.height - 1 - y
         } else {
             y
         };
-        let src_offset = (src_y * state.buf_stride) as usize;
-        let dst_offset = (y * state.buf_width * 4) as usize;
+        let src_offset = (src_y * frame.stride) as usize;
+        let dst_offset = (y * frame.width * 4) as usize;
 
-        for x in 0..state.buf_width as usize {
+        for x in 0..frame.width as usize {
             // Source is BGRA (xrgb8888/argb8888 on little-endian)
             let si = src_offset + x * 4;
             let di = dst_offset + x * 4;
             rgba[di] = raw[si + 2]; // R
             rgba[di + 1] = raw[si + 1]; // G
             rgba[di + 2] = raw[si]; // B
-            rgba[di + 3] = if format == wl_shm::Format::Xrgb8888 {
-                255
-            } else {
-                raw[si + 3]
-            };
+            rgba[di + 3] = if opaque { 255 } else { raw[si + 3] };
         }
     }
-
-    unsafe { libc::munmap(ptr, size) };
-
-    // Clean up Wayland objects
-    buffer.destroy();
-    pool.destroy();
-    manager.destroy();
-
-    Ok(ScreenCapture {
-        width: state.buf_width,
-        height: state.buf_height,
-        data: rgba,
-    })
+    rgba
 }
 
 /// Bind every wl_output advertised by the registry so we can match the
@@ -293,15 +344,16 @@ impl Dispatch<zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1, ()> for State
     }
 }
 
-impl Dispatch<zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1, ()> for State {
+impl Dispatch<zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1, usize> for State {
     fn event(
         state: &mut Self,
         _: &zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1,
         event: zwlr_screencopy_frame_v1::Event,
-        _: &(),
+        which: &usize,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        let frame = &mut state.frames[*which];
         match event {
             zwlr_screencopy_frame_v1::Event::Buffer {
                 format,
@@ -311,29 +363,29 @@ impl Dispatch<zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1, ()> for State {
             } => {
                 // Accept xrgb8888 or argb8888
                 if let WEnum::Value(fmt) = format {
-                    if state.buf_format.is_none()
+                    if frame.format.is_none()
                         && (fmt == wl_shm::Format::Xrgb8888 || fmt == wl_shm::Format::Argb8888)
                     {
-                        state.buf_format = Some(fmt);
-                        state.buf_width = width;
-                        state.buf_height = height;
-                        state.buf_stride = stride;
+                        frame.format = Some(fmt);
+                        frame.width = width;
+                        frame.height = height;
+                        frame.stride = stride;
                     }
                 }
             }
             zwlr_screencopy_frame_v1::Event::BufferDone => {
-                state.buffer_done = true;
+                frame.buffer_done = true;
             }
             zwlr_screencopy_frame_v1::Event::Flags { flags } => {
                 if let WEnum::Value(f) = flags {
-                    state.y_invert = f.contains(zwlr_screencopy_frame_v1::Flags::YInvert);
+                    frame.y_invert = f.contains(zwlr_screencopy_frame_v1::Flags::YInvert);
                 }
             }
             zwlr_screencopy_frame_v1::Event::Ready { .. } => {
-                state.copy_ready = true;
+                frame.ready = true;
             }
             zwlr_screencopy_frame_v1::Event::Failed => {
-                state.copy_failed = true;
+                frame.failed = true;
             }
             _ => {}
         }

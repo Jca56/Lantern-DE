@@ -22,11 +22,13 @@ impl SelectionUi {
             (0, 0, self.capture_width, self.capture_height)
         };
 
-        let img = image::RgbaImage::from_raw(
-            self.capture_width,
-            self.capture_height,
-            self.capture_data.clone(),
-        )?;
+        let pixels = if self.hide_mouse {
+            &self.capture_data
+        } else {
+            &self.capture_with_cursor
+        };
+        let img =
+            image::RgbaImage::from_raw(self.capture_width, self.capture_height, pixels.clone())?;
         let cropped = image::imageops::crop_imm(&img, crop_x, crop_y, crop_w, crop_h).to_image();
 
         if save {

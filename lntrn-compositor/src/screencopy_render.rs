@@ -112,10 +112,87 @@ pub fn deliver_inflight(
     }
 }
 
+/// How this frame was drawn, as far as capturing it goes.
+pub struct CaptureFrame<'a> {
+    /// The primary framebuffer has fresh content this frame.
+    pub rendered: bool,
+    /// Element slots holding no-capture overlays (the recording badge).
+    pub nocapture: &'a [usize],
+    /// How many leading element slots hold the pointer: the cursor image,
+    /// its click ripple and its loading spinner.
+    pub pointer_slots: usize,
+    /// Whether any of the pointer was drawn into the primary framebuffer.
+    pub pointer_in_fb: bool,
+    /// The cursor image went onto its hardware plane, so the primary
+    /// framebuffer doesn't have it.
+    pub cursor_on_plane: bool,
+}
+
+/// Serve this frame's capture requests, each with the pointer in it or
+/// left out, as it asked (`overlay_cursor`). A request is read straight
+/// from the primary framebuffer when that already shows what it wants —
+/// the cheap path — and from an offscreen composite of just the right
+/// elements when it doesn't: a no-capture overlay on screen, a no-damage
+/// frame, a pointer the request didn't ask for, or one it did ask for
+/// that sits on the cursor plane.
+pub fn start_screencopy<E>(
+    renderer: &mut GlesRenderer,
+    output: &Output,
+    pending: Vec<PendingScreencopy>,
+    elements: &[E],
+    frame: CaptureFrame<'_>,
+    cache: &mut HashMap<String, OffscreenCapture>,
+    slots: &mut HashMap<String, ScreencopyPbo>,
+) where
+    E: RenderElement<GlesRenderer>,
+{
+    let fb_usable = frame.rendered && frame.nocapture.is_empty();
+    let (with_pointer, without_pointer): (Vec<_>, Vec<_>) =
+        pending.into_iter().partition(|p| p.overlay_cursor);
+
+    let mut from_fb = Vec::new();
+    let mut composited = Vec::new();
+    for (batch, hide_pointer, fb_matches) in [
+        (with_pointer, false, !frame.cursor_on_plane),
+        (without_pointer, true, !frame.pointer_in_fb),
+    ] {
+        if batch.is_empty() {
+            continue;
+        }
+        if fb_usable && fb_matches {
+            from_fb.extend(batch);
+        } else {
+            composited.push((batch, hide_pointer));
+        }
+    }
+
+    // The framebuffer readback goes first: it reads whatever is bound, and
+    // an offscreen composite binds a target of its own.
+    if !from_fb.is_empty() {
+        start_screencopy_readback(renderer, output, from_fb, slots);
+    }
+    if composited.is_empty() {
+        // Any leftover offscreen target from a finished recording can be
+        // freed.
+        cache.remove(&output.name());
+    }
+    for (batch, hide_pointer) in composited {
+        let shown: Vec<&E> = elements
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| {
+                !frame.nocapture.contains(i) && !(hide_pointer && *i < frame.pointer_slots)
+            })
+            .map(|(_, e)| e)
+            .collect();
+        start_screencopy_filtered(renderer, output, batch, &shown, cache, slots);
+    }
+}
+
 /// Kick off an async readback of the current (just-rendered, still-bound)
 /// framebuffer into this output's persistent PBO. Returns without waiting;
 /// `deliver_inflight` maps and delivers on the next render pass.
-pub fn start_screencopy_readback(
+fn start_screencopy_readback(
     renderer: &mut GlesRenderer,
     output: &Output,
     pending: Vec<PendingScreencopy>,
@@ -189,11 +266,9 @@ pub fn start_screencopy_readback(
 }
 
 /// Offscreen capture path: re-composite `elements` (the frame's element
-/// list minus any no-capture overlays) into a cached offscreen texture,
-/// then queue an async readback of it. Used while a recording badge is on
-/// screen, and as the fallback when the primary framebuffer has no fresh
-/// content this frame.
-pub fn start_screencopy_filtered<E>(
+/// list minus whatever the capture must not show) into a cached offscreen
+/// texture, then queue an async readback of it.
+fn start_screencopy_filtered<E>(
     renderer: &mut GlesRenderer,
     output: &Output,
     pending: Vec<PendingScreencopy>,

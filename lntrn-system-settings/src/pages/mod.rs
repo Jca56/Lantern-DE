@@ -10,6 +10,7 @@ pub mod mouse;
 pub mod notepad;
 pub mod notifications;
 pub mod power;
+pub mod screenshot;
 pub mod terminal;
 pub mod wallpaper;
 pub mod windows;
@@ -36,6 +37,7 @@ pub fn draw(app: &mut App, ui: &mut Ui, cx: &mut AreaCx<()>) -> bool {
             Page::Power => power::draw(&mut app.config, ui),
             Page::Terminal => terminal::draw(&mut app.config, ui),
             Page::Notepad => notepad::draw(&mut app.config, ui),
+            Page::Screenshot => screenshot::draw(&mut app.config, ui),
         };
     });
     changed

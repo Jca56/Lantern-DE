@@ -147,10 +147,20 @@ impl SelectionUi {
             painter.rect_filled(Rect::new(0.0, 0.0, sw, sh), 0.0, dim);
         }
 
-        // Toolbar pill, drawn on top of the dim / selection.
-        let toolbar = ToolbarLayout::compute(sw, sh, scale);
-        let active = (self.mode == UiMode::PickWindow).then_some(ToolbarAction::Window);
-        toolbar.render(painter, text, self.cursor, active, sw as u32, sh as u32);
+        // Toolbar pill, drawn on top of the dim.
+        if self.toolbar_visible() {
+            let toolbar = ToolbarLayout::compute(sw, sh, scale);
+            let active = (self.mode == UiMode::PickWindow).then_some(ToolbarAction::Window);
+            toolbar.render(
+                painter,
+                text,
+                self.cursor,
+                active,
+                self.hide_mouse,
+                sw as u32,
+                sh as u32,
+            );
+        }
 
         let mut frame = gpu.begin_frame("screenshot")?;
         let view = frame.view().clone();

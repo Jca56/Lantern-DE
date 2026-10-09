@@ -34,6 +34,9 @@ fn accent_orange() -> Color {
 pub enum ToolbarAction {
     FullScreen,
     Window,
+    /// The "Hide mouse" checkbox: whether the screenshot leaves the mouse
+    /// cursor out.
+    HideMouse,
 }
 
 struct ButtonSlot {
@@ -55,6 +58,7 @@ impl ToolbarLayout {
         let order = [
             (ToolbarAction::FullScreen, "Full Screen"),
             (ToolbarAction::Window, "Window"),
+            (ToolbarAction::HideMouse, "Hide mouse"),
         ];
         let n = order.len() as f32;
 
@@ -97,13 +101,16 @@ impl ToolbarLayout {
     }
 
     /// Draw the toolbar. `active` highlights the button for the current mode
-    /// (e.g. Window while picking); `cursor` drives hover feedback.
+    /// (e.g. Window while picking); `cursor` drives hover feedback;
+    /// `hide_mouse` is whether the checkbox is ticked.
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &self,
         painter: &mut Painter,
         text: &mut TextRenderer,
         cursor: (f32, f32),
         active: Option<ToolbarAction>,
+        hide_mouse: bool,
         screen_w: u32,
         screen_h: u32,
     ) {
@@ -155,6 +162,9 @@ impl ToolbarLayout {
             match b.action {
                 ToolbarAction::FullScreen => draw_fullscreen_icon(painter, gx, icon_y, icon, fg, s),
                 ToolbarAction::Window => draw_window_icon(painter, gx, icon_y, icon, fg, s),
+                ToolbarAction::HideMouse => {
+                    draw_checkbox(painter, gx, icon_y, icon, fg, hide_mouse, s)
+                }
             }
 
             // Vertically centre the label against the icon box.
@@ -212,4 +222,30 @@ fn draw_window_icon(painter: &mut Painter, x: f32, y: f32, size: f32, color: Col
     let bar_h = frame.h * 0.28;
     painter.rect_filled(Rect::new(frame.x, frame.y, frame.w, bar_h), radius, color);
     painter.rect_stroke(frame, radius, 2.0 * scale, color);
+}
+
+/// A checkbox: an outlined box, or the accent filled in with a tick.
+fn draw_checkbox(
+    painter: &mut Painter,
+    x: f32,
+    y: f32,
+    size: f32,
+    color: Color,
+    checked: bool,
+    scale: f32,
+) {
+    let frame = Rect::new(x, y, size, size);
+    let radius = 6.0 * scale;
+    if !checked {
+        painter.rect_stroke(frame, radius, 2.0 * scale, color);
+        return;
+    }
+    painter.rect_filled(frame, radius, accent_orange());
+    let ink = Color::from_rgba8(0x1a, 0x16, 0x12, 0xff);
+    let w = 3.0 * scale;
+    let (ax, ay) = (x + size * 0.24, y + size * 0.52);
+    let (bx, by) = (x + size * 0.43, y + size * 0.71);
+    let (cx, cy) = (x + size * 0.77, y + size * 0.30);
+    painter.line(ax, ay, bx, by, w, ink);
+    painter.line(bx, by, cx, cy, w, ink);
 }

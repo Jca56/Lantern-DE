@@ -213,3 +213,12 @@ impl Notepad {
         n
     }
 }
+
+props! {
+    /// The screenshot tool: the key of `[screenshot]`, which its own Hide
+    /// mouse box writes too.
+    pub struct Screenshot {
+        /// Leave the mouse cursor out of screenshots.
+        pub hide_mouse: bool = true => { id: 1 },
+    }
+}

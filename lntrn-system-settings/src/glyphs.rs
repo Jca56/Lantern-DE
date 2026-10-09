@@ -104,3 +104,11 @@ pub fn notepad(d: &mut DrawList, rect: Rect, color: Color, w: f64) {
     d.line(at(rect, -0.32, 0.08), at(rect, 0.32, 0.08), w, color);
     d.line(at(rect, -0.32, 0.5), at(rect, 0.32, 0.5), w, color);
 }
+
+/// A screenshot: the four corners of a region with a dot in the middle.
+pub fn screenshot(d: &mut DrawList, rect: Rect, color: Color, w: f64) {
+    for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+        d.polyline(&[at(rect, 0.82 * x, 0.3 * y), at(rect, 0.82 * x, 0.72 * y), at(rect, 0.4 * x, 0.72 * y)], w, color, false);
+    }
+    d.circle(rect.center(), half(rect) * 0.2, color);
+}
