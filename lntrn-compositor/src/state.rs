@@ -882,7 +882,8 @@ impl Lantern {
 
         // Check layer surfaces first (Top/Overlay are above windows)
         // Use the output the pointer is on for layer surface positioning
-        // Skip if a fullscreen window covers this output — fullscreen takes priority
+        // A fullscreen window covering this output takes priority over them —
+        // all but a modal overlay, which is drawn above it.
         if let Some(output) = self.output_at_point(pos) {
             let output_has_fullscreen = self.fullscreen_windows.iter().any(|fw| {
                 self.find_mapped_window(&fw.surface)
@@ -896,9 +897,6 @@ impl Lantern {
             // on the same layer eating the click. Same-layer stacking order
             // is implementation-defined per the layer-shell spec.
             for ls in self.layer_surfaces.iter().rev() {
-                if output_has_fullscreen {
-                    break;
-                }
                 if !ls.alive() {
                     continue;
                 }
@@ -913,6 +911,9 @@ impl Lantern {
                 });
                 // Only intercept pointer for Top/Overlay layers (above windows)
                 if cached.layer != Layer::Top && cached.layer != Layer::Overlay {
+                    continue;
+                }
+                if output_has_fullscreen && !crate::modal_overlay::is_modal(&cached) {
                     continue;
                 }
                 let ls_loc = crate::render::layer_surface_position_logical(&cached, output_geo);
@@ -1048,16 +1049,14 @@ impl Lantern {
         let Some(output) = self.output_at_point(pos) else {
             return false;
         };
-        // A fullscreen window suppresses layer input on its output (mirrors
-        // surface_under), so don't block window grabs behind it.
+        // A fullscreen window suppresses layer input on its output for all
+        // but a modal overlay (mirrors surface_under), so don't block window
+        // grabs behind it.
         let output_has_fullscreen = self.fullscreen_windows.iter().any(|fw| {
             self.find_mapped_window(&fw.surface)
                 .and_then(|w| self.output_for_window(&w))
                 .map_or(false, |o| o == output)
         });
-        if output_has_fullscreen {
-            return false;
-        }
         let output_geo = self.workspaces.output_geometry(&output).unwrap_or_default();
         for ls in self.layer_surfaces.iter().rev() {
             if !ls.alive() {
@@ -1073,6 +1072,9 @@ impl Lantern {
                     .current()
             });
             if cached.layer != Layer::Top && cached.layer != Layer::Overlay {
+                continue;
+            }
+            if output_has_fullscreen && !crate::modal_overlay::is_modal(&cached) {
                 continue;
             }
             let ls_loc = crate::render::layer_surface_position_logical(&cached, output_geo);

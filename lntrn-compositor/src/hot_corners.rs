@@ -165,30 +165,6 @@ impl Lantern {
         }
     }
 
-    /// True while any Overlay-layer surface holds Exclusive keyboard
-    /// interactivity — i.e. a modal UI is up (screenshot selection,
-    /// Command Center while open). Hot corners must not fire underneath
-    /// it: dragging a screenshot selection into a corner would otherwise
-    /// pop the window switcher or show-desktop mid-capture.
-    fn modal_overlay_active(&self) -> bool {
-        use smithay::wayland::compositor::with_states;
-        use smithay::wayland::shell::wlr_layer::{
-            KeyboardInteractivity, Layer, LayerSurfaceCachedState,
-        };
-
-        self.layer_surfaces.iter().any(|ls| {
-            ls.alive()
-                && with_states(ls.wl_surface(), |states| {
-                    let cached = *states
-                        .cached_state
-                        .get::<LayerSurfaceCachedState>()
-                        .current();
-                    cached.layer == Layer::Overlay
-                        && cached.keyboard_interactivity == KeyboardInteractivity::Exclusive
-                })
-        })
-    }
-
     /// Execute the action for a hot corner.
     fn fire_hot_corner(&mut self, corner: ScreenCorner) {
         match corner {

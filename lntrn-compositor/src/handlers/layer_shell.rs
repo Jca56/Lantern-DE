@@ -89,6 +89,7 @@ impl WlrLayerShellHandler for Lantern {
         self.layer_surface_namespaces.remove(surface.wl_surface());
         self.layer_surfaces.retain(|ls| ls != &surface);
         self.exclusive_zones_dirty = true;
+        self.release_layer_focus(surface.wl_surface());
         self.schedule_render();
     }
 }

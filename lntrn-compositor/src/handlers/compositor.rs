@@ -226,6 +226,10 @@ impl CompositorHandler for Lantern {
                     )),
                     serial,
                 );
+                // Reaching the surface must not wait on mouse motion (see
+                // `sync_pointer_focus`). Runs per commit because the surface
+                // only becomes hittable once it has a buffer.
+                self.sync_pointer_focus();
             } else if kb_interactivity == KeyboardInteractivity::None {
                 let keyboard = self.seat.get_keyboard().unwrap();
                 let has_focus = keyboard.current_focus().map_or(false, |f| {
@@ -247,6 +251,9 @@ impl CompositorHandler for Lantern {
                             serial,
                         );
                     }
+                    // No longer modal, so a fullscreen window covers it
+                    // again: the pointer goes back to that window too.
+                    self.sync_pointer_focus();
                 }
             }
         }

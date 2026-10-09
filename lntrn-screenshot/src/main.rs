@@ -2,11 +2,12 @@
 //!
 //! Flow:
 //!   1. Parse args (`--delay`, `--output`).
-//!   2. Capture the output via `zwlr_screencopy_v1` (capture.rs).
-//!   3. Open a fullscreen overlay layer surface with exclusive keyboard
-//!      focus (wayland.rs). The overlay sits above every other layer
-//!      surface including the Command Center, and the exclusive grab
-//!      means Ctrl+C / Enter always reach us.
+//!   2. Open a fullscreen overlay layer surface (wayland.rs) to learn
+//!      which output we're on, and capture that output via
+//!      `zwlr_screencopy_v1` (capture.rs).
+//!   3. Take exclusive keyboard focus. The overlay sits above every other
+//!      surface including the Command Center and fullscreen windows, and
+//!      the exclusive grab means Ctrl+C / Enter always reach us.
 //!   4. Run the selection UI on top of the captured frame.
 //!   5. On commit: encode PNG, destroy the layer surface (releasing
 //!      input grab), then serve the PNG on the Wayland clipboard via
@@ -66,6 +67,7 @@ fn main() -> Result<()> {
     eprintln!("Capturing output {:?}...", target_output);
     let cap = capture::capture_screen(target_output.as_deref())?;
     eprintln!("Captured {}x{}", cap.width, cap.height);
+    window.grab_keyboard();
 
     let phys_w = window.state.phys_width().max(1);
     let phys_h = window.state.phys_height().max(1);

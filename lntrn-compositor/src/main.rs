@@ -25,6 +25,7 @@ mod ipc_source;
 mod keyboard_focus;
 mod layer_position;
 mod minimize_anim;
+mod modal_overlay;
 mod output_layout;
 mod output_recovery;
 mod output_toggle;

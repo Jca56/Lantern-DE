@@ -204,12 +204,17 @@ pub fn render_surface(
     // them is pure wasted GPU/CPU. During gameplay that ~2-4ms dual-kawase
     // pass was overrunning the 144Hz vblank deadline and causing periodic
     // frame drops. Used below to skip blur, and as the basis for scanout.
+    // Two things still need the composite pass on such an output: a modal
+    // overlay, which is drawn above the fullscreen window, and a pending
+    // screencopy, which reads the composited frame back.
     let fullscreen_here = state.output_has_fullscreen(&output);
     let allow_scanout = fullscreen_here
         && matches!(
             state.cursor.status,
             smithay::input::pointer::CursorImageStatus::Hidden
-        );
+        )
+        && !state.output_has_modal_overlay(&output)
+        && !state.pending_screencopy.iter().any(|p| p.output == output);
 
     // Tick animations and handle finished close animations (before borrowing udev)
     let finished_closes = state.animations.tick();
@@ -1976,17 +1981,16 @@ pub fn render_surface(
         }
     }
 
-    // Fullscreen windows render above layer surfaces (e.g. above the bar).
-    elements.extend(fullscreen_elements);
-
-    // Layer surfaces: single pass, bucket into top (above windows) and bottom (behind windows).
+    // Layer surfaces: single pass, bucket into modal (above a fullscreen
+    // window), top (above windows) and bottom (behind windows).
+    let mut modal_layer_elements: Vec<CustomRenderElements> = Vec::new();
+    let mut top_layer_elements: Vec<CustomRenderElements> = Vec::new();
     let mut bottom_layer_elements: Vec<CustomRenderElements> = Vec::new();
-    // Element slots in `elements` occupied by no-capture overlays (the
+    // Slots in `top_layer_elements` occupied by no-capture overlays (the
     // recording badge): rendered to the display like everything else,
     // but skipped when fulfilling screencopy so the badge never appears
-    // in its own recording. Indices stay valid because everything after
-    // this loop only appends to `elements`.
-    let mut nocapture_indices: Vec<usize> = Vec::new();
+    // in its own recording.
+    let mut nocapture_top: Vec<usize> = Vec::new();
     {
         use smithay::wayland::compositor::with_states;
         use smithay::wayland::shell::wlr_layer::{Layer, LayerSurfaceCachedState};
@@ -2025,18 +2029,21 @@ pub fn render_surface(
                     1.0,
                     Kind::Unspecified,
                 );
-            let target = if is_top {
-                &mut elements
-            } else {
-                &mut bottom_layer_elements
-            };
             let no_capture = state
                 .layer_surface_namespaces
                 .get(ls.wl_surface())
                 .is_some_and(|ns| ns == crate::screencopy_render::NO_CAPTURE_NAMESPACE);
-            if is_top && no_capture {
-                nocapture_indices.extend(target.len()..target.len() + surface_elements.len());
-            }
+            let target = if is_bottom {
+                &mut bottom_layer_elements
+            } else if fullscreen_here && !no_capture && crate::modal_overlay::is_modal(&cached) {
+                &mut modal_layer_elements
+            } else {
+                if no_capture {
+                    let start = top_layer_elements.len();
+                    nocapture_top.extend(start..start + surface_elements.len());
+                }
+                &mut top_layer_elements
+            };
             target.extend(
                 surface_elements
                     .into_iter()
@@ -2044,6 +2051,17 @@ pub fn render_surface(
             );
         }
     }
+
+    // Fullscreen windows render above layer surfaces (e.g. above the bar) —
+    // all but a modal overlay, which goes in front of them.
+    elements.extend(modal_layer_elements);
+    elements.extend(fullscreen_elements);
+    // The no-capture slots, as indices into `elements`. They stay valid
+    // because everything after this only appends to `elements`.
+    let top_base = elements.len();
+    let mut nocapture_indices: Vec<usize> =
+        nocapture_top.into_iter().map(|i| top_base + i).collect();
+    elements.extend(top_layer_elements);
 
     // (window_elements and bottom_layer_elements extended after blur pipeline below)
 

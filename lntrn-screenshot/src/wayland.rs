@@ -7,10 +7,10 @@
 //! lets the user accidentally drag the screenshot window around the
 //! screen revealing the desktop underneath.
 //!
-//! We open a fullscreen overlay-layer surface with
-//! `KeyboardInteractivity::Exclusive` so we always sit on top of every
-//! other surface (including CC) and always receive keyboard focus while
-//! the screenshot UI is up.
+//! We open a fullscreen overlay-layer surface and, once the screen has
+//! been captured, give it `KeyboardInteractivity::Exclusive`, so we always
+//! sit on top of every other surface (including CC and fullscreen windows)
+//! and always receive keyboard focus while the screenshot UI is up.
 
 use std::ffi::c_void;
 use std::ptr::NonNull;
@@ -240,11 +240,8 @@ impl LayerWindow {
             layer_surface.set_anchor(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right);
             layer_surface.set_size(0, 0);
             layer_surface.set_exclusive_zone(-1);
-            // Steal keyboard focus from CC / any other layer surface so
-            // Esc/Enter/Ctrl+C always reach the screenshot UI.
-            layer_surface.set_keyboard_interactivity(
-                zwlr_layer_surface_v1::KeyboardInteractivity::Exclusive,
-            );
+            // No keyboard yet: `grab_keyboard` takes it once the screen has
+            // been captured.
         }
         surface.commit();
 
@@ -289,6 +286,18 @@ impl LayerWindow {
             viewport,
             handle,
         })
+    }
+
+    /// Take exclusive keyboard focus, stealing it from CC / any other layer
+    /// surface so Esc/Enter/Ctrl+C always reach the screenshot UI. Only done
+    /// once the screen has been captured: the grab takes focus away from
+    /// the window underneath, and a game that pauses on focus loss would
+    /// otherwise get its pause menu into the screenshot.
+    pub fn grab_keyboard(&self) {
+        self.layer_surface
+            .set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::Exclusive);
+        self.surface.commit();
+        let _ = self.conn.flush();
     }
 
     /// Block for the next batch of events. Returns when at least one
