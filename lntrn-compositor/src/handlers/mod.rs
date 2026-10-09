@@ -198,14 +198,15 @@ pub fn refresh_fractional_scales(state: &Lantern) {
             fractional_scale::with_fractional_scale(states, |f| f.set_preferred_scale(scale));
         });
     }
-    for output in state.workspaces.outputs_iter() {
-        let scale = output.current_scale().fractional_scale();
-        let map = smithay::desktop::layer_map_for_output(output);
-        for layer in map.layers() {
-            with_states(layer.wl_surface(), |states| {
-                fractional_scale::with_fractional_scale(states, |f| f.set_preferred_scale(scale));
-            });
-        }
+    for ls in &state.layer_surfaces {
+        let scale = state
+            .layer_surface_outputs
+            .get(ls.wl_surface())
+            .map(|o| o.current_scale().fractional_scale())
+            .unwrap_or(fallback);
+        with_states(ls.wl_surface(), |states| {
+            fractional_scale::with_fractional_scale(states, |f| f.set_preferred_scale(scale));
+        });
     }
 }
 delegate_viewporter!(Lantern);

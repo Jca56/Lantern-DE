@@ -1,3 +1,6 @@
+mod dispatch;
+
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::os::fd::{AsFd, AsRawFd};
 use std::ptr::NonNull;
@@ -10,14 +13,8 @@ use raw_window_handle::{
     RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle, WindowHandle,
 };
 use tokio::sync::mpsc;
-use wayland_client::{
-    protocol::{
-        wl_callback, wl_compositor, wl_output, wl_pointer, wl_region, wl_registry, wl_seat,
-        wl_surface,
-    },
-    Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum,
-};
-use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
+use wayland_client::{backend::ObjectId, protocol::wl_compositor, Connection, EventQueue, Proxy};
+use wayland_protocols::wp::viewporter::client::wp_viewporter;
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
 use crate::notifications::{Notification, NotifyEvent, Urgency};
@@ -113,14 +110,31 @@ impl HasWindowHandle for WaylandHandle {
     }
 }
 
+/// Physical data for one wl_output. Tracked per-output (keyed by proxy id)
+/// so another monitor's Mode/Scale events can't clobber the scale of the
+/// output our surface is actually on.
+#[derive(Default)]
+struct OutputData {
+    /// wl_registry global name, so GlobalRemove can evict the right entry.
+    registry_name: u32,
+    /// Physical mode width in pixels (wl_output::Event::Mode).
+    phys_width: u32,
+    /// Integer scale (wl_output::Event::Scale).
+    scale: i32,
+}
+
 struct State {
     running: bool,
     configured: bool,
     frame_done: bool,
     width: u32,
     height: u32,
-    scale: i32,
-    output_phys_width: u32,
+    /// All advertised outputs, keyed by wl_output proxy id.
+    outputs: HashMap<ObjectId, OutputData>,
+    /// The output our layer surface is on (from wl_surface::Enter).
+    current_output: Option<ObjectId>,
+    /// Integer-scale fallback used only before the first Enter arrives.
+    fallback_scale: i32,
     compositor: Option<wl_compositor::WlCompositor>,
     layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
     viewporter: Option<wp_viewporter::WpViewporter>,
@@ -138,8 +152,9 @@ impl State {
             frame_done: true,
             width: 0,
             height: 0,
-            scale: 1,
-            output_phys_width: 0,
+            outputs: HashMap::new(),
+            current_output: None,
+            fallback_scale: 1,
             compositor: None,
             layer_shell: None,
             viewporter: None,
@@ -149,13 +164,33 @@ impl State {
         }
     }
 
+    /// The live scale of the output our surface is on. The overlay spans the
+    /// whole output, so physical mode width over configured logical width is
+    /// the exact fractional scale — and it follows every configure, so a
+    /// scale change mid-session (Settings slider, Gaming Mode) is picked up
+    /// without a restart.
     fn fractional_scale(&self) -> f64 {
-        if self.output_phys_width > 0 && self.width > 0 {
-            self.output_phys_width as f64
-                / (self.output_phys_width as f64 / self.scale.max(1) as f64)
+        // Scale must come from the output our surface is actually on, never
+        // from whichever output spoke most recently. Before the first
+        // wl_surface::Enter arrives, a lone output is unambiguous.
+        let current = self
+            .current_output
+            .as_ref()
+            .and_then(|id| self.outputs.get(id));
+        let single = if self.outputs.len() == 1 {
+            self.outputs.values().next()
         } else {
-            self.scale.max(1) as f64
+            None
+        };
+        if let Some(data) = current.or(single) {
+            if data.phys_width > 0 && self.width > 0 {
+                return data.phys_width as f64 / self.width as f64;
+            }
+            if data.scale > 0 {
+                return data.scale as f64;
+            }
         }
+        self.fallback_scale.max(1) as f64
     }
 
     fn phys_w(&self) -> u32 {
@@ -163,233 +198,6 @@ impl State {
     }
     fn phys_h(&self) -> u32 {
         (self.height as f64 * self.fractional_scale()).round() as u32
-    }
-}
-
-// ── Dispatch impls ──────────────────────────────────────────────────────────
-
-impl Dispatch<wl_registry::WlRegistry, ()> for State {
-    fn event(
-        state: &mut Self,
-        registry: &wl_registry::WlRegistry,
-        event: wl_registry::Event,
-        _: &(),
-        _: &Connection,
-        qh: &QueueHandle<Self>,
-    ) {
-        if let wl_registry::Event::Global {
-            name,
-            interface,
-            version,
-        } = event
-        {
-            match interface.as_str() {
-                "wl_compositor" => {
-                    state.compositor = Some(registry.bind(name, version.min(6), qh, ()));
-                }
-                "zwlr_layer_shell_v1" => {
-                    state.layer_shell = Some(registry.bind(name, version.min(4), qh, ()));
-                }
-                "wp_viewporter" => {
-                    state.viewporter = Some(registry.bind(name, version.min(1), qh, ()));
-                }
-                "wl_output" => {
-                    let _: wl_output::WlOutput = registry.bind(name, version.min(4), qh, ());
-                }
-                "wl_seat" => {
-                    let _: wl_seat::WlSeat = registry.bind(name, version.min(7), qh, ());
-                }
-                _ => {}
-            }
-        }
-    }
-}
-
-impl Dispatch<wl_compositor::WlCompositor, ()> for State {
-    fn event(
-        _: &mut Self,
-        _: &wl_compositor::WlCompositor,
-        _: wl_compositor::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-impl Dispatch<wl_surface::WlSurface, ()> for State {
-    fn event(
-        _: &mut Self,
-        _: &wl_surface::WlSurface,
-        _: wl_surface::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-impl Dispatch<wl_region::WlRegion, ()> for State {
-    fn event(
-        _: &mut Self,
-        _: &wl_region::WlRegion,
-        _: wl_region::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-impl Dispatch<wp_viewporter::WpViewporter, ()> for State {
-    fn event(
-        _: &mut Self,
-        _: &wp_viewporter::WpViewporter,
-        _: wp_viewporter::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-impl Dispatch<wp_viewport::WpViewport, ()> for State {
-    fn event(
-        _: &mut Self,
-        _: &wp_viewport::WpViewport,
-        _: wp_viewport::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-impl Dispatch<zwlr_layer_shell_v1::ZwlrLayerShellV1, ()> for State {
-    fn event(
-        _: &mut Self,
-        _: &zwlr_layer_shell_v1::ZwlrLayerShellV1,
-        _: zwlr_layer_shell_v1::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-
-const BTN_LEFT: u32 = 0x110;
-
-impl Dispatch<wl_seat::WlSeat, ()> for State {
-    fn event(
-        _: &mut Self,
-        seat: &wl_seat::WlSeat,
-        event: wl_seat::Event,
-        _: &(),
-        _: &Connection,
-        qh: &QueueHandle<Self>,
-    ) {
-        if let wl_seat::Event::Capabilities {
-            capabilities: WEnum::Value(caps),
-        } = event
-        {
-            if caps.contains(wl_seat::Capability::Pointer) {
-                seat.get_pointer(qh, ());
-            }
-        }
-    }
-}
-
-impl Dispatch<wl_pointer::WlPointer, ()> for State {
-    fn event(
-        state: &mut Self,
-        _: &wl_pointer::WlPointer,
-        event: wl_pointer::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        match event {
-            wl_pointer::Event::Enter {
-                surface_x,
-                surface_y,
-                ..
-            }
-            | wl_pointer::Event::Motion {
-                surface_x,
-                surface_y,
-                ..
-            } => {
-                state.pointer_x = surface_x;
-                state.pointer_y = surface_y;
-            }
-            wl_pointer::Event::Button {
-                button,
-                state: btn_state,
-                ..
-            } => {
-                if button == BTN_LEFT && btn_state == WEnum::Value(wl_pointer::ButtonState::Pressed)
-                {
-                    state.pending_click = Some((state.pointer_x, state.pointer_y));
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-impl Dispatch<wl_output::WlOutput, ()> for State {
-    fn event(
-        state: &mut Self,
-        _: &wl_output::WlOutput,
-        event: wl_output::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        match event {
-            wl_output::Event::Scale { factor } => state.scale = factor,
-            wl_output::Event::Mode { width, .. } => state.output_phys_width = width as u32,
-            _ => {}
-        }
-    }
-}
-
-impl Dispatch<wl_callback::WlCallback, ()> for State {
-    fn event(
-        state: &mut Self,
-        _: &wl_callback::WlCallback,
-        _: wl_callback::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        state.frame_done = true;
-    }
-}
-
-impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for State {
-    fn event(
-        state: &mut Self,
-        layer_surface: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
-        event: zwlr_layer_surface_v1::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        match event {
-            zwlr_layer_surface_v1::Event::Configure {
-                serial,
-                width,
-                height,
-            } => {
-                layer_surface.ack_configure(serial);
-                if width > 0 {
-                    state.width = width;
-                }
-                if height > 0 {
-                    state.height = height;
-                }
-                state.configured = true;
-                state.frame_done = true;
-            }
-            zwlr_layer_surface_v1::Event::Closed => state.running = false,
-            _ => {}
-        }
     }
 }
 
@@ -526,11 +334,9 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
         event_queue.blocking_dispatch(&mut state)?;
     }
 
-    // Fix the zero-width layer shell bug
-    layer_surface.set_size(state.width, state.height);
-    surface.commit();
-
-    let scale_f = state.fractional_scale() as f32;
+    // The size stays (0, 0) = "fill the output": the compositor re-sizes us
+    // whenever the output's logical size changes. Pinning the first configured
+    // size here froze the overlay at the startup scale's dimensions.
 
     let viewport = state.viewporter.as_ref().map(|vp| {
         let v = vp.get_viewport(&surface, &qh, ());
@@ -549,6 +355,11 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
     let phys_h = state.phys_h().max(1);
     let mut gpu = GpuContext::from_window(&wl_handle, phys_w, phys_h)
         .map_err(|e| anyhow!("GPU init failed: {e}"))?;
+    // Logical + physical size the swapchain and viewport were last set up
+    // for. Compared every frame, because the physical size also moves when
+    // only the output's scale or mode changes.
+    let mut applied_size = (state.width, state.height, phys_w, phys_h);
+    state.configured = false;
     let mut painter = Painter::new(&gpu);
     let mut text = TextRenderer::new(&gpu);
 
@@ -645,19 +456,19 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
         // ~30fps while toasts are visible
         std::thread::sleep(std::time::Duration::from_millis(33));
 
-        if state.configured {
+        let scale_f = state.fractional_scale() as f32;
+        let pw = state.phys_w().max(1);
+        let ph = state.phys_h().max(1);
+        let size = (state.width, state.height, pw, ph);
+        if state.configured || size != applied_size {
             state.configured = false;
-            let pw = state.phys_w().max(1);
-            let ph = state.phys_h().max(1);
+            applied_size = size;
             gpu.resize(pw, ph);
             surface.set_buffer_scale(1);
             if let Some(vp) = &viewport {
                 vp.set_destination(state.width as i32, state.height as i32);
             }
         }
-
-        let pw = state.phys_w();
-        let ph = state.phys_h();
 
         // Build toast snapshots with current progress + slide.
         let toasts: Vec<Toast> = active.iter().map(|a| a.to_toast()).collect();
@@ -700,7 +511,7 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
                 frame.submit(&gpu.queue);
             }
             Err(SurfaceError::Lost | SurfaceError::Outdated) => {
-                gpu.resize(state.phys_w().max(1), state.phys_h().max(1));
+                gpu.resize(pw, ph);
             }
             Err(_) => {}
         }

@@ -898,6 +898,11 @@ pub fn apply_output_config(
         }
     }
 
+    // Layer surfaces are only sized when their client commits — push the new
+    // output geometry to them now, or an idle full-output overlay keeps the
+    // old logical size until it next draws.
+    state.reconfigure_layer_surfaces();
+
     // Keep wlr-output-management heads in sync (and notify bound clients)
     // — otherwise System Settings shows pre-apply positions/scales.
     state.output_management_state.sync_applied_changes(&changes);

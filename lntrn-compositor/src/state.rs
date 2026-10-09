@@ -1346,8 +1346,8 @@ impl Lantern {
     /// still in the layout (the primary, in config order). Left alone, a
     /// panel or notification that lived on an unplugged or barrier-disabled
     /// monitor would never render again: its per-output check fails on every
-    /// remaining output. The surface keeps its current size until its next
-    /// commit, which the commit handler then sizes against the new output.
+    /// remaining output. Moved surfaces are re-sized against the new output
+    /// right away.
     pub fn reroute_layer_surfaces_from(&mut self, gone: &Output) {
         let Some(target) = self
             .workspaces
@@ -1375,6 +1375,7 @@ impl Lantern {
                 "re-routed layer surfaces off a departed output"
             );
             self.exclusive_zones_dirty = true;
+            self.reconfigure_layer_surfaces();
         }
     }
 
