@@ -8,8 +8,10 @@
 //!   3. Take exclusive keyboard focus. The overlay sits above every other
 //!      surface including the Command Center and fullscreen windows, and
 //!      the exclusive grab means Ctrl+C / Enter always reach us.
-//!   4. Run the selection UI on top of the captured frame.
-//!   5. On commit: encode PNG, destroy the layer surface (releasing
+//!   4. Run the selection UI on top of the captured frame: set the
+//!      region, then draw on it (annotate.rs).
+//!   5. On commit: lay what was drawn over the captured pixels, encode
+//!      PNG, destroy the layer surface (releasing
 //!      input grab), then serve the PNG on the Wayland clipboard via
 //!      `zwlr_data_control_v1` (clipboard.rs).
 
@@ -19,9 +21,11 @@ use std::time::Duration;
 use anyhow::Result;
 use lntrn_render::{GpuContext, Painter, SurfaceError, TextRenderer, TexturePass};
 
+mod annotate;
 mod capture;
 mod clipboard;
 mod export;
+mod region;
 mod render;
 mod selection;
 mod settings;
@@ -29,7 +33,8 @@ mod toolbar;
 mod wayland;
 mod window_query;
 
-use selection::{DragMode, HandleEdge, Selection, HANDLE_HIT};
+use annotate::{Mark, Tool};
+use selection::{DragMode, Selection, HANDLE_HIT};
 use toolbar::{ToolbarAction, ToolbarLayout};
 use wayland::{FrameInput, LayerWindow};
 use window_query::WindowRect;
@@ -96,6 +101,12 @@ fn main() -> Result<()> {
         windows: Vec::new(),
         windows_queried: false,
         hover_window: None,
+        marks: Vec::new(),
+        drawing: None,
+        typing: None,
+        tool: None,
+        color: 0,
+        size: 1,
     };
 
     let mut commit: Option<CommitAction> = None;
@@ -147,11 +158,18 @@ fn main() -> Result<()> {
         }
     }
 
+    // What was drawn on the screenshot, as pixels to lay over it. Done
+    // while the GPU is still up: the marks are drawn by it once more.
+    let ink = match commit {
+        Some(CommitAction::Cancel) | None => None,
+        Some(_) => annotate::ink::bake(&gpu, &mut painter, &mut text, &ui.marks),
+    };
+    let ink = ink.as_ref();
     let png_data = match commit {
-        Some(CommitAction::SaveAndCopy) => ui.export(true, true),
-        Some(CommitAction::CopyOnly) => ui.export(true, false),
+        Some(CommitAction::SaveAndCopy) => ui.export(true, true, ink),
+        Some(CommitAction::CopyOnly) => ui.export(true, false, ink),
         Some(CommitAction::SaveOnly) => {
-            ui.export(false, true);
+            ui.export(false, true, ink);
             None
         }
         Some(CommitAction::Cancel) | None => None,
@@ -217,6 +235,19 @@ struct SelectionUi {
     windows_queried: bool,
     /// Index into `windows` of the window currently under the cursor.
     hover_window: Option<usize>,
+
+    /// What has been drawn on the screenshot, oldest first.
+    marks: Vec<Mark>,
+    /// The mark being dragged out.
+    drawing: Option<Mark>,
+    /// The text being typed with the text tool, not yet a mark.
+    typing: Option<Mark>,
+    /// The drawing tool in hand. With none, drags set, move and size the
+    /// region.
+    tool: Option<Tool>,
+    /// The colour and thickness the next mark gets (see `annotate`).
+    color: usize,
+    size: usize,
 }
 
 impl SelectionUi {
@@ -227,11 +258,30 @@ impl SelectionUi {
         screen_h: f32,
         scale: f32,
     ) -> Option<CommitAction> {
+        // While text is being typed the keyboard is the text tool's:
+        // Enter finishes the text and Esc throws it away.
+        if self.typing.is_some() {
+            self.type_text(&input.typed);
+            if input.esc {
+                self.typing = None;
+                return None;
+            }
+            if input.enter {
+                self.commit_typing();
+                return None;
+            }
+        }
         if input.esc {
             // While picking a window, Esc just backs out to normal mode
             // instead of cancelling the whole screenshot.
             if self.mode == UiMode::PickWindow {
                 self.mode = UiMode::Normal;
+                return None;
+            }
+            // With a tool in hand, Esc puts it down.
+            if self.tool.is_some() {
+                self.tool = None;
+                self.drawing = None;
                 return None;
             }
             // With a region drawn, Esc drops it first, which brings the
@@ -242,6 +292,14 @@ impl SelectionUi {
                 return None;
             }
             return Some(CommitAction::Cancel);
+        }
+        if input.ctrl_z {
+            self.undo();
+        }
+        if input.enter || input.ctrl_c || input.ctrl_s {
+            // Text still being typed goes into the picture as it is.
+            self.commit_typing();
+            self.finish_mark();
         }
         if input.enter {
             return Some(CommitAction::SaveAndCopy);
@@ -255,7 +313,9 @@ impl SelectionUi {
 
         if input.cursor_moved {
             self.cursor = (input.cursor_x, input.cursor_y);
-            if self.mode == UiMode::PickWindow {
+            if self.drawing.is_some() {
+                self.drag_mark(self.cursor);
+            } else if self.mode == UiMode::PickWindow {
                 self.update_hover_window(input.cursor_x, input.cursor_y);
             } else {
                 self.on_cursor_moved(input.cursor_x, input.cursor_y);
@@ -274,14 +334,28 @@ impl SelectionUi {
                     return None;
                 }
             }
-            match self.mode {
-                UiMode::PickWindow => self.on_pick_window_click(cx, cy),
-                UiMode::Normal => self.on_left_pressed(cx, cy),
+            // So does the bar by the region.
+            if let Some(bar) = self.bar_layout(screen_w, screen_h, scale) {
+                if bar.panel_contains(cx, cy) {
+                    if let Some(action) = bar.action_at(cx, cy) {
+                        self.on_bar_action(action);
+                    }
+                    return None;
+                }
+            }
+            match (self.mode, self.tool) {
+                (UiMode::PickWindow, _) => self.on_pick_window_click(cx, cy),
+                (UiMode::Normal, Some(tool)) => self.start_mark(tool, (cx, cy), scale),
+                (UiMode::Normal, None) => self.on_left_pressed(cx, cy),
             }
         }
 
         if input.left_released && self.mode == UiMode::Normal {
-            self.on_left_released();
+            if self.drawing.is_some() {
+                self.finish_mark();
+            } else {
+                self.on_left_released();
+            }
         }
         None
     }
@@ -320,102 +394,6 @@ impl SelectionUi {
                 }
             }
         }
-    }
-
-    /// Topmost window under the cursor = last match in bottom→top order.
-    fn update_hover_window(&mut self, cx: f32, cy: f32) {
-        self.hover_window = self.windows.iter().rposition(|w| w.contains(cx, cy));
-    }
-
-    fn on_pick_window_click(&mut self, cx: f32, cy: f32) {
-        self.update_hover_window(cx, cy);
-        if let Some(idx) = self.hover_window {
-            let w = &self.windows[idx];
-            // Clamp to the captured area so an off-screen window edge can't
-            // produce a selection outside the image.
-            let x = w.x.max(0.0);
-            let y = w.y.max(0.0);
-            let right = (w.x + w.w).min(self.capture_width as f32);
-            let bottom = (w.y + w.h).min(self.capture_height as f32);
-            self.selection = Some(Selection::from_normalized(x, y, right - x, bottom - y));
-        }
-        // Whether or not we hit a window, leave pick mode — a stray click in
-        // empty space drops back to normal rather than trapping the user.
-        self.mode = UiMode::Normal;
-    }
-
-    fn on_cursor_moved(&mut self, cx: f32, cy: f32) {
-        match self.drag_mode {
-            DragMode::New { start_x, start_y } => {
-                self.selection = Some(Selection {
-                    x: start_x,
-                    y: start_y,
-                    w: cx - start_x,
-                    h: cy - start_y,
-                });
-            }
-            DragMode::Handle { edge, orig } => {
-                let (ox, oy, ow, oh) = orig;
-                let (nx, ny, nw, nh) = match edge {
-                    HandleEdge::TopLeft => (cx, cy, ox + ow - cx, oy + oh - cy),
-                    HandleEdge::Top => (ox, cy, ow, oy + oh - cy),
-                    HandleEdge::TopRight => (ox, cy, cx - ox, oy + oh - cy),
-                    HandleEdge::Right => (ox, oy, cx - ox, oh),
-                    HandleEdge::BottomRight => (ox, oy, cx - ox, cy - oy),
-                    HandleEdge::Bottom => (ox, oy, ow, cy - oy),
-                    HandleEdge::BottomLeft => (cx, oy, ox + ow - cx, cy - oy),
-                    HandleEdge::Left => (cx, oy, ox + ow - cx, oh),
-                };
-                self.selection = Some(Selection::from_normalized(nx, ny, nw, nh));
-            }
-            DragMode::Move { offset_x, offset_y } => {
-                if let Some(ref sel) = self.selection {
-                    let (_, _, w, h) = sel.normalized();
-                    self.selection = Some(Selection::from_normalized(
-                        cx - offset_x,
-                        cy - offset_y,
-                        w,
-                        h,
-                    ));
-                }
-            }
-            DragMode::None => {}
-        }
-    }
-
-    fn on_left_pressed(&mut self, cx: f32, cy: f32) {
-        if let Some(ref sel) = self.selection {
-            if let Some(edge) = sel.hit_handle(cx, cy) {
-                let orig = sel.normalized();
-                self.drag_mode = DragMode::Handle { edge, orig };
-                return;
-            }
-            if sel.contains(cx, cy) {
-                let (sx, sy, _, _) = sel.normalized();
-                self.drag_mode = DragMode::Move {
-                    offset_x: cx - sx,
-                    offset_y: cy - sy,
-                };
-                return;
-            }
-        }
-        self.drag_mode = DragMode::New {
-            start_x: cx,
-            start_y: cy,
-        };
-        self.selection = None;
-    }
-
-    fn on_left_released(&mut self) {
-        if let Some(ref sel) = self.selection {
-            let (x, y, w, h) = sel.normalized();
-            if w > 2.0 && h > 2.0 {
-                self.selection = Some(Selection::from_normalized(x, y, w, h));
-            } else {
-                self.selection = None;
-            }
-        }
-        self.drag_mode = DragMode::None;
     }
 }
 

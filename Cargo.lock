@@ -2840,6 +2840,7 @@ dependencies = [
  "wayland-protocols",
  "wayland-protocols-wlr",
  "wgpu 28.0.0",
+ "xkbcommon 0.9.0",
 ]
 
 [[package]]

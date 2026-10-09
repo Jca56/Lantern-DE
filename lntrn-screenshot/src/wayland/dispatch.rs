@@ -11,7 +11,7 @@ use wayland_client::{
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
-use super::{TrackedOutput, WlState};
+use super::{keyboard::Typed, TrackedOutput, WlState};
 
 // Evdev keycodes.
 const KEY_ESC: u32 = 1;
@@ -19,6 +19,8 @@ const KEY_ENTER: u32 = 28;
 const KEY_KPENTER: u32 = 96;
 const KEY_C: u32 = 46;
 const KEY_S: u32 = 31;
+const KEY_Z: u32 = 44;
+const KEY_BACKSPACE: u32 = 14;
 const KEY_LEFTCTRL: u32 = 29;
 const KEY_RIGHTCTRL: u32 = 97;
 
@@ -292,6 +294,14 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WlState {
         _: &QueueHandle<Self>,
     ) {
         match event {
+            wl_keyboard::Event::Keymap { format, fd, size } => {
+                if format == WEnum::Value(wl_keyboard::KeymapFormat::XkbV1) {
+                    state.keyboard.update_keymap(fd, size);
+                }
+            }
+            wl_keyboard::Event::RepeatInfo { rate, delay } => {
+                state.keyboard.set_repeat(rate, delay);
+            }
             wl_keyboard::Event::Key {
                 key,
                 state: key_state,
@@ -299,6 +309,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WlState {
             } => {
                 let pressed = key_state == WEnum::Value(wl_keyboard::KeyState::Pressed);
                 let released = key_state == WEnum::Value(wl_keyboard::KeyState::Released);
+                if released {
+                    state.keyboard.release(Some(key));
+                }
                 if key == KEY_LEFTCTRL || key == KEY_RIGHTCTRL {
                     if pressed {
                         state.ctrl_held = true;
@@ -311,15 +324,38 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WlState {
                         KEY_ENTER | KEY_KPENTER => state.enter_pressed = true,
                         KEY_C if state.ctrl_held => state.ctrl_c_pressed = true,
                         KEY_S if state.ctrl_held => state.ctrl_s_pressed = true,
-                        _ => {}
+                        KEY_Z if state.ctrl_held => state.ctrl_z_pressed = true,
+                        _ if state.ctrl_held => {}
+                        // Anything else types, for the text tool.
+                        _ => {
+                            let typed = if key == KEY_BACKSPACE {
+                                Some(Typed::Backspace)
+                            } else {
+                                state.keyboard.key_to_utf8(key).map(Typed::Text)
+                            };
+                            if let Some(typed) = typed {
+                                state.typed.push(typed.clone());
+                                state.keyboard.hold(key, typed);
+                            }
+                        }
                     }
                 }
             }
-            wl_keyboard::Event::Modifiers { mods_depressed, .. } => {
+            wl_keyboard::Event::Modifiers {
+                mods_depressed,
+                mods_latched,
+                mods_locked,
+                group,
+                ..
+            } => {
                 state.ctrl_held = (mods_depressed & 4) != 0;
+                state
+                    .keyboard
+                    .update_modifiers(mods_depressed, mods_latched, mods_locked, group);
             }
             wl_keyboard::Event::Leave { .. } => {
                 state.ctrl_held = false;
+                state.keyboard.release(None);
             }
             _ => {}
         }

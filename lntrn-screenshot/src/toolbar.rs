@@ -5,7 +5,8 @@
 //! [`ToolbarLayout::compute`] is used for both hit-testing (in input
 //! handling) and drawing, so the two never drift apart.
 //!
-//! Designed to grow — paint tools slot in as more [`ToolbarAction`] entries.
+//! It shows while no region is drawn. Once one is, the drawing tools' bar
+//! (`annotate::bar`) takes over, by the region.
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 

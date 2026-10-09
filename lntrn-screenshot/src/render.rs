@@ -1,10 +1,12 @@
-//! Drawing for the screenshot overlay: the dim, the selection rectangle with
-//! its handles and size readout, the window-pick highlight, and the toolbar.
+//! Drawing for the screenshot overlay: what was drawn on the screenshot, the
+//! dim, the selection rectangle with its handles and size readout, the
+//! window-pick highlight, and the toolbars.
 
 use lntrn_render::{
     Color, GpuContext, Painter, Rect, SurfaceError, TextRenderer, TextureDraw, TexturePass,
 };
 
+use crate::annotate::Shape;
 use crate::selection::HANDLE_SIZE;
 use crate::toolbar::{ToolbarAction, ToolbarLayout};
 use crate::{SelectionUi, UiMode};
@@ -20,7 +22,39 @@ fn accent_orange() -> Color {
     Color::from_rgba8(0xff, 0x9b, 0x42, 0xff)
 }
 
+// The size readout by a region: its text size, the padding round it and
+// the gap to the region, in logical px.
+const READOUT_FONT: f32 = 18.0;
+const READOUT_PAD: f32 = 6.0;
+const READOUT_GAP: f32 = 4.0;
+
+/// How much room above a region its size readout takes.
+pub(crate) fn readout_height(scale: f32) -> f32 {
+    (READOUT_FONT + READOUT_PAD * 2.0) * scale.max(1.0) + READOUT_GAP
+}
+
 impl SelectionUi {
+    /// What has been drawn on the screenshot: the marks, the one being
+    /// dragged out, and the text being typed with its caret.
+    fn render_marks(&self, painter: &mut Painter, text: &mut TextRenderer, sw: u32, sh: u32) {
+        for mark in self.marks.iter().chain(&self.drawing) {
+            mark.paint(painter);
+            mark.queue_text(text, sw, sh);
+        }
+        if let Some(typing) = &self.typing {
+            let width = typing.queue_text(text, sw, sh);
+            if let Shape::Text { at, .. } = &typing.shape {
+                let font = typing.weight;
+                let caret = (font * 0.08).max(2.0);
+                painter.rect_filled(
+                    Rect::new(at.0 + width + caret, at.1, caret, font * 1.2),
+                    0.0,
+                    typing.color(),
+                );
+            }
+        }
+    }
+
     /// Draw the window-pick overlay: dim everything except the hovered
     /// window, outline it, and label it. With nothing hovered, dim the lot.
     fn render_pick_window(
@@ -86,6 +120,10 @@ impl SelectionUi {
 
         painter.clear();
 
+        // The marks go down first, so the dim covers them outside the
+        // region as it covers the picture.
+        self.render_marks(painter, text, sw as u32, sh as u32);
+
         if self.mode == UiMode::PickWindow {
             self.render_pick_window(painter, text, sw, sh, scale, dim);
         } else if let Some(ref sel) = self.selection {
@@ -117,26 +155,28 @@ impl SelectionUi {
                 painter.rect_stroke(Rect::new(hx, hy, hs, hs), 2.0, 1.0 * scale, accent_orange());
             }
 
-            // Size readout above (or below) the selection.
+            // Size readout above the selection, or tucked inside its top
+            // corner when there is no room above. (Below is the tool
+            // bar's place.)
             let label = format!("{} x {}", sw_ as u32, sh_ as u32);
-            let label_font = 18.0 * scale.max(1.0);
-            let label_pad = 6.0 * scale.max(1.0);
+            let label_font = READOUT_FONT * scale.max(1.0);
+            let label_pad = READOUT_PAD * scale.max(1.0);
             let label_box_w = 180.0 * scale.max(1.0);
             let label_box_h = label_font + label_pad * 2.0;
-            let label_y = if sy > label_box_h + 4.0 {
-                sy - label_box_h - 4.0
+            let (label_x, label_y) = if sy > label_box_h + READOUT_GAP {
+                (sx, sy - label_box_h - READOUT_GAP)
             } else {
-                sy + sh_ + 4.0
+                (sx + READOUT_GAP, sy + READOUT_GAP)
             };
             painter.rect_filled(
-                Rect::new(sx, label_y, label_box_w, label_box_h),
+                Rect::new(label_x, label_y, label_box_w, label_box_h),
                 4.0 * scale.max(1.0),
                 Color::from_rgba8(0, 0, 0, 200),
             );
             text.queue(
                 &label,
                 label_font,
-                sx + label_pad,
+                label_x + label_pad,
                 label_y + label_pad,
                 text_tan(),
                 label_box_w - label_pad * 2.0,
@@ -160,6 +200,10 @@ impl SelectionUi {
                 sw as u32,
                 sh as u32,
             );
+        }
+        // The tool bar by the region.
+        if let Some(bar) = self.bar_layout(sw, sh, scale) {
+            bar.render(painter, self.cursor, &self.bar_state());
         }
 
         let mut frame = gpu.begin_frame("screenshot")?;

@@ -30,6 +30,9 @@ use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_l
 
 
 mod dispatch;
+mod keyboard;
+
+pub use keyboard::Typed;
 
 /// Per-frame drained input state.
 #[derive(Default)]
@@ -43,6 +46,9 @@ pub struct FrameInput {
     pub enter: bool,
     pub ctrl_c: bool,
     pub ctrl_s: bool,
+    pub ctrl_z: bool,
+    /// What was typed, in order, for the text tool.
+    pub typed: Vec<Typed>,
 }
 
 /// Hands wgpu a `RawDisplayHandle` / `RawWindowHandle` pair pointing at
@@ -106,6 +112,9 @@ pub struct WlState {
     enter_pressed: bool,
     ctrl_c_pressed: bool,
     ctrl_s_pressed: bool,
+    ctrl_z_pressed: bool,
+    keyboard: keyboard::KeyboardState,
+    typed: Vec<Typed>,
 }
 
 impl WlState {
@@ -131,6 +140,9 @@ impl WlState {
             enter_pressed: false,
             ctrl_c_pressed: false,
             ctrl_s_pressed: false,
+            ctrl_z_pressed: false,
+            keyboard: keyboard::KeyboardState::new(),
+            typed: Vec::new(),
         }
     }
 
@@ -168,6 +180,8 @@ impl WlState {
     /// texture which is in physical pixels.
     pub fn take_frame_input(&mut self) -> FrameInput {
         let scale = self.fractional_scale() as f32;
+        let repeats = self.keyboard.due_repeats();
+        self.typed.extend(repeats);
         let out = FrameInput {
             cursor_moved: self.cursor_dirty,
             cursor_x: self.cursor_x as f32 * scale,
@@ -178,6 +192,8 @@ impl WlState {
             enter: self.enter_pressed,
             ctrl_c: self.ctrl_c_pressed,
             ctrl_s: self.ctrl_s_pressed,
+            ctrl_z: self.ctrl_z_pressed,
+            typed: std::mem::take(&mut self.typed),
         };
         self.cursor_dirty = false;
         self.left_pressed_this_frame = false;
@@ -186,6 +202,7 @@ impl WlState {
         self.enter_pressed = false;
         self.ctrl_c_pressed = false;
         self.ctrl_s_pressed = false;
+        self.ctrl_z_pressed = false;
         out
     }
 }

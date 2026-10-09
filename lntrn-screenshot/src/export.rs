@@ -4,10 +4,17 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::annotate::ink::InkLayer;
 use crate::SelectionUi;
 
 impl SelectionUi {
-    pub(crate) fn export(&self, copy: bool, save: bool) -> Option<Arc<Vec<u8>>> {
+    /// `ink` is what was drawn on the screenshot, to go into the image.
+    pub(crate) fn export(
+        &self,
+        copy: bool,
+        save: bool,
+        ink: Option<&InkLayer>,
+    ) -> Option<Arc<Vec<u8>>> {
         // Selection coords are in physical pixels (same space as the
         // captured image), so we crop directly without rescaling.
         let (crop_x, crop_y, crop_w, crop_h) = if let Some(ref sel) = self.selection {
@@ -27,8 +34,11 @@ impl SelectionUi {
         } else {
             &self.capture_with_cursor
         };
-        let img =
+        let mut img =
             image::RgbaImage::from_raw(self.capture_width, self.capture_height, pixels.clone())?;
+        if let Some(ink) = ink {
+            ink.lay_over(&mut img, (crop_x, crop_y, crop_w, crop_h));
+        }
         let cropped = image::imageops::crop_imm(&img, crop_x, crop_y, crop_w, crop_h).to_image();
 
         if save {
