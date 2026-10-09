@@ -1,7 +1,6 @@
 //! Floating toolbar for the screenshot overlay.
 //!
-//! A bottom-centre pill (just above the keyboard-hint bar) holding the
-//! capture-mode buttons. Layout is computed fresh each frame from the screen
+//! A bottom-centre pill holding the capture-mode buttons. Layout is computed fresh each frame from the screen
 //! size + output scale so it tracks HiDPI and monitor changes; the same
 //! [`ToolbarLayout::compute`] is used for both hit-testing (in input
 //! handling) and drawing, so the two never drift apart.
@@ -21,9 +20,8 @@ const BTN_RADIUS: f32 = 12.0;
 const ICON_SIZE: f32 = 28.0;
 const ICON_LABEL_GAP: f32 = 12.0;
 const LABEL_FONT: f32 = 22.0;
-/// Distance from the screen bottom to the toolbar's bottom edge — enough to
-/// clear the hint bar that lives below it.
-const BOTTOM_OFFSET: f32 = 104.0;
+/// Distance from the screen bottom to the toolbar's bottom edge.
+const BOTTOM_OFFSET: f32 = 32.0;
 
 fn text_tan() -> Color {
     Color::from_rgba8(0xe8, 0xdc, 0xc8, 0xff)

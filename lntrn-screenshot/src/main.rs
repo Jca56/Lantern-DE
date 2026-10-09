@@ -525,39 +525,6 @@ impl SelectionUi {
         let active = (self.mode == UiMode::PickWindow).then_some(ToolbarAction::Window);
         toolbar.render(painter, text, self.cursor, active, sw as u32, sh as u32);
 
-        // Hint bar — sized up for readability.
-        let hint = match self.mode {
-            UiMode::PickWindow => "Click a window to capture it   \u{00b7}   Esc = back",
-            UiMode::Normal if self.selection.is_some() => {
-                "Enter = save + copy   \u{00b7}   Ctrl+C = copy   \u{00b7}   Ctrl+S = save   \u{00b7}   Esc = cancel"
-            }
-            UiMode::Normal => {
-                "Drag to select   \u{00b7}   buttons capture screen / a window   \u{00b7}   Enter = full screen   \u{00b7}   Esc = cancel"
-            }
-        };
-        let hint_font = 26.0 * scale.max(1.0);
-        let hint_pad_x = 28.0 * scale.max(1.0);
-        let hint_pad_y = 14.0 * scale.max(1.0);
-        let hint_box_w = 1100.0 * scale.max(1.0);
-        let hint_box_h = hint_font + hint_pad_y * 2.0;
-        let hint_x = sw / 2.0 - hint_box_w / 2.0;
-        let hint_y = sh - hint_box_h - 32.0 * scale.max(1.0);
-        painter.rect_filled(
-            Rect::new(hint_x, hint_y, hint_box_w, hint_box_h),
-            12.0 * scale.max(1.0),
-            Color::from_rgba8(0, 0, 0, 210),
-        );
-        text.queue(
-            hint,
-            hint_font,
-            hint_x + hint_pad_x,
-            hint_y + hint_pad_y,
-            text_tan(),
-            hint_box_w - hint_pad_x * 2.0,
-            sw as u32,
-            sh as u32,
-        );
-
         let mut frame = gpu.begin_frame("screenshot")?;
         let view = frame.view().clone();
 
