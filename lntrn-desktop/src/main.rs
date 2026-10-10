@@ -28,16 +28,21 @@ fn main() {
         )
         .init();
 
-    // Daemonize so the desktop survives terminal close.
-    unsafe {
-        let pid = libc::fork();
-        if pid < 0 {
-            std::process::exit(1);
+    // Daemonize so the desktop survives terminal close. The session manager
+    // passes --foreground instead: it watches the very process it started, to
+    // restart it if it dies and to stop it at logout, and a parent that has
+    // already exited tells it nothing.
+    if !std::env::args().any(|arg| arg == "--foreground") {
+        unsafe {
+            let pid = libc::fork();
+            if pid < 0 {
+                std::process::exit(1);
+            }
+            if pid > 0 {
+                std::process::exit(0);
+            }
+            libc::setsid();
         }
-        if pid > 0 {
-            std::process::exit(0);
-        }
-        libc::setsid();
     }
 
     if let Err(e) = wayland::run() {

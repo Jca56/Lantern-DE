@@ -156,7 +156,7 @@ install-portal:
 	@echo "Installing XDG portal config..."
 	@sudo mkdir -p /usr/share/xdg-desktop-portal/portals
 	@sudo cp lntrn-portal/config/lantern.portal /usr/share/xdg-desktop-portal/portals/
-	@sudo cp lntrn-portal/config/lantern-portals.conf /usr/share/xdg-desktop-portal/portals/
+	@sudo cp lntrn-portal/config/lantern-portals.conf /usr/share/xdg-desktop-portal/
 	@sudo cp lntrn-portal/config/org.freedesktop.impl.portal.desktop.lantern.service \
 		/usr/share/dbus-1/services/
 	@echo "  ✓ portal config installed"
