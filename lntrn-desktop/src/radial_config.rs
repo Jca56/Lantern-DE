@@ -6,11 +6,17 @@
 //! or malformed file falls back to defaults *without* clobbering whatever the
 //! user has on disk.
 //!
+//! System Settings' Radial Menu page edits this file
+//! (`lntrn-system-settings/src/config/radial.rs` mirrors the shape and the
+//! defaults — keep both sides in sync), and the desktop reloads it live.
+//!
 //! Each entry is `{ label, icon, action, command }`:
-//!   - `action: "launch"`     → run `command` (program + args), cwd = ~/Desktop
+//!   - `action: "launch"`     → run `command` (program + args, quotes keep an
+//!     argument together), cwd = ~/Desktop
 //!   - `action: "new_folder"` → create a folder where the ring opened
 //!   - `action: "refresh"`    → re-scan the desktop
-//! `icon` is any name known to `lntrn_icons::get` (e.g. "lntrn-terminal.svg").
+//! `icon` is any name known to `lntrn_icons::get` (e.g. "lntrn-terminal.svg"),
+//! else a freedesktop icon name / app id / absolute path (see `system_icons`).
 
 use std::path::PathBuf;
 

@@ -22,8 +22,10 @@ use lntrn_render::{
 const RING_RADIUS: f32 = 184.0;
 /// Radius of each circular button.
 const BUTTON_R: f32 = 60.0;
-/// Radius of the little center hub dot.
-const HUB_R: f32 = 16.0;
+/// Radius of the center hub button, which opens the Command Center.
+const HUB_R: f32 = 44.0;
+/// What the hub is called on the pill under it.
+const HUB_LABEL: &str = "Command Center";
 /// Label text size (logical). Big, per the user's eyesight preference.
 const LABEL_SIZE: f32 = 18.0;
 /// Extra slop added to the button radius when hit-testing, so the ring feels
@@ -62,14 +64,22 @@ pub struct RadialItem {
     pub icon: String,
 }
 
+/// What the cursor is over: the center hub, or one of the ring's buttons.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RadialTarget {
+    /// The hub in the middle — opens the Command Center.
+    Hub,
+    Button(usize),
+}
+
 // ── State ─────────────────────────────────────────────────────────────────────
 
 pub struct RadialMenuState {
     /// Ring center (logical px) — also the visual origin of the bloom.
     pub cx: f32,
     pub cy: f32,
-    /// Currently hovered button index, if any.
-    pub hover: Option<usize>,
+    /// What the cursor is over, if anything.
+    pub hover: Option<RadialTarget>,
     /// True once the ring is "stuck" open for point-and-click (after a tap).
     pub latched: bool,
     /// When the ring opened — drives the bloom animation.
@@ -131,18 +141,29 @@ fn button_center(cx: f32, cy: f32, i: usize, n: usize, radius: f32) -> (f32, f32
     (cx + radius * a.cos(), cy + radius * a.sin())
 }
 
-/// Hit-test the cursor (logical px) against the settled button positions.
-/// Returns the hovered button index, or None for the dead zone / outside.
-pub fn hit(st: &RadialMenuState, items: &[RadialItem], mx: f32, my: f32) -> Option<usize> {
+/// Hit-test the cursor (logical px) against the hub and the settled button
+/// positions. Returns what it is over, or None for the dead zone / outside.
+///
+/// The hub only answers once the ring is latched open: during a hold the cursor
+/// starts on it, and letting go there is how a hold is cancelled.
+pub fn hit(
+    st: &RadialMenuState,
+    items: &[RadialItem],
+    mx: f32,
+    my: f32,
+) -> Option<RadialTarget> {
     let n = items.len();
     if n == 0 {
         return None;
+    }
+    if st.latched && (mx - st.cx).powi(2) + (my - st.cy).powi(2) <= (HUB_R + HIT_SLOP).powi(2) {
+        return Some(RadialTarget::Hub);
     }
     let r2 = (BUTTON_R + HIT_SLOP).powi(2);
     for i in 0..n {
         let (bx, by) = button_center(st.cx, st.cy, i, n, RING_RADIUS);
         if (mx - bx).powi(2) + (my - by).powi(2) <= r2 {
-            return Some(i);
+            return Some(RadialTarget::Button(i));
         }
     }
     None
@@ -291,13 +312,21 @@ pub fn draw_radial_menu<'a>(
     // Orbit + button radii grow from a smaller start with a subtle overshoot.
     let rr = RING_RADIUS * scale * lerp(0.35, 1.0, pop);
     let br = BUTTON_R * scale * lerp(0.55, 1.0, pop);
-    let hub = HUB_R * scale * fade;
+    let shadow = Color::from_rgba8(0, 0, 0, 255);
 
     // The ring track the buttons sit on.
     painter.circle_stroke(cx, cy, rr, 3.0 * scale, cols.accent.with_alpha(0.45 * fade));
 
-    // Center hub marking the cursor origin.
-    painter.circle_filled(cx, cy, hub, cols.surface.with_alpha(0.95 * fade));
+    // Center hub: a button of its own, for the Command Center. It lights up
+    // (and names itself) only once the ring is latched — see `hit`.
+    let hub_hot = st.hover == Some(RadialTarget::Hub);
+    let hub = HUB_R * scale * lerp(0.55, 1.0, pop) * if hub_hot { 1.16 } else { 1.0 };
+    painter.circle_filled(cx, cy + 3.0 * scale, hub, shadow.with_alpha(0.30 * fade));
+    if hub_hot {
+        painter.circle_filled(cx, cy, hub + 9.0 * scale, cols.accent.with_alpha(0.30 * fade));
+    }
+    let hub_base = if hub_hot { cols.accent } else { cols.surface };
+    painter.circle_filled(cx, cy, hub, hub_base.with_alpha(0.95 * fade));
     painter.circle_stroke(
         cx,
         cy,
@@ -305,6 +334,33 @@ pub fn draw_radial_menu<'a>(
         2.0 * scale,
         cols.accent.with_alpha(0.85 * fade),
     );
+    // Its picture: four tiles, the Command Center's panel in small.
+    let tile = hub * 0.38;
+    let off = hub * 0.08;
+    let tile_col = if hub_hot { cols.bg } else { cols.accent };
+    for (sx, sy) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+        let x = if sx < 0.0 { cx - off - tile } else { cx + off };
+        let y = if sy < 0.0 { cy - off - tile } else { cy + off };
+        painter.rect_filled(
+            Rect::new(x, y, tile, tile),
+            tile * 0.28,
+            tile_col.with_alpha(fade),
+        );
+    }
+    if hub_hot {
+        label_pill(
+            painter,
+            text,
+            &cols,
+            HUB_LABEL,
+            cx,
+            cy + hub + 10.0 * scale,
+            true,
+            fade,
+            scale,
+            (surface_w, surface_h),
+        );
+    }
 
     // Pass 1: make sure every icon texture is rasterized (mutable borrow).
     for it in items {
@@ -313,10 +369,9 @@ pub fn draw_radial_menu<'a>(
 
     // Pass 2: queue shapes + labels, collect icon draws (immutable borrow).
     let mut draws: Vec<TextureDraw<'a>> = Vec::with_capacity(n);
-    let shadow = Color::from_rgba8(0, 0, 0, 255);
     for (i, it) in items.iter().enumerate() {
         let (bx, by) = button_center(cx, cy, i, n, rr);
-        let hovered = st.hover == Some(i);
+        let hovered = st.hover == Some(RadialTarget::Button(i));
         let r = if hovered { br * 1.16 } else { br };
 
         // Drop shadow.
@@ -342,33 +397,59 @@ pub fn draw_radial_menu<'a>(
         }
 
         // Label pill below the button.
-        let fsz = LABEL_SIZE * scale;
-        let tw = text.measure_width(&it.label, fsz);
-        let pill_h = fsz + 10.0 * scale;
-        let pill_w = tw + 18.0 * scale;
-        let ly = by + r + 10.0 * scale;
-        let pill_x = bx - pill_w * 0.5;
-        let (pill_col, txt_col) = if hovered {
-            (cols.accent.with_alpha(0.95 * fade), cols.bg)
-        } else {
-            (cols.bg.with_alpha(0.62 * fade), cols.text)
-        };
-        painter.rect_filled(
-            Rect::new(pill_x, ly, pill_w, pill_h),
-            pill_h * 0.5,
-            pill_col,
-        );
-        text.queue(
+        label_pill(
+            painter,
+            text,
+            &cols,
             &it.label,
-            fsz,
-            bx - tw * 0.5,
-            ly + 5.0 * scale,
-            txt_col.with_alpha(fade),
-            surface_w as f32,
-            surface_w,
-            surface_h,
+            bx,
+            by + r + 10.0 * scale,
+            hovered,
+            fade,
+            scale,
+            (surface_w, surface_h),
         );
     }
 
     draws
+}
+
+/// A name on a pill, centered on `center_x` with its top at `top` (physical
+/// px): dim normally, in the accent when its button is hovered.
+fn label_pill(
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    cols: &RadialColors,
+    label: &str,
+    center_x: f32,
+    top: f32,
+    hovered: bool,
+    fade: f32,
+    scale: f32,
+    surface: (u32, u32),
+) {
+    let fsz = LABEL_SIZE * scale;
+    let tw = text.measure_width(label, fsz);
+    let pill_h = fsz + 10.0 * scale;
+    let pill_w = tw + 18.0 * scale;
+    let (pill_col, txt_col) = if hovered {
+        (cols.accent.with_alpha(0.95 * fade), cols.bg)
+    } else {
+        (cols.bg.with_alpha(0.62 * fade), cols.text)
+    };
+    painter.rect_filled(
+        Rect::new(center_x - pill_w * 0.5, top, pill_w, pill_h),
+        pill_h * 0.5,
+        pill_col,
+    );
+    text.queue(
+        label,
+        fsz,
+        center_x - tw * 0.5,
+        top + 5.0 * scale,
+        txt_col.with_alpha(fade),
+        surface.0 as f32,
+        surface.0,
+        surface.1,
+    );
 }

@@ -60,8 +60,13 @@ fn icon_dirs() -> Vec<String> {
 
     // Lantern's canonical app-icon dir (user overrides win).
     dirs.push(format!("{home}/.lantern/icons"));
-    // User-local freedesktop themes.
-    dirs.push(format!("{home}/.local/share/icons/hicolor/scalable/apps"));
+    // User-local freedesktop themes. Steam and Wine only install sized PNGs
+    // here (`steam_icon_<id>.png`), so every size is searched, largest first.
+    for size in [
+        "scalable", "512x512", "256x256", "128x128", "96x96", "64x64", "48x48",
+    ] {
+        dirs.push(format!("{home}/.local/share/icons/hicolor/{size}/apps"));
+    }
     dirs.push(format!("{home}/.icons"));
 
     // Flatpak exports (system + per-user), largest size first.

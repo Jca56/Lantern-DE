@@ -140,8 +140,10 @@ pub enum PendingAction {
     CopyPath(usize),
     SubmitRename,
     CancelRename,
-    /// Run a command (program + whitespace-separated args) detached, cwd = desktop dir.
+    /// Run a command (program + args, quotes kept together) detached, cwd = desktop dir.
     Launch(String),
+    /// Show or hide the Command Center, as a Super tap does.
+    CommandCenter,
 }
 
 impl DesktopState {

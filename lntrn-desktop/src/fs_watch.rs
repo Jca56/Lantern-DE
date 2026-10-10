@@ -2,12 +2,14 @@ use std::path::Path;
 
 use nix::sys::inotify::{AddWatchFlags, InitFlags, Inotify, WatchDescriptor};
 
-/// inotify watcher for ~/Desktop directory changes AND the widgets config file.
+/// inotify watcher for ~/Desktop directory changes AND the config files the
+/// desktop follows live (widgets, radial menu — both in `~/.lantern/config`).
 /// Each event is tagged with which watch fired it so the caller can act
 /// independently.
 pub struct DesktopWatcher {
     inotify: Inotify,
     desktop_wd: Option<WatchDescriptor>,
+    /// The config directory (the parent of the widgets config).
     widgets_wd: Option<WatchDescriptor>,
 }
 
@@ -15,6 +17,8 @@ pub struct DesktopWatcher {
 pub struct WatchEvents {
     pub desktop_changed: bool,
     pub widgets_changed: bool,
+    /// `desktop-radial.json` was rewritten (System Settings, or by hand).
+    pub radial_changed: bool,
 }
 
 impl DesktopWatcher {
@@ -57,11 +61,14 @@ impl DesktopWatcher {
                     out.desktop_changed = true;
                 }
                 if self.widgets_wd.as_ref().is_some_and(|w| *w == e.wd) {
-                    // Filter to only fire when the actual config file changed,
+                    // Filter to only fire when an actual config file changed,
                     // not unrelated files in the parent dir.
                     if let Some(name) = &e.name {
                         if name.as_os_str() == "desktop-widgets.json" {
                             out.widgets_changed = true;
+                        }
+                        if name.as_os_str() == "desktop-radial.json" {
+                            out.radial_changed = true;
                         }
                     }
                 }

@@ -306,6 +306,12 @@ pub fn run() -> Result<()> {
                     app.widgets = crate::widgets_config::WidgetsConfig::load();
                     state.frame_done = true;
                 }
+                if events.radial_changed {
+                    // An open ring is closed: its hover indexes the old buttons.
+                    app.radial_items = crate::radial_config::load();
+                    app.radial = None;
+                    state.frame_done = true;
+                }
             }
         }
 

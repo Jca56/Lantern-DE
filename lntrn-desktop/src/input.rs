@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use crate::layout::{cell_origin, pixel_to_cell, rect_hits, CELL_H, CELL_W, ICON_PX};
-use crate::radial_menu::{self, RadialAction, RadialMenuState};
+use crate::radial_menu::{self, RadialAction, RadialMenuState, RadialTarget};
 use crate::render;
 use crate::state::{DesktopState, DragState, MenuAction, PendingAction, RubberBand, WidgetDrag};
 
@@ -26,17 +26,17 @@ pub fn on_left_press(
     surface_w: f32,
     surface_h: f32,
 ) {
-    // A latched radial menu intercepts the click: fire the hovered button, or
-    // dismiss on a miss. (Open-but-not-latched means a hold is in progress —
-    // swallow the click so it doesn't start a drag/selection underneath.)
+    // A latched radial menu intercepts the click: fire the hovered button (or
+    // the hub), or dismiss on a miss. (Open-but-not-latched means a hold is in
+    // progress — swallow the click so it doesn't start a drag/selection
+    // underneath.)
     if let Some(r) = &state.radial {
         let latched = r.latched;
         let hovered = radial_menu::hit(r, &state.radial_items, cx, cy);
         if latched {
-            let action = hovered.map(|i| state.radial_items[i].action.clone());
             state.radial = None;
-            if let Some(action) = action {
-                dispatch_radial_action(state, action);
+            if let Some(target) = hovered {
+                dispatch_radial_target(state, target);
             }
         }
         return;
@@ -331,7 +331,9 @@ pub fn on_right_press(state: &mut DesktopState, cx: f32, cy: f32, surface_w: f32
 /// Right-mouse release — completes the radial-menu gesture.
 ///
 /// - Released over a button → fire it.
-/// - Quick tap on the empty center → latch the ring open for point-and-click.
+/// - Quick tap on the center → latch the ring open for point-and-click (which
+///   is also when the hub starts answering: a click on it opens the Command
+///   Center).
 /// - Held + released on a miss → dismiss.
 pub fn on_right_release(state: &mut DesktopState, cx: f32, cy: f32) {
     let Some(r) = &state.radial else {
@@ -344,15 +346,17 @@ pub fn on_right_release(state: &mut DesktopState, cx: f32, cy: f32) {
     let already_latched = r.latched;
 
     match hovered {
-        Some(i) => {
-            let action = state.radial_items[i].action.clone();
+        Some(target) => {
             state.radial = None;
-            dispatch_radial_action(state, action);
+            dispatch_radial_target(state, target);
         }
         None => {
             if !already_latched && !moved && elapsed_ms < radial_menu::TAP_LATCH_MS {
                 if let Some(r) = &mut state.radial {
                     r.latched = true;
+                    // The cursor usually still rests on the hub: light it now
+                    // rather than on the next motion event.
+                    r.hover = radial_menu::hit(r, &state.radial_items, cx, cy);
                 }
             } else {
                 state.radial = None;
@@ -362,11 +366,14 @@ pub fn on_right_release(state: &mut DesktopState, cx: f32, cy: f32) {
 }
 
 /// Map a radial-menu choice to a pending action consumed by the main loop.
-fn dispatch_radial_action(state: &mut DesktopState, action: RadialAction) {
-    state.pending_action = Some(match action {
-        RadialAction::Launch(cmd) => PendingAction::Launch(cmd),
-        RadialAction::NewFolder => PendingAction::NewFolder,
-        RadialAction::Refresh => PendingAction::Refresh,
+fn dispatch_radial_target(state: &mut DesktopState, target: RadialTarget) {
+    state.pending_action = Some(match target {
+        RadialTarget::Hub => PendingAction::CommandCenter,
+        RadialTarget::Button(i) => match state.radial_items[i].action.clone() {
+            RadialAction::Launch(cmd) => PendingAction::Launch(cmd),
+            RadialAction::NewFolder => PendingAction::NewFolder,
+            RadialAction::Refresh => PendingAction::Refresh,
+        },
     });
 }
 
