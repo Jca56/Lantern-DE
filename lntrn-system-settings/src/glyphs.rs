@@ -64,6 +64,15 @@ pub fn mouse(d: &mut DrawList, rect: Rect, color: Color, w: f64) {
     d.line(at(rect, 0.0, -0.55), at(rect, 0.0, -0.2), w, color);
 }
 
+/// The desktop's ring: six buttons round a hub.
+pub fn radial(d: &mut DrawList, rect: Rect, color: Color, w: f64) {
+    let (c, s) = (rect.center(), half(rect));
+    d.ring(c, s * 0.26, w, color);
+    for i in 0..6 {
+        d.circle(c + Vec2::from_angle(PI * (i as f64 / 3.0 - 0.5)) * (s * 0.78), s * 0.17, color);
+    }
+}
+
 /// A monitor on its stand.
 pub fn monitors(d: &mut DrawList, rect: Rect, color: Color, w: f64) {
     d.stroke_rect(Rect::new(at(rect, -0.9, -0.8), at(rect, 0.9, 0.4)), w, half(rect) * 0.2, color);

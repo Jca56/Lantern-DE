@@ -10,6 +10,7 @@ pub mod mouse;
 pub mod notepad;
 pub mod notifications;
 pub mod power;
+pub mod radial;
 pub mod screenshot;
 pub mod terminal;
 pub mod wallpaper;
@@ -32,6 +33,11 @@ pub fn draw(app: &mut App, ui: &mut Ui, cx: &mut AreaCx<()>) -> bool {
             Page::Effects => effects::draw(&mut app.config, ui),
             Page::Animations => animations::draw(&mut app.config, ui),
             Page::Mouse => mouse::draw(&mut app.config, &mut app.mouse, ui),
+            // The ring's file is its own: the page writes it, not `lantern.toml`.
+            Page::Radial => {
+                radial::draw(&mut app.radial, ui);
+                false
+            }
             Page::Monitors => monitors::draw(&mut app.config, &mut app.monitors, ui, cx),
             Page::Notifications => notifications::draw(&mut app.config, ui),
             Page::Power => power::draw(&mut app.config, ui),

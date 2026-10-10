@@ -7,10 +7,11 @@
 //! compositor's. Of `[terminal]` we own the keys on its page; the tabs
 //! it has pinned are the terminal's. `[notepad]` is shared with Notepad,
 //! which writes the same keys, and `[screenshot]` with the screenshot
-//! tool.
+//! tool. The one file beside it is the desktop's ring (`radial.rs`).
 
 mod appearance;
 mod monitors;
+pub mod radial;
 mod system;
 
 use std::path::PathBuf;

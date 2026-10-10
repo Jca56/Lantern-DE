@@ -16,6 +16,7 @@ use crate::nav::Page;
 use crate::pages;
 use crate::pages::monitors::{MonitorsState, badge};
 use crate::pages::mouse::MouseState;
+use crate::pages::radial::RadialState;
 use crate::pages::wallpaper::WallpaperState;
 use crate::sidebar;
 
@@ -41,6 +42,7 @@ pub struct App {
     pub wallpaper: WallpaperState,
     pub mouse: MouseState,
     pub monitors: MonitorsState,
+    pub radial: RadialState,
     /// Font families found on disk, read when Appearance first shows.
     pub fonts: Vec<String>,
     keys: KeyConfig,
@@ -54,7 +56,7 @@ impl App {
         let mut keys = KeyConfig::default();
         keys.bind(CTX_WINDOW, KeyItem::new(Trigger::key(Key::Char('q'), Modifiers::CTRL), actions::QUIT));
         keys.bind(CTX_WINDOW, KeyItem::new(Trigger::key(Key::F(3), Modifiers::NONE), actions::PALETTE));
-        Self { config, page: Page::Wallpaper, wallpaper: WallpaperState::default(), mouse: MouseState::default(), monitors: MonitorsState::default(), fonts: Vec::new(), keys, dirty: false, dirty_since: 0.0, last_disk_check: 0.0 }
+        Self { config, page: Page::Wallpaper, wallpaper: WallpaperState::default(), mouse: MouseState::default(), monitors: MonitorsState::default(), radial: RadialState::default(), fonts: Vec::new(), keys, dirty: false, dirty_since: 0.0, last_disk_check: 0.0 }
     }
 
     /// Something changed: write it once the user pauses.
@@ -90,6 +92,12 @@ impl App {
             if self.config.changed_on_disk() {
                 self.config.reload();
             }
+        }
+        // The desktop's ring is a file of its own, on a clock of its own.
+        match self.radial.housekeeping(now) {
+            Ok(Some(soon)) => ui.state.request_redraw_after(soon),
+            Ok(None) => {}
+            Err(e) => cx.toast(&format!("Not saved: {e}")),
         }
     }
 }
@@ -195,6 +203,7 @@ impl Host for App {
         match action.id.as_str() {
             "app.reload" => {
                 self.config.reload();
+                self.radial.reload();
                 self.dirty = false;
                 cx.toast("Reloaded lantern.toml");
             }
@@ -238,6 +247,7 @@ impl AppHost for App {
         }
         let cursors = self.mouse.upload(gpu, images);
         let thumbs = self.wallpaper.upload(gpu, images);
-        restyled || cursors || thumbs
+        let ring = self.radial.upload(gpu, images);
+        restyled || cursors || thumbs || ring
     }
 }

@@ -10,7 +10,8 @@
 //! - `pages/` — one module per page, made of `lntrn-kit`'s cards, rows and
 //!   controls, in its Lantern palette.
 //! - `config/` — every section we own as a `props!` struct, loaded from
-//!   and merged back into `lantern.toml` without touching what we don't.
+//!   and merged back into `lantern.toml` without touching what we don't,
+//!   and the desktop's ring, which has a file of its own.
 //! - `thumbs.rs` — wallpaper thumbnails, made off the UI thread.
 //! - `outputs/` — the compositor's monitors, asked and told over
 //!   wlr-output-management on a connection of our own.
