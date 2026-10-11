@@ -6,16 +6,18 @@
 //! hit-testing itself in `super::hit`. The inline controls-row glyph
 //! lives in `super::glyph`; the expanded device-detail block in
 //! `super::detail`; inline request strips (pair / file Accept-Reject) in
-//! `super::prompt`.
+//! `super::prompt`; a connected device's battery gauge in
+//! `super::battery`.
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
+use super::battery;
 use super::detail;
 use super::layout::{
     body_font, header_row_y, list_viewport, row_extra_height, toggle_rect, toggles_row_layout,
-    toggles_row_y, ListViewport, MAX_SECTION_ROWS, ROW_HEIGHT, ROW_INNER_PAD, ROW_RIGHT_GAP,
-    SECTION_GAP, SECTION_HEADER_BOTTOM_GAP, SECTION_HEADER_FONT, TOGGLES_ROW_FONT,
-    VIEW_HEADER_FONT,
+    toggles_row_y, ListViewport, MAX_SECTION_ROWS, ROW_GAUGE_GAP, ROW_HEIGHT, ROW_INNER_PAD,
+    ROW_RIGHT_GAP, SECTION_GAP, SECTION_HEADER_BOTTOM_GAP, SECTION_HEADER_FONT,
+    TOGGLES_ROW_FONT, VIEW_HEADER_FONT,
 };
 use super::prompt::{self, row_prompt, RowPrompt};
 use super::{Bluetooth, Device, SendStatus};
@@ -415,8 +417,43 @@ fn draw_section(
             painter.rect_filled(row_rect, 8.0 * scale, white.with_alpha(0.10 * alpha));
         }
 
-        // ── Header row: device name + status badge ──
-        let name_y = cy + (row_h - row_font) / 2.0;
+        // ── Header row: device name, battery gauge, status badge ──
+        let (badge_text, badge_color) = row_badge(bt, dev, alpha);
+        let badge_font = row_font * 0.85;
+        let badge_w = text.measure_width(&badge_text, badge_font);
+        let badge_x = inner_x + inner_w - badge_w - right_gap;
+        let badge_y = cy + (row_h - badge_font) / 2.0;
+        text.queue(
+            &badge_text,
+            badge_font,
+            badge_x,
+            badge_y,
+            badge_color,
+            badge_w,
+            surface_w,
+            surface_h,
+        );
+
+        // The name gets the row's left 65 %, less whatever the gauge
+        // needs when a long badge pushes it that far over.
+        let name_x = inner_x + row_pad;
+        let mut name_w = inner_w * 0.65;
+        if let Some(pct) = dev.live_battery() {
+            let gauge_x = battery::draw_row_gauge(
+                painter,
+                text,
+                pct,
+                badge_x - ROW_GAUGE_GAP * scale,
+                cy,
+                row_h,
+                badge_font,
+                scale,
+                alpha,
+                surface_w,
+                surface_h,
+            );
+            name_w = name_w.min(gauge_x - row_pad - name_x).max(0.0);
+        }
         let name_color = if dev.connected {
             white.with_alpha(alpha)
         } else {
@@ -430,26 +467,10 @@ fn draw_section(
         text.queue(
             display_name,
             row_font,
-            inner_x + row_pad,
-            name_y,
+            name_x,
+            cy + (row_h - row_font) / 2.0,
             name_color,
-            inner_w * 0.65,
-            surface_w,
-            surface_h,
-        );
-
-        let (badge_text, badge_color) = row_badge(bt, dev, alpha);
-        let badge_font = row_font * 0.85;
-        let badge_w = text.measure_width(&badge_text, badge_font);
-        let badge_x = inner_x + inner_w - badge_w - right_gap;
-        let badge_y = cy + (row_h - badge_font) / 2.0;
-        text.queue(
-            &badge_text,
-            badge_font,
-            badge_x,
-            badge_y,
-            badge_color,
-            badge_w,
+            name_w,
             surface_w,
             surface_h,
         );

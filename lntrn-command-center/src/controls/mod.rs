@@ -259,14 +259,15 @@ impl Controls {
     }
 
     /// A widget's effective logical width: its content width (clock varies
-    /// with its options) scaled by the per-widget size multiplier, plus
-    /// any extra spacing padded around it.
+    /// with its options, bluetooth with whether a connected device reports
+    /// a battery level) scaled by the per-widget size multiplier, plus any
+    /// extra spacing padded around it.
     pub fn widget_width(&self, id: TileId) -> f32 {
         let opts = self.toolbar.opts(id);
-        let base = if id == TileId::Clock {
-            clock::tile_width(&opts.clock)
-        } else {
-            id.logical_width()
+        let base = match id {
+            TileId::Clock => clock::tile_width(&opts.clock),
+            TileId::Bluetooth => bluetooth::tile_width(&self.bluetooth),
+            _ => id.logical_width(),
         };
         base * opts.size + opts.space
     }

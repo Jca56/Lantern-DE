@@ -27,6 +27,8 @@ pub(super) const SECTION_GAP: f32 = 12.0;
 pub(super) const ROW_HEIGHT: f32 = 56.0;
 pub(super) const ROW_INNER_PAD: f32 = 16.0;
 pub(super) const ROW_RIGHT_GAP: f32 = 12.0;
+/// Gap between a connected device's battery gauge and its status badge.
+pub(super) const ROW_GAUGE_GAP: f32 = 16.0;
 /// Cap on rendered rows per section. The list scrolls, so this is purely
 /// a "don't lay out a whole stadium of advertisers" sanity bound.
 pub(super) const MAX_SECTION_ROWS: usize = 64;

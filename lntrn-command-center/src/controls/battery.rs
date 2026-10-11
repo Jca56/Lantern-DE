@@ -240,15 +240,21 @@ const BOLT_HEIGHT: f32 = 30.0;
 
 /// Track (background) and fill colors per zone, both as 8-bit sRGB
 /// triples passed through `Color::from_rgb8` for gamma-correctness.
-const PILL_TRACK_RGB: (u8, u8, u8) = (60, 60, 60); // dark grey track
+pub(crate) const PILL_TRACK_RGB: (u8, u8, u8) = (60, 60, 60); // dark grey track
 const RED_FILL_RGB: (u8, u8, u8) = (220, 60, 50);
 const YELLOW_FILL_RGB: (u8, u8, u8) = (240, 190, 40);
 const GREEN_FILL_RGB: (u8, u8, u8) = (50, 200, 100);
 
-fn fill_rgb(capacity: u32) -> (u8, u8, u8) {
-    if capacity < 25 {
+/// Charge (%) under which the fill turns red, and under which it turns
+/// yellow. Shared with the Bluetooth device gauges so a level reads the
+/// same wherever it shows.
+pub(crate) const RED_BELOW: u32 = 25;
+pub(crate) const YELLOW_BELOW: u32 = 50;
+
+pub(crate) fn fill_rgb(capacity: u32) -> (u8, u8, u8) {
+    if capacity < RED_BELOW {
         RED_FILL_RGB
-    } else if capacity < 50 {
+    } else if capacity < YELLOW_BELOW {
         YELLOW_FILL_RGB
     } else {
         GREEN_FILL_RGB

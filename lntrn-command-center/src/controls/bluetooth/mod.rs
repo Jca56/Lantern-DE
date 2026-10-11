@@ -1,7 +1,8 @@
 //! Bluetooth control tile.
 //!
 //! Inline: a bluetooth glyph in the controls row, dimmed when the
-//! controller is powered off.
+//! controller is powered off, with the lowest battery level among the
+//! connected devices beside it when any of them reports one.
 //!
 //! Click-expand view: power toggle (header), then a list of paired
 //! devices. Click a row to connect/disconnect. Pairing new devices and
@@ -17,6 +18,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+mod battery;
 mod detail;
 mod glyph;
 mod hit;
@@ -29,7 +31,7 @@ mod worker;
 
 // Re-export public items so callers can keep saying
 // `crate::controls::bluetooth::draw_view` etc. as before.
-pub use glyph::{draw_inline, TILE_WIDTH};
+pub use glyph::{draw_inline, tile_width, TILE_WIDTH};
 pub use hit::{hit_test, BtClick};
 pub use layout::scroll_by;
 pub use render::draw_view;
