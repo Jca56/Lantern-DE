@@ -599,14 +599,28 @@ impl Lantern {
             if let Some((window, _loc)) = self.visible_element_under(pos) {
                 self.focus_window(&window, serial);
             } else if let Some((surface, _)) = self.surface_under(pos) {
-                // Clicked on a layer surface (e.g. Bottom layer desktop widget)
-                // Give it keyboard focus so OnDemand interactivity works
-                let keyboard = self.seat.get_keyboard().unwrap();
-                keyboard.set_focus(
-                    self,
-                    Some(crate::keyboard_focus::KeyboardFocusTarget::Wayland(surface)),
-                    serial.into(),
-                );
+                // Not a workspace window. An X11 surface here is an
+                // override-redirect window — a menu, a tooltip, a game's
+                // helper window — and those never take focus from the window
+                // manager: handing the keyboard to its bare wl_surface took
+                // the X input focus off the X11 window that had it (the game
+                // went deaf until refocused).
+                let is_x11 = self.space.elements().any(|w| {
+                    w.x11_surface().is_some()
+                        && crate::window_ext::WindowExt::get_wl_surface(w).as_ref()
+                            == Some(&surface)
+                });
+                if !is_x11 {
+                    // Clicked on a layer surface (e.g. Bottom layer desktop
+                    // widget). Give it keyboard focus so OnDemand
+                    // interactivity works.
+                    let keyboard = self.seat.get_keyboard().unwrap();
+                    keyboard.set_focus(
+                        self,
+                        Some(crate::keyboard_focus::KeyboardFocusTarget::Wayland(surface)),
+                        serial.into(),
+                    );
+                }
             } else {
                 self.clear_focus(serial);
             }

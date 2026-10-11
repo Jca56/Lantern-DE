@@ -2246,24 +2246,12 @@ where
                 }
             }
         }
-        Event::FocusIn(n) => {
-            conn.change_property32(
-                PropMode::REPLACE,
-                xwm.screen.root,
-                xwm.atoms._NET_ACTIVE_WINDOW,
-                AtomEnum::WINDOW,
-                &[n.event],
-            )?;
-        }
-        Event::FocusOut(n) => {
-            conn.change_property32(
-                PropMode::REPLACE,
-                xwm.screen.root,
-                xwm.atoms._NET_ACTIVE_WINDOW,
-                AtomEnum::WINDOW,
-                &[n.event],
-            )?;
-        }
+        // LANTERN PATCH: `_NET_ACTIVE_WINDOW` is no longer written here.
+        // FocusChange is only selected on the root, so `n.event` in these
+        // was always the root window: every focus event (keyboard grabs
+        // included) published "the root is the active window". It is set
+        // where focus is decided instead — `X11Surface::set_net_active_window`.
+        Event::FocusIn(_) | Event::FocusOut(_) => {}
         Event::ClientMessage(msg) => {
             if let Some(reply) = conn.get_atom_name(msg.type_)?.reply_unchecked()? {
                 debug!(

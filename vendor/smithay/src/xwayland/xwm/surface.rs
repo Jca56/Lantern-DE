@@ -609,6 +609,32 @@ impl X11Surface {
         Ok(())
     }
 
+    /// Publish `_NET_ACTIVE_WINDOW`: the client window the window manager
+    /// has given the keyboard to, or `NONE` when it has gone to something
+    /// that is not an X11 window.
+    ///
+    /// LANTERN PATCH. This is set from the focus *decision* (`enter` /
+    /// `leave` below), not derived from FocusIn/FocusOut events: those are
+    /// only selected on the root, so the window they name is always the
+    /// root itself. Wine 10+ takes this property as the truth about which
+    /// of its windows is the foreground one, and reads the root window as
+    /// "the desktop is active": a focused game went deaf to the pad and
+    /// the mouse whenever the property was rewritten after it activated.
+    fn set_net_active_window(&self, conn: &RustConnection, window: X11Window) {
+        let Some(root) = conn.setup().roots.first().map(|screen| screen.root) else {
+            return;
+        };
+        if let Err(err) = conn.change_property32(
+            PropMode::REPLACE,
+            root,
+            self.atoms._NET_ACTIVE_WINDOW,
+            AtomEnum::WINDOW,
+            &[window],
+        ) {
+            warn!("Unable to set _NET_ACTIVE_WINDOW ({:?}): {}", window, err);
+        }
+    }
+
     fn input_mode(&self) -> InputMode {
         let state = self.state.lock().unwrap();
         match (
@@ -1032,6 +1058,7 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for X11Surface {
                 let _ = conn.flush();
             }
 
+            self.set_net_active_window(&conn, self.window);
             let _ = conn.flush();
         }
 
@@ -1047,6 +1074,9 @@ impl<D: SeatHandler + 'static> KeyboardTarget<D> for X11Surface {
             if let Err(err) = conn.set_input_focus(InputFocus::NONE, x11rb::NONE, x11rb::CURRENT_TIME) {
                 warn!("Unable to unfocus X11Surface ({:?}): {}", self.window, err);
             }
+            // Followed by another X11 window's `enter` when the keyboard
+            // goes to one; left at NONE when it goes anywhere else.
+            self.set_net_active_window(&conn, x11rb::NONE);
             let _ = conn.flush();
         }
 
