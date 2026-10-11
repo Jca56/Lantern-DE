@@ -2462,6 +2462,7 @@ dependencies = [
  "image",
  "libc",
  "libdisplay-info",
+ "lntrn-dbus",
  "lntrn-icons",
  "rand 0.8.5",
  "resvg 0.47.0",

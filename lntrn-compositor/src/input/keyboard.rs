@@ -49,6 +49,9 @@ impl Lantern {
         // Clear any stale pending injections before this event's filter runs.
         self.layer_inject.clear();
 
+        // While locked, keys go to a live lock surface or to nobody.
+        self.ensure_lock_focus();
+
         self.seat.get_keyboard().unwrap().input::<(), _>(
             self,
             event.key_code(),

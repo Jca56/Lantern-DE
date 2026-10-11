@@ -498,6 +498,8 @@ pub struct Lantern {
 
     /// Idle/battery/power-action manager (reads [power] settings).
     pub power: crate::power::PowerState,
+    /// logind sleep inhibitor: holds a suspend back until the screen is locked.
+    pub sleep_lock: crate::sleep_lock::SleepLock,
 
     /// WM border width in logical pixels (0 = no border).
     pub border_width: u32,
@@ -742,6 +744,7 @@ impl Lantern {
             slow_render_stats: Default::default(),
             libinput_devices: Vec::new(),
             power: crate::power::PowerState::new(),
+            sleep_lock: Default::default(),
             border_width: crate::read_config("window_manager", "border_width", "0")
                 .parse::<u32>()
                 .unwrap_or(0)

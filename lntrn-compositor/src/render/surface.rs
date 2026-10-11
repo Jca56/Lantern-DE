@@ -2463,6 +2463,8 @@ pub fn render_surface(
                     if let Some(locker) = data.pending_locker.take() {
                         locker.lock();
                     }
+                    // A sleep held back until the screen was locked can go.
+                    state.sleep_lock.lock_confirmed();
                 }
             }
         }

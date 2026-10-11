@@ -696,6 +696,12 @@ pub(crate) fn teardown_output(state: &mut Lantern, node: DrmNode, crtc: crtc::Ha
         state.space.unmap_output(&output);
         state.workspaces.unregister_output(&output);
         state.reroute_layer_surfaces_from(&output);
+        // Its lock surface goes with it; typing has to land on one that's left.
+        if let Some(lock) = state.session_lock.as_mut() {
+            lock.surfaces.remove(&name);
+            lock.presented.remove(&name);
+        }
+        state.ensure_lock_focus();
         // The outputs that remain close up, back to the origin.
         state.relayout();
     }

@@ -41,6 +41,8 @@ xcursor = "0.3"
 x11rb = { version = "0.13", default-features = false, features = ["render"] }
 libc = "0.2"
 lntrn-icons = { path = "../lntrn-icons" }
+# System bus client for logind's sleep inhibitor (src/sleep_lock.rs).
+lntrn-dbus = { path = "../lntrn-dbus" }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 # Direct dep purely to enable `libwayland_server_1_23`: it gates
 # `Handle::set_default_max_buffer_size` even on the pure-Rust backend

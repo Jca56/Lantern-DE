@@ -1,5 +1,5 @@
 use wayland_client::protocol::{
-    wl_callback, wl_compositor, wl_keyboard, wl_output, wl_registry, wl_seat, wl_surface,
+    wl_compositor, wl_keyboard, wl_output, wl_registry, wl_seat, wl_surface,
 };
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum};
 use wayland_protocols::ext::session_lock::v1::client::{
@@ -21,13 +21,12 @@ impl Dispatch<wl_registry::WlRegistry, ()> for App {
         _: &Connection,
         qh: &QueueHandle<App>,
     ) {
-        if let wl_registry::Event::Global {
-            name,
-            interface,
-            version,
-        } = event
-        {
-            match interface.as_str() {
+        match event {
+            wl_registry::Event::Global {
+                name,
+                interface,
+                version,
+            } => match interface.as_str() {
                 "wl_compositor" => {
                     let v = version.min(4);
                     app.compositor =
@@ -35,19 +34,24 @@ impl Dispatch<wl_registry::WlRegistry, ()> for App {
                 }
                 "wl_seat" => {
                     let v = version.min(5);
-                    app.seat = Some(registry.bind::<wl_seat::WlSeat, _, _>(name, v, qh, ()));
+                    registry.bind::<wl_seat::WlSeat, _, _>(name, v, qh, ());
                 }
                 "wl_output" => {
                     let v = version.min(4);
                     let output = registry.bind::<wl_output::WlOutput, _, _>(name, v, qh, ());
-                    app.discovered.push(output);
+                    app.discovered.push((name, output));
                 }
                 "ext_session_lock_manager_v1" => {
                     app.lock_mgr =
                         Some(registry.bind::<ExtSessionLockManagerV1, _, _>(name, 1, qh, ()));
                 }
                 _ => {}
-            }
+            },
+            // A monitor was unplugged (or anything else went away: names that
+            // aren't an output's are simply not found). Torn down by the run
+            // loop, which owns the GPU side.
+            wl_registry::Event::GlobalRemove { name } => app.removed.push(name),
+            _ => {}
         }
     }
 }
@@ -90,18 +94,6 @@ impl Dispatch<ExtSessionLockManagerV1, ()> for App {
     }
 }
 
-impl Dispatch<wl_callback::WlCallback, ()> for App {
-    fn event(
-        _: &mut Self,
-        _: &wl_callback::WlCallback,
-        _: wl_callback::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<App>,
-    ) {
-    }
-}
-
 // ── Output ───────────────────────────────────────────────────────────────────
 
 impl Dispatch<wl_output::WlOutput, ()> for App {
@@ -116,7 +108,8 @@ impl Dispatch<wl_output::WlOutput, ()> for App {
         if let wl_output::Event::Scale { factor } = event {
             let oid = output.id();
             app.output_scales.insert(oid.clone(), factor.max(1));
-            if let Some(out) = app.outputs.iter_mut().find(|o| o.output.id() == oid) {
+            let global = app.discovered.iter().find(|(_, o)| o.id() == oid).map(|(name, _)| *name);
+            if let Some(out) = app.outputs.iter_mut().find(|o| Some(o.global) == global) {
                 if out.scale != factor.max(1) {
                     out.scale = factor.max(1);
                     out.dirty = true;
@@ -130,7 +123,7 @@ impl Dispatch<wl_output::WlOutput, ()> for App {
 
 impl Dispatch<wl_seat::WlSeat, ()> for App {
     fn event(
-        _app: &mut Self,
+        app: &mut Self,
         seat: &wl_seat::WlSeat,
         event: wl_seat::Event,
         _: &(),
@@ -141,8 +134,19 @@ impl Dispatch<wl_seat::WlSeat, ()> for App {
             capabilities: WEnum::Value(caps),
         } = event
         {
-            if caps.contains(wl_seat::Capability::Keyboard) {
-                seat.get_keyboard(qh, ());
+            // One wl_keyboard, ever. Capabilities are sent again whenever any
+            // input device comes or goes, and a second keyboard object would
+            // deliver every key press twice.
+            let has_keyboard = caps.contains(wl_seat::Capability::Keyboard);
+            match app.wl_keyboard.take() {
+                None if has_keyboard => app.wl_keyboard = Some(seat.get_keyboard(qh, ())),
+                Some(keyboard) if !has_keyboard => {
+                    if keyboard.version() >= 3 {
+                        keyboard.release();
+                    }
+                    app.repeat.cancel();
+                }
+                current => app.wl_keyboard = current,
             }
         }
     }
@@ -161,13 +165,18 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
             wl_keyboard::Event::Keymap { format, fd, size } => {
                 if format == WEnum::Value(wl_keyboard::KeymapFormat::XkbV1) {
                     app.keyboard.update_keymap(fd, size);
+                    app.repeat.cancel();
                 }
             }
-            wl_keyboard::Event::Key { key, state, .. } => {
-                if state == WEnum::Value(wl_keyboard::KeyState::Pressed) {
-                    app.key_queue.push(key);
-                }
-            }
+            // Presses are resolved right here, in event order, against the
+            // modifiers as they are at this point in the stream.
+            wl_keyboard::Event::Key { key, state, .. } => match state {
+                WEnum::Value(wl_keyboard::KeyState::Pressed) => app.key_pressed(key),
+                WEnum::Value(wl_keyboard::KeyState::Released) => app.repeat.release(key),
+                _ => {}
+            },
+            wl_keyboard::Event::Leave { .. } => app.repeat.cancel(),
+            wl_keyboard::Event::RepeatInfo { rate, delay } => app.repeat.set_info(rate, delay),
             wl_keyboard::Event::Modifiers {
                 mods_depressed,
                 mods_latched,
@@ -175,9 +184,14 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
                 group,
                 ..
             } => {
+                let caps_before = app.keyboard.caps_active();
                 app.keyboard
                     .update_modifiers(mods_depressed, mods_latched, mods_locked, group);
-                app.caps_lock = app.keyboard.caps_active();
+                // The Caps Lock warning is the one thing on screen a modifier
+                // changes, and nothing else would redraw for it.
+                if app.keyboard.caps_active() != caps_before {
+                    app.redraw = true;
+                }
             }
             _ => {}
         }

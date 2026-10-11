@@ -2,28 +2,20 @@ use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
 use crate::config::Style;
 
-/// Transient UI state shared across all output surfaces.
-pub struct Ui {
+/// What the lock screen shows right now, the same on every output.
+pub struct Ui<'a> {
     /// Number of password characters entered (we never store the plaintext here).
     pub pw_len: usize,
     /// Error/status message shown under the field, e.g. "Incorrect password".
-    pub error: Option<String>,
-    /// True while a PAM check is in flight (disables input, shows "Checking…").
+    pub error: Option<&'a str>,
+    /// True while a PAM check is in flight (shows "Checking…" in an empty field).
     pub checking: bool,
     /// Caps Lock indicator.
     pub caps_lock: bool,
 }
 
-impl Ui {
-    pub fn new() -> Self {
-        Self {
-            pw_len: 0,
-            error: None,
-            checking: false,
-            caps_lock: false,
-        }
-    }
-}
+/// Smallest text the lock screen draws, in physical pixels.
+const MIN_TEXT: f32 = 18.0;
 
 /// Current local time as a libc `tm` struct.
 fn now_local() -> libc::tm {
@@ -59,8 +51,15 @@ const MONTHS: [&str; 12] = [
     "December",
 ];
 
-fn time_string(tm: &libc::tm) -> String {
-    format!("{:02}:{:02}", tm.tm_hour, tm.tm_min)
+fn time_string(tm: &libc::tm, clock_24h: bool) -> String {
+    if clock_24h {
+        format!("{:02}:{:02}", tm.tm_hour, tm.tm_min)
+    } else {
+        // 12-hour the way the Command Center clock writes it: no AM/PM, and
+        // the hour unpadded so it reads as a natural human time.
+        let hour = if tm.tm_hour % 12 == 0 { 12 } else { tm.tm_hour % 12 };
+        format!("{hour}:{:02}", tm.tm_min)
+    }
 }
 
 fn date_string(tm: &libc::tm) -> String {
@@ -74,7 +73,7 @@ fn date_string(tm: &libc::tm) -> String {
 pub fn draw(
     painter: &mut Painter,
     text: &mut TextRenderer,
-    ui: &Ui,
+    ui: &Ui<'_>,
     style: &Style,
     w: f32,
     h: f32,
@@ -95,7 +94,7 @@ pub fn draw(
     // ── Clock ────────────────────────────────────────────────────────────────
     let tm = now_local();
     let clock_size = (h * 0.16).clamp(96.0, 240.0);
-    let clock = time_string(&tm);
+    let clock = time_string(&tm, style.clock_24h);
     let cw = text.measure_width(&clock, clock_size);
     let clock_y = h * 0.18;
     text.queue(
@@ -148,8 +147,10 @@ pub fn draw(
         );
     }
 
+    // Typed characters win over "Checking…": typing stays live during a check,
+    // and the dots are the only feedback that the keys are landing.
     let cy = field_y + field_h / 2.0;
-    if ui.checking {
+    if ui.pw_len == 0 && ui.checking {
         let msg = "Checking…";
         let mw = text.measure_width(msg, date_size * 0.7);
         text.queue(
@@ -191,9 +192,15 @@ pub fn draw(
 
     // ── Status line (error / caps lock) ─────────────────────────────────────────
     let status_y = field_y + field_h + field_h * 0.4;
-    if let Some(err) = &ui.error {
-        let esize = (field_h * 0.32).clamp(22.0, 36.0);
-        let ew = text.measure_width(err, esize);
+    if let Some(err) = ui.error {
+        // PAM's own messages can run long: shrink to fit rather than run off
+        // both edges of the screen.
+        let mut esize = (field_h * 0.32).clamp(22.0, 36.0);
+        let mut ew = text.measure_width(err, esize);
+        if ew > w * 0.92 {
+            esize = (esize * w * 0.92 / ew).max(MIN_TEXT);
+            ew = text.measure_width(err, esize);
+        }
         text.queue(
             err,
             esize,
@@ -218,5 +225,32 @@ pub fn draw(
             sw,
             sh,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(hour: i32, min: i32) -> libc::tm {
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        tm.tm_hour = hour;
+        tm.tm_min = min;
+        tm
+    }
+
+    #[test]
+    fn the_clock_in_24_hour() {
+        assert_eq!(time_string(&at(0, 5), true), "00:05");
+        assert_eq!(time_string(&at(14, 5), true), "14:05");
+    }
+
+    #[test]
+    fn the_clock_in_12_hour() {
+        assert_eq!(time_string(&at(0, 5), false), "12:05");
+        assert_eq!(time_string(&at(9, 30), false), "9:30");
+        assert_eq!(time_string(&at(12, 0), false), "12:00");
+        assert_eq!(time_string(&at(14, 5), false), "2:05");
+        assert_eq!(time_string(&at(23, 59), false), "11:59");
     }
 }

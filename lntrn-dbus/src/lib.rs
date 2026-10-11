@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
@@ -39,6 +39,9 @@ pub struct Message {
     pub signature: String,
     pub destination: String,
     pub body: Vec<u8>,
+    /// File descriptors that arrived with this message. Always empty unless
+    /// the connection negotiated fd passing (`connect_system_with_fds`).
+    pub fds: Vec<OwnedFd>,
 }
 
 impl Message {
@@ -141,6 +144,8 @@ pub struct Connection {
     stream: UnixStream,
     serial: u32,
     unique_name: String,
+    /// The bus agreed to pass file descriptors, so reads must collect them.
+    fd_passing: bool,
 }
 
 impl Connection {
@@ -155,12 +160,13 @@ impl Connection {
         })?;
 
         let mut stream = UnixStream::connect(&path)?;
-        sasl_auth(&mut stream)?;
+        sasl_auth(&mut stream, false)?;
 
         let mut conn = Self {
             stream,
             serial: 0,
             unique_name: String::new(),
+            fd_passing: false,
         };
 
         let serial = conn.method_call(
@@ -182,16 +188,28 @@ impl Connection {
 
     /// Connect to the system bus, authenticate, and complete Hello handshake.
     pub fn connect_system() -> io::Result<Self> {
+        Self::open_system(false)
+    }
+
+    /// Like [`connect_system`](Self::connect_system), but also asks the bus to
+    /// pass file descriptors, so replies that carry one (logind's `Inhibit`)
+    /// deliver it in [`Message::fds`].
+    pub fn connect_system_with_fds() -> io::Result<Self> {
+        Self::open_system(true)
+    }
+
+    fn open_system(want_fds: bool) -> io::Result<Self> {
         let path = std::env::var("DBUS_SYSTEM_BUS_ADDRESS")
             .ok()
             .and_then(|a| parse_bus_address(&a))
             .unwrap_or_else(|| "/run/dbus/system_bus_socket".to_string());
         let mut stream = UnixStream::connect(&path)?;
-        sasl_auth(&mut stream)?;
+        let fd_passing = sasl_auth(&mut stream, want_fds)?;
         let mut conn = Self {
             stream,
             serial: 0,
             unique_name: String::new(),
+            fd_passing,
         };
         let serial = conn.method_call(
             "org.freedesktop.DBus",
@@ -258,7 +276,7 @@ impl Connection {
             return false;
         }
         let ok = loop {
-            match read_message(&mut self.stream) {
+            match read_message(&mut self.stream, self.fd_passing) {
                 Ok(msg) => {
                     if msg.reply_serial == serial {
                         if msg.is_error() {
@@ -326,10 +344,20 @@ impl Connection {
 
     /// Non-blocking read of one message. Returns None if no data available.
     pub fn try_read(&mut self) -> Option<Message> {
-        match read_message(&mut self.stream) {
+        match read_message(&mut self.stream, self.fd_passing) {
             Ok(msg) => Some(msg),
             Err(_) => None,
         }
+    }
+
+    /// Blocking read of the next message, whatever it is. For a thread that
+    /// owns the connection and just waits on it: unlike `read_reply`, nothing
+    /// is skipped, so signals arriving between replies aren't lost.
+    pub fn read_next(&mut self) -> io::Result<Message> {
+        self.stream.set_nonblocking(false)?;
+        let result = read_message(&mut self.stream, self.fd_passing);
+        self.stream.set_nonblocking(true).ok();
+        result
     }
 
     /// Blocking read until a reply with the given serial arrives.
@@ -344,7 +372,7 @@ impl Connection {
         // clearing non-blocking above.
         self.stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         let result = loop {
-            match read_message(&mut self.stream) {
+            match read_message(&mut self.stream, self.fd_passing) {
                 Ok(msg)
                     if msg.reply_serial == serial
                         && (msg.msg_type == MSG_METHOD_RETURN || msg.msg_type == MSG_ERROR) =>
@@ -364,7 +392,9 @@ impl Connection {
 
 // ── SASL authentication ─────────────────────────────────────────────────────
 
-fn sasl_auth(stream: &mut UnixStream) -> io::Result<()> {
+/// Authenticate as the calling user. With `want_fds`, also negotiate fd
+/// passing; returns whether the bus agreed to it.
+fn sasl_auth(stream: &mut UnixStream, want_fds: bool) -> io::Result<bool> {
     stream.write_all(b"\0")?;
     let uid = unsafe { libc::getuid() };
     let hex_uid = format!("{}", uid)
@@ -382,8 +412,14 @@ fn sasl_auth(stream: &mut UnixStream) -> io::Result<()> {
             "SASL auth failed",
         ));
     }
+    let mut fd_passing = false;
+    if want_fds {
+        stream.write_all(b"NEGOTIATE_UNIX_FD\r\n")?;
+        let n = stream.read(&mut buf)?;
+        fd_passing = buf[..n].starts_with(b"AGREE_UNIX_FD");
+    }
     stream.write_all(b"BEGIN\r\n")?;
-    Ok(())
+    Ok(fd_passing)
 }
 
 fn parse_bus_address(addr: &str) -> Option<String> {
@@ -623,10 +659,61 @@ fn encode_signal(
 
 // ── Wire format decoding ────────────────────────────────────────────────────
 
-fn read_exact(stream: &mut UnixStream, buf: &mut [u8]) -> io::Result<()> {
+/// One `recvmsg` into `buf`, collecting any file descriptors riding along.
+/// A plain `read` would silently drop (and close) them.
+fn recv_with_fds(
+    stream: &UnixStream,
+    buf: &mut [u8],
+    fds: &mut Vec<OwnedFd>,
+) -> io::Result<usize> {
+    // Control buffer, u64-backed so it's aligned for cmsghdr. 256 bytes holds
+    // far more descriptors than any reply we make use of.
+    let mut control = [0u64; 32];
+    let mut iov = libc::iovec {
+        iov_base: buf.as_mut_ptr().cast(),
+        iov_len: buf.len(),
+    };
+    let mut msg: libc::msghdr = unsafe { std::mem::zeroed() };
+    msg.msg_iov = &mut iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = control.as_mut_ptr().cast();
+    msg.msg_controllen = std::mem::size_of_val(&control) as _;
+
+    let n = unsafe { libc::recvmsg(stream.as_raw_fd(), &mut msg, libc::MSG_CMSG_CLOEXEC) };
+    if n < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    unsafe {
+        let mut cmsg = libc::CMSG_FIRSTHDR(&msg);
+        while !cmsg.is_null() {
+            if (*cmsg).cmsg_level == libc::SOL_SOCKET && (*cmsg).cmsg_type == libc::SCM_RIGHTS {
+                let data = libc::CMSG_DATA(cmsg);
+                let payload = (*cmsg).cmsg_len as usize - libc::CMSG_LEN(0) as usize;
+                for i in 0..payload / std::mem::size_of::<RawFd>() {
+                    let fd = std::ptr::read_unaligned(data.cast::<RawFd>().add(i));
+                    fds.push(OwnedFd::from_raw_fd(fd));
+                }
+            }
+            cmsg = libc::CMSG_NXTHDR(&msg, cmsg);
+        }
+    }
+    Ok(n as usize)
+}
+
+/// Fill `buf` from the stream. With `fds`, descriptors passed alongside the
+/// bytes are collected into it.
+fn read_exact(
+    stream: &mut UnixStream,
+    buf: &mut [u8],
+    mut fds: Option<&mut Vec<OwnedFd>>,
+) -> io::Result<()> {
     let mut offset = 0;
     while offset < buf.len() {
-        match stream.read(&mut buf[offset..]) {
+        let got = match fds.as_deref_mut() {
+            Some(fds) => recv_with_fds(stream, &mut buf[offset..], fds),
+            None => stream.read(&mut buf[offset..]),
+        };
+        match got {
             Ok(0) => return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "D-Bus EOF")),
             Ok(n) => offset += n,
             Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
@@ -636,9 +723,13 @@ fn read_exact(stream: &mut UnixStream, buf: &mut [u8]) -> io::Result<()> {
     Ok(())
 }
 
-fn read_message(stream: &mut UnixStream) -> io::Result<Message> {
+fn read_message(stream: &mut UnixStream, fd_passing: bool) -> io::Result<Message> {
+    let mut fds = Vec::new();
+    // Reborrowed per read; `None` keeps the plain `read` path byte-for-byte.
+    let mut fd_sink = fd_passing.then_some(&mut fds);
+
     let mut hdr = [0u8; 16];
-    read_exact(stream, &mut hdr)?;
+    read_exact(stream, &mut hdr, fd_sink.as_deref_mut())?;
 
     let msg_type = hdr[1];
     let body_len = u32::from_le_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]) as usize;
@@ -647,7 +738,7 @@ fn read_message(stream: &mut UnixStream) -> io::Result<Message> {
 
     let padded_fields_len = (fields_len + 7) & !7;
     let mut fields_buf = vec![0u8; padded_fields_len];
-    read_exact(stream, &mut fields_buf)?;
+    read_exact(stream, &mut fields_buf, fd_sink.as_deref_mut())?;
 
     let mut reply_serial = 0u32;
     let mut sender = String::new();
@@ -697,7 +788,7 @@ fn read_message(stream: &mut UnixStream) -> io::Result<Message> {
 
     let mut body = vec![0u8; body_len];
     if body_len > 0 {
-        read_exact(stream, &mut body)?;
+        read_exact(stream, &mut body, fd_sink.as_deref_mut())?;
     }
 
     Ok(Message {
@@ -711,6 +802,7 @@ fn read_message(stream: &mut UnixStream) -> io::Result<Message> {
         signature,
         destination,
         body,
+        fds,
     })
 }
 
@@ -1023,3 +1115,6 @@ pub fn subsig_at(sig: &str, i: usize) -> (String, usize) {
         _ => (String::from(bytes[i] as char), 1),
     }
 }
+
+#[cfg(test)]
+mod tests;

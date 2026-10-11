@@ -14,6 +14,8 @@ pub struct Style {
     pub field_color: Color,
     pub dot_color: Color,
     pub scrim_opacity: f32,
+    /// 24-hour clock ("14:05") rather than 12-hour ("2:05").
+    pub clock_24h: bool,
 }
 
 fn parse_hex_or(s: &str, fallback: Color) -> Color {
@@ -28,7 +30,7 @@ fn parse_hex_or(s: &str, fallback: Color) -> Color {
 /// Keys (all optional): `border_color` (hex, default = theme accent),
 /// `border_thickness` (px, default 2.0), `field_color` (hex, default #000000),
 /// `field_opacity` (0..1, default 0.55), `dot_color` (hex, default #F5F5F5),
-/// `scrim_opacity` (0..1, default 0.38).
+/// `scrim_opacity` (0..1, default 0.38), `clock_24h` (bool, default true).
 pub fn style() -> Style {
     let accent = accent();
     let border_color = parse_hex_or(
@@ -52,6 +54,7 @@ pub fn style() -> Style {
     );
     let scrim_opacity =
         lntrn_theme::read_config_f32("lockscreen", "scrim_opacity", 0.38).clamp(0.0, 1.0);
+    let clock_24h = lntrn_theme::read_config_bool("lockscreen", "clock_24h", true);
 
     Style {
         border_color,
@@ -59,6 +62,7 @@ pub fn style() -> Style {
         field_color,
         dot_color,
         scrim_opacity,
+        clock_24h,
     }
 }
 

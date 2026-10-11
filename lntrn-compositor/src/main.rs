@@ -36,6 +36,7 @@ mod rounded_element;
 mod screencopy_render;
 mod security;
 mod shaders;
+mod sleep_lock;
 mod snap;
 pub mod ssd;
 mod state;
@@ -625,6 +626,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     crate::wallpaper::install_source(&mut state);
     // Idle / battery actions on their own 1s timer, independent of rendering.
     crate::power::install_tick_timer(&mut state);
+    // Lock the screen before any suspend, announced by logind on its own thread.
+    crate::sleep_lock::install(&mut state);
     // Prime the SSD geometry cache (refreshed every 500ms from the render path).
     crate::ssd::reload_config();
 

@@ -198,6 +198,8 @@ pub fn install_tick_timer(state: &mut crate::Lantern) {
         Timer::from_duration(period),
         move |_, _, state: &mut crate::Lantern| {
             state.power.tick();
+            state.supervise_lock();
+            state.sleep_lock.tick();
             TimeoutAction::ToDuration(period)
         },
     );
@@ -365,17 +367,8 @@ pub fn run_power_action(action: &str) {
     if action == "nothing" || action.is_empty() {
         return;
     }
-    // "lock" launches our own lock screen directly. The binary holds a single
-    // -instance flock, so repeated triggers (idle then lid, etc.) are no-ops.
     if action == "lock" {
-        let bin = match std::env::var_os("HOME") {
-            Some(home) => std::path::PathBuf::from(home).join(".lantern/bin/lntrn-lockscreen"),
-            None => std::path::PathBuf::from("lntrn-lockscreen"),
-        };
-        match std::process::Command::new(&bin).spawn() {
-            Ok(_) => tracing::info!("Lock screen launched"),
-            Err(e) => tracing::warn!("Failed to launch lock screen ({}): {}", bin.display(), e),
-        }
+        spawn_lockscreen();
         return;
     }
     let Some((bin, verb)) = power_bin(action) else {
@@ -385,6 +378,19 @@ pub fn run_power_action(action: &str) {
     match std::process::Command::new(bin).arg(verb).spawn() {
         Ok(_) => tracing::info!("Power action '{}' dispatched via {}", action, bin),
         Err(e) => tracing::warn!("Failed to dispatch '{}': {}", action, e),
+    }
+}
+
+/// Launch our own lock screen. The binary holds a single-instance flock, so
+/// repeated triggers (idle then lid, a relaunch racing a slow start) are no-ops.
+pub fn spawn_lockscreen() {
+    let bin = match std::env::var_os("HOME") {
+        Some(home) => std::path::PathBuf::from(home).join(".lantern/bin/lntrn-lockscreen"),
+        None => std::path::PathBuf::from("lntrn-lockscreen"),
+    };
+    match std::process::Command::new(&bin).spawn() {
+        Ok(_) => tracing::info!("Lock screen launched"),
+        Err(e) => tracing::warn!("Failed to launch lock screen ({}): {}", bin.display(), e),
     }
 }
 
