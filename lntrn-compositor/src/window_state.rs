@@ -19,6 +19,11 @@ pub struct MinimizedWindow {
     pub surface: WlSurface,
     pub window: Window,
     pub location: Point<i32, Logical>,
+    /// The output it was on. A minimized window is in no workspace, so this
+    /// is all that ties its `location` to a monitor: it lets the location
+    /// follow that output when the layout changes, and move off it when the
+    /// output leaves.
+    pub output: String,
 }
 
 /// A window currently fullscreened. `restore` is the pre-fullscreen rect.

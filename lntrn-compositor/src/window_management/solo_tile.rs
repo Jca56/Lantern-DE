@@ -26,7 +26,7 @@ impl Lantern {
     /// Compute the "solo tile" target rect for a window on a given output:
     /// the output's logical bounds minus its exclusive zones (bar, layer
     /// shells), inset by `SINGLE_WINDOW_OUTER_GAP` on every side.
-    fn solo_tile_target(
+    pub(crate) fn solo_tile_target(
         &self,
         output: &smithay::output::Output,
     ) -> Option<Rectangle<i32, Logical>> {

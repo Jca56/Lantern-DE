@@ -11,10 +11,21 @@
 //! bounds — keys off `workspaces.outputs_iter()`, so a single unregister is a
 //! clean, comprehensive wall. The monitor keeps showing its last frame; flipping
 //! it back on just re-maps the still-alive output (no rebuild, no modeset).
+//!
+//! What the panel is left showing is one empty frame ([`blank_disabled`]),
+//! not the desktop as it was when the monitor was switched off: that frozen
+//! picture — windows, cursor and all — would otherwise still be on it when
+//! the session is locked.
 
+use smithay::backend::drm::compositor::FrameFlags;
+use smithay::backend::drm::DrmNode;
 use smithay::output::Output;
+use smithay::reexports::drm::control::crtc;
 use smithay::utils::{Logical, Point};
 use tracing::{info, warn};
+
+use crate::render::CustomRenderElements;
+use crate::udev::BG_COLOR;
 
 use crate::Lantern;
 
@@ -73,12 +84,13 @@ pub fn disable_output(state: &mut Lantern, name: &str) -> bool {
         .unwrap_or_default();
 
     info!("Disabling output {name} (barrier mode); migrating windows -> {target}");
-    state.migrate_windows_off_output(name, &target);
+    state.evacuate_output(name, &target);
 
-    // Exclude from the usable layout. This shrinks total_output_bounds (so the
-    // pointer is clamped to the remaining screens), drops it from every
-    // workspace, and stops new windows landing on it — the whole "can't cross
-    // over" behaviour. The DRM scanout + wl_output are deliberately left up.
+    // Exclude from the usable layout. The pointer is kept on the outputs that
+    // are registered, so this walls it off; it also drops the output from
+    // every workspace and stops new windows landing on it — the whole "can't
+    // cross over" behaviour. The DRM scanout + wl_output are deliberately
+    // left up.
     state.space.unmap_output(&output);
     state.workspaces.unregister_output(&output);
     state.hdr_ipc.remove_output(name);
@@ -95,11 +107,78 @@ pub fn disable_output(state: &mut Lantern, name: &str) -> bool {
     state.output_management_state.set_head_enabled(name, false);
     state.output_management_state.broadcast_done();
 
-    rescue_pointer(state, &target);
-
-    state.check_exclusive_zone_change();
-    state.schedule_render();
+    // The outputs that remain close up around the gap (and back to the
+    // origin, if this was the leftmost), windows in tow; whatever was
+    // maximized on the monitor that left is fitted to the one it moved to,
+    // and a pointer left outside the layout is brought back in.
+    state.relayout();
     true
+}
+
+/// The render pass of a CRTC whose output is not in the layout: if that is
+/// because it was switched off, give it an empty frame, once. No elements
+/// also means nothing on its cursor plane.
+pub(crate) fn blank_disabled(state: &mut Lantern, node: DrmNode, crtc: crtc::Handle) {
+    let disabled = state.disabled_outputs.values().any(|d| {
+        d.output
+            .user_data()
+            .get::<crate::udev::UdevOutputId>()
+            .is_some_and(|id| id.device_id == node && id.crtc == crtc)
+    });
+    if !disabled {
+        return;
+    }
+    let Some(udev) = state.udev.as_mut() else {
+        return;
+    };
+    let Some(renderer) = udev.renderer.as_mut() else {
+        return;
+    };
+    let Some(surface) = udev
+        .backends
+        .get_mut(&node)
+        .and_then(|b| b.surfaces.get_mut(&crtc))
+    else {
+        return;
+    };
+    if surface.blanked {
+        return;
+    }
+    match surface.drm_output.render_frame(
+        renderer,
+        &[] as &[CustomRenderElements],
+        BG_COLOR,
+        FrameFlags::empty(),
+    ) {
+        Ok(frame) => {
+            surface.blanked = true;
+            if !frame.is_empty {
+                match surface.drm_output.queue_frame(()) {
+                    Ok(()) => {
+                        surface.frame_pending = true;
+                        surface.frame_pending_since = Some(std::time::Instant::now());
+                    }
+                    Err(e) => warn!("blanking a switched-off output: queue_frame failed: {e:?}"),
+                }
+            }
+        }
+        Err(e) => warn!("blanking a switched-off output: render failed: {e:?}"),
+    }
+}
+
+/// Mark a re-enabled output's surface as showing the desktop again.
+fn unblank(state: &mut Lantern, output: &Output) {
+    let Some(id) = output.user_data().get::<crate::udev::UdevOutputId>().copied() else {
+        return;
+    };
+    if let Some(surface) = state
+        .udev
+        .as_mut()
+        .and_then(|u| u.backends.get_mut(&id.device_id))
+        .and_then(|b| b.surfaces.get_mut(&id.crtc))
+    {
+        surface.blanked = false;
+    }
 }
 
 /// Switch a barrier-mode monitor back on by re-mapping its still-alive output
@@ -117,13 +196,17 @@ pub fn enable_output(state: &mut Lantern, name: &str) -> bool {
     // safe; rendering to it resumes automatically once it's back in the layout.
     state.space.map_output(&d.output, d.loc);
     state.workspaces.register_output(d.output.clone(), d.loc);
+    unblank(state, &d.output);
 
     // Advertise the head enabled again so Settings reflects the on state.
     state.output_management_state.set_head_enabled(name, true);
     state.output_management_state.broadcast_done();
 
-    state.check_exclusive_zone_change();
-    state.schedule_render();
+    // Its windows come back, and the layout is resolved with it in: the
+    // position it was switched off at may overlap a neighbour whose scale
+    // changed since.
+    state.welcome_home(name);
+    state.relayout();
     true
 }
 
@@ -151,7 +234,7 @@ pub fn reconcile_disabled_outputs(state: &mut Lantern) {
 }
 
 /// The primary output if it's a different live output, else any other live one.
-fn pick_target_output(state: &Lantern, exclude: &str) -> Option<String> {
+pub(crate) fn pick_target_output(state: &Lantern, exclude: &str) -> Option<String> {
     if let Some(p) = crate::primary_output_name() {
         if p != exclude && state.workspaces.outputs_iter().any(|o| o.name() == p) {
             return Some(p);
@@ -162,38 +245,4 @@ fn pick_target_output(state: &Lantern, exclude: &str) -> Option<String> {
         .outputs_iter()
         .map(|o| o.name())
         .find(|n| n != exclude)
-}
-
-/// Warp the cursor onto `target` if it was stranded outside the (now smaller)
-/// combined output area.
-fn rescue_pointer(state: &mut Lantern, target: &str) {
-    let Some(pointer) = state.seat.get_pointer() else {
-        return;
-    };
-    let pos = pointer.current_location();
-    let bounds = state.total_output_bounds();
-    let inside = bounds.size.w > 0
-        && pos.x >= bounds.loc.x as f64
-        && pos.x < (bounds.loc.x + bounds.size.w) as f64
-        && pos.y >= bounds.loc.y as f64
-        && pos.y < (bounds.loc.y + bounds.size.h) as f64;
-    if inside {
-        return;
-    }
-    let Some(out) = state
-        .workspaces
-        .outputs_iter()
-        .find(|o| o.name() == target)
-        .cloned()
-    else {
-        return;
-    };
-    let Some(geo) = state.workspaces.output_geometry(&out) else {
-        return;
-    };
-    let center = Point::from((
-        (geo.loc.x + geo.size.w / 2) as f64,
-        (geo.loc.y + geo.size.h / 2) as f64,
-    ));
-    state.warp_pointer_to(center);
 }

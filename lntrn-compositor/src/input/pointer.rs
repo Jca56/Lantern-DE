@@ -29,18 +29,11 @@ impl Lantern {
         pos.x += delta.x * sensitivity;
         pos.y += delta.y * sensitivity;
 
-        // Clamp to combined output bounds
-        let bounds = self.total_output_bounds();
-        if bounds.size.w > 0 {
-            pos.x = pos.x.clamp(
-                bounds.loc.x as f64,
-                (bounds.loc.x + bounds.size.w) as f64 - 1.0,
-            );
-            pos.y = pos.y.clamp(
-                bounds.loc.y as f64,
-                (bounds.loc.y + bounds.size.h) as f64 - 1.0,
-            );
-        }
+        // Keep the pointer on an output. Not merely inside the outputs'
+        // bounding box: beside a shorter monitor that box has a corner no
+        // output shows (below the 1080p one next to the 4K), and the cursor
+        // used to slide off into it and vanish.
+        pos = self.nearest_point_on_layout(pos);
 
         // Pointer constraints (FPS/TPS mouse-look). A game that grabs the
         // pointer via pointer-constraints-v1 expects the cursor to STAY put
@@ -132,12 +125,16 @@ impl Lantern {
 
         // When switcher overlay is visible, hover to highlight thumbnails
         if self.alt_tab_switcher.is_visible() {
-            let output_size = self
+            // The cards are laid out from the output's own corner (and
+            // drawn on every output), so the pointer is measured from it
+            // too: taken globally it never matched a card on any output
+            // but the one at the origin.
+            let output_geo = self
                 .output_at_point(pos)
                 .and_then(|o| self.workspaces.output_geometry(&o))
-                .map(|g| g.size)
                 .unwrap_or_default();
-            let logical_point = smithay::utils::Point::from((pos.x, pos.y));
+            let output_size = output_geo.size;
+            let logical_point = pos - output_geo.loc.to_f64();
             self.alt_tab_switcher
                 .hover_select(logical_point, output_size);
             // The pointer moved but we computed no fresh hit — the cached
@@ -222,7 +219,7 @@ impl Lantern {
 
         // Switcher hover (absolute motion variant)
         if self.alt_tab_switcher.is_visible() {
-            let logical_point = smithay::utils::Point::from((pos.x, pos.y));
+            let logical_point = pos - output_geo.loc.to_f64();
             self.alt_tab_switcher
                 .hover_select(logical_point, output_geo.size);
             pointer.motion(
@@ -284,12 +281,13 @@ impl Lantern {
             && button_state == ButtonState::Pressed
         {
             let pos = pointer.current_location();
-            let output_size = self
+            let output_geo = self
                 .output_at_point(pos)
                 .and_then(|o| self.workspaces.output_geometry(&o))
-                .map(|g| g.size)
                 .unwrap_or_default();
-            let logical_point = smithay::utils::Point::from((pos.x, pos.y));
+            let output_size = output_geo.size;
+            // Output-local, like the layout (see the hover path).
+            let logical_point = pos - output_geo.loc.to_f64();
 
             // Close button takes priority
             if let Some(idx) = self

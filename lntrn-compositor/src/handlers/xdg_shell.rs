@@ -184,9 +184,17 @@ impl XdgShellHandler for Lantern {
     fn fullscreen_request(
         &mut self,
         surface: ToplevelSurface,
-        _output: Option<smithay::reexports::wayland_server::protocol::wl_output::WlOutput>,
+        output: Option<smithay::reexports::wayland_server::protocol::wl_output::WlOutput>,
     ) {
         tracing::info!("Client requested fullscreen");
+        // The client may name the monitor (a video player's "fullscreen on
+        // display 2", a projector window): the window goes to it first, and
+        // then fullscreens on the output it belongs to as usual.
+        if let Some(output) = output.as_ref().and_then(smithay::output::Output::from_resource) {
+            if let Some(window) = self.find_mapped_window(surface.wl_surface()) {
+                self.hand_window_to(&window, &output.name());
+            }
+        }
         self.fullscreen_request_surface(surface.wl_surface());
     }
 
@@ -275,22 +283,33 @@ impl Lantern {
             return;
         };
 
+        let Some(window_geo) = self.space.element_geometry(window) else {
+            return;
+        };
+        let parent_origin = window_geo.loc + get_popup_toplevel_coords(&PopupKind::Xdg(popup.clone()));
+
+        // Constrain to the monitor the popup is anchored on. For a window
+        // hanging over the seam that is not the window's own output: a
+        // right-click in the part on the neighbour had its menu slid back
+        // onto the window's monitor, hundreds of px from the cursor.
+        //
         // No output at all (every monitor unplugged) or a window that is
         // not placed: there is nothing to constrain the popup to.
+        let anchor = popup.with_pending_state(|state| state.positioner.anchor_rect);
+        let anchor_at = parent_origin
+            + anchor.loc
+            + smithay::utils::Point::from((anchor.size.w / 2, anchor.size.h / 2));
         let Some(output_geo) = self
-            .output_for_window(window)
+            .output_at_point(anchor_at.to_f64())
+            .or_else(|| self.output_for_window(window))
             .or_else(|| self.workspaces.outputs_iter().next().cloned())
             .and_then(|output| self.workspaces.output_geometry(&output))
         else {
             return;
         };
-        let Some(window_geo) = self.space.element_geometry(window) else {
-            return;
-        };
 
         let mut target = output_geo;
-        target.loc -= get_popup_toplevel_coords(&PopupKind::Xdg(popup.clone()));
-        target.loc -= window_geo.loc;
+        target.loc -= parent_origin;
 
         popup.with_pending_state(|state| {
             state.geometry = state.positioner.get_unconstrained_geometry(target);

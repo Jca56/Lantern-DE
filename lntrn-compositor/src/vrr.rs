@@ -16,7 +16,6 @@
 
 use smithay::backend::drm::VrrSupport;
 use smithay::output::Output;
-use smithay::utils::Point;
 
 use crate::state::Lantern;
 use crate::udev::{UdevOutputId, UdevOutputModes};
@@ -39,27 +38,20 @@ impl Lantern {
         }
     }
 
-    /// True if any fullscreen window is currently assigned to `output`. Uses the
-    /// output geometry captured at fullscreen time (`FullscreenWindow::target`),
-    /// which is stable even while the enter animation is still in flight. Also
-    /// used by the render path to gate direct scanout.
+    /// True if any fullscreen window belongs to `output` (see
+    /// `output_for_window`). Also used by the render path to gate direct
+    /// scanout.
+    ///
+    /// By ownership, not by which output a corner of the window's rect falls
+    /// on: with one output's rect reaching into another's that probe named
+    /// the wrong monitor, and getting this wrong matters for pacing — a
+    /// wrong "false" runs the 4K dual-kawase blur and disables direct
+    /// scanout during gameplay, a wrong "true" strips the other monitor's
+    /// blur and silences its panels.
     pub(crate) fn output_has_fullscreen(&self, output: &Output) -> bool {
-        self.fullscreen_windows.iter().any(|fw| {
-            // Probe just inside the target's top-left corner, NOT its center. A
-            // window sized larger than a monitor has a center that can fall on a
-            // neighbouring output (known footgun) — but `fw.target` is the output
-            // geometry captured at fullscreen time, so its origin reliably lands
-            // on the output it covers. The +1,+1 nudge disambiguates a window
-            // whose origin sits exactly on a boundary between two outputs.
-            // Getting this right matters for pacing: a wrong "false" here runs
-            // the 4K dual-kawase blur and disables direct scanout during
-            // gameplay, blowing the vblank budget and stuttering the game.
-            let probe = Point::<f64, smithay::utils::Logical>::from((
-                fw.target.loc.x as f64 + 1.0,
-                fw.target.loc.y as f64 + 1.0,
-            ));
-            self.output_at_point(probe).as_ref() == Some(output)
-        })
+        self.fullscreen_windows
+            .iter()
+            .any(|fw| self.held_output(&fw.surface).as_ref() == Some(output))
     }
 
     /// Toggle VRR on a single output's DRM surface. Only commits a change when

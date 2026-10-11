@@ -31,6 +31,12 @@ pub struct OutputModeInfo {
 }
 
 pub struct OutputHead {
+    /// What a client's head and mode objects refer to this head by. Never
+    /// reused: the list shifts whenever a monitor leaves, so an index would
+    /// make every object of the heads behind it point at a neighbour (and a
+    /// mode index of the 31-mode monitor run off the end of the 14-mode
+    /// one's list).
+    id: u32,
     pub output_name: String,
     pub modes: Vec<OutputModeInfo>,
     pub current_mode_idx: usize,
@@ -60,7 +66,9 @@ pub struct PendingConfig {
 
 struct PendingHeadConfig {
     output_name: String,
-    mode_idx: Option<usize>,
+    /// The mode asked for: the id of the head it belongs to, and its place
+    /// in that head's list.
+    mode: Option<(u32, usize)>,
     position: Option<(i32, i32)>,
     scale: Option<f64>,
     /// Client asked to switch this output off (disable_head) rather than
@@ -82,6 +90,7 @@ pub struct OutputManagementState {
     global: GlobalId,
     managers: Vec<ZwlrOutputManagerV1>,
     pub heads: Vec<OutputHead>,
+    next_head_id: u32,
     serial: u32,
     dh: DisplayHandle,
 }
@@ -93,6 +102,7 @@ impl OutputManagementState {
             global,
             managers: Vec::new(),
             heads: Vec::new(),
+            next_head_id: 0,
             serial: 1,
             dh: dh.clone(),
         }
@@ -133,7 +143,10 @@ impl OutputManagementState {
             })
             .collect();
 
+        let id = self.next_head_id;
+        self.next_head_id = self.next_head_id.wrapping_add(1);
         let head = OutputHead {
+            id,
             output_name: name.to_string(),
             modes: mode_infos,
             current_mode_idx,
@@ -199,14 +212,16 @@ impl OutputManagementState {
         }
     }
 
-    /// Sync stored head state after changes were applied to the live outputs
-    /// and push the new position/scale to all bound head instances. Without
-    /// this, wlr clients (System Settings) keep showing pre-apply data.
-    /// Mode changes update the stored index only — pushing `current_mode`
-    /// events needs the per-client mode instance, and the settings app
-    /// re-reads after applying anyway.
-    pub fn sync_applied_changes(&mut self, changes: &[OutputChange]) {
+    /// Record the modes a batch switched to. Pushing `current_mode` events
+    /// needs the per-client mode instance, and the settings app re-reads
+    /// after applying anyway. Positions and scales come from the live
+    /// outputs instead (`sync_live`): what a batch asks for is not always
+    /// what the layout ends up as.
+    pub fn sync_applied_modes(&mut self, changes: &[OutputChange]) {
         for change in changes {
+            let Some(drm_idx) = change.drm_mode_index else {
+                continue;
+            };
             let Some(head) = self
                 .heads
                 .iter_mut()
@@ -214,26 +229,34 @@ impl OutputManagementState {
             else {
                 continue;
             };
-            if let Some(pos) = change.position {
-                head.position = pos;
+            if let Some(mi) = head.modes.iter().position(|m| m.drm_mode_index == drm_idx) {
+                head.current_mode_idx = mi;
             }
-            if let Some(scale) = change.scale {
-                head.scale = scale;
-            }
-            if let Some(drm_idx) = change.drm_mode_index {
-                if let Some(mi) = head.modes.iter().position(|m| m.drm_mode_index == drm_idx) {
-                    head.current_mode_idx = mi;
-                }
-            }
-            if head.enabled {
-                for weak in &head.instances {
-                    if let Ok(h) = weak.upgrade() {
-                        h.position(head.position.0, head.position.1);
-                        h.scale(head.scale);
-                    }
+        }
+    }
+
+    /// Bring a head in step with its live output and tell bound clients if
+    /// anything moved. Returns whether it did, so the caller knows a `done`
+    /// is owed. Without this, wlr clients (System Settings) keep showing
+    /// where an output was asked to go rather than where it is.
+    pub fn sync_live(&mut self, name: &str, position: (i32, i32), scale: f64) -> bool {
+        let Some(head) = self.heads.iter_mut().find(|h| h.output_name == name) else {
+            return false;
+        };
+        if head.position == position && head.scale == scale {
+            return false;
+        }
+        head.position = position;
+        head.scale = scale;
+        if head.enabled {
+            for weak in &head.instances {
+                if let Ok(h) = weak.upgrade() {
+                    h.position(position.0, position.1);
+                    h.scale(scale);
                 }
             }
         }
+        true
     }
 
     /// Increment serial and send done to all managers.
@@ -248,11 +271,9 @@ impl OutputManagementState {
     fn send_head_to_client(&mut self, client: &Client, mgr: &ZwlrOutputManagerV1, head_idx: usize) {
         let dh = self.dh.clone();
         let head = &self.heads[head_idx];
-        let Ok(head_obj) = client.create_resource::<ZwlrOutputHeadV1, _, Lantern>(
-            &dh,
-            mgr.version(),
-            head_idx as u32,
-        ) else {
+        let Ok(head_obj) =
+            client.create_resource::<ZwlrOutputHeadV1, _, Lantern>(&dh, mgr.version(), head.id)
+        else {
             return;
         };
         mgr.head(&head_obj);
@@ -260,6 +281,7 @@ impl OutputManagementState {
         head_obj.enabled(head.enabled as i32);
         head_obj.physical_size(head.phys_size.0, head.phys_size.1);
 
+        let head_id = head.id;
         let current_mode_idx = head.current_mode_idx;
         let enabled = head.enabled;
         let position = head.position;
@@ -268,7 +290,7 @@ impl OutputManagementState {
         // Send modes — collect mode objects first, then store weak refs
         let mut mode_objs: Vec<(usize, ZwlrOutputModeV1)> = Vec::new();
         for (mi, mode) in self.heads[head_idx].modes.iter().enumerate() {
-            let mode_data = (head_idx as u32, mi as u32);
+            let mode_data = (head_id, mi as u32);
             let Ok(mode_obj) = client.create_resource::<ZwlrOutputModeV1, _, Lantern>(
                 &dh,
                 mgr.version(),
@@ -303,7 +325,17 @@ impl OutputManagementState {
         self.heads[head_idx].instances.push(head_obj.downgrade());
     }
 
-    /// Resolve a pending config into OutputChanges. Returns None if serial mismatch.
+    /// The name of the head a client's head object stands for, if that head
+    /// is still advertised.
+    fn head_name(&self, id: u32) -> Option<String> {
+        self.heads
+            .iter()
+            .find(|h| h.id == id)
+            .map(|h| h.output_name.clone())
+    }
+
+    /// Resolve a pending config into OutputChanges. Returns None if it is
+    /// out of date: a serial mismatch, or a head or mode that is gone.
     pub fn resolve_config(&self, config: &PendingConfig) -> Option<Vec<OutputChange>> {
         if config.serial != self.serial {
             return None;
@@ -314,7 +346,15 @@ impl OutputManagementState {
                 .heads
                 .iter()
                 .find(|h| h.output_name == hc.output_name)?;
-            let drm_idx = hc.mode_idx.map(|mi| head.modes[mi].drm_mode_index);
+            // A mode object of another head (or of this output before it
+            // was last re-advertised) says nothing about this one's list.
+            let drm_idx = match hc.mode {
+                Some((head_id, mi)) if head_id == head.id => {
+                    Some(head.modes.get(mi)?.drm_mode_index)
+                }
+                Some(_) => return None,
+                None => None,
+            };
             changes.push(OutputChange {
                 output_name: hc.output_name.clone(),
                 drm_mode_index: drm_idx,
@@ -409,8 +449,8 @@ impl Dispatch<ZwlrOutputHeadV1, u32, Lantern> for Lantern {
     }
 
     fn destroyed(state: &mut Lantern, _client: ClientId, resource: &ZwlrOutputHeadV1, data: &u32) {
-        let idx = *data as usize;
-        if let Some(head) = state.output_management_state.heads.get_mut(idx) {
+        let heads = &mut state.output_management_state.heads;
+        if let Some(head) = heads.iter_mut().find(|h| h.id == *data) {
             head.instances
                 .retain(|w| w.upgrade().map(|h| h != *resource).unwrap_or(false));
         }
@@ -438,8 +478,9 @@ impl Dispatch<ZwlrOutputModeV1, (u32, u32), Lantern> for Lantern {
         resource: &ZwlrOutputModeV1,
         data: &(u32, u32),
     ) {
-        let (hi, mi) = (data.0 as usize, data.1 as usize);
-        if let Some(head) = state.output_management_state.heads.get_mut(hi) {
+        let (head_id, mi) = (data.0, data.1 as usize);
+        let heads = &mut state.output_management_state.heads;
+        if let Some(head) = heads.iter_mut().find(|h| h.id == head_id) {
             if let Some(mode) = head.modes.get_mut(mi) {
                 mode.instances
                     .retain(|w| w.upgrade().map(|m| m != *resource).unwrap_or(false));
@@ -462,19 +503,19 @@ impl Dispatch<ZwlrOutputConfigurationV1, Mutex<PendingConfig>, Lantern> for Lant
     ) {
         match request {
             zwlr_output_configuration_v1::Request::EnableHead { id, head } => {
-                let head_idx = *head.data::<u32>().unwrap_or(&0) as usize;
-                let output_name = state
-                    .output_management_state
-                    .heads
-                    .get(head_idx)
-                    .map(|h| h.output_name.clone())
+                // A head that is no longer advertised leaves the name empty,
+                // which no head matches: the configuration is then cancelled
+                // as out of date instead of landing on another monitor.
+                let output_name = head
+                    .data::<u32>()
+                    .and_then(|id| state.output_management_state.head_name(*id))
                     .unwrap_or_default();
 
                 let mut pending = data.lock().unwrap();
                 let hc_idx = pending.heads.len();
                 pending.heads.push(PendingHeadConfig {
                     output_name,
-                    mode_idx: None,
+                    mode: None,
                     position: None,
                     scale: None,
                     disable: false,
@@ -493,18 +534,15 @@ impl Dispatch<ZwlrOutputConfigurationV1, Mutex<PendingConfig>, Lantern> for Lant
                 // Record the disable intent; `apply_output_config` tears the
                 // output's desktop down on Apply. The head itself is kept
                 // (advertised as disabled) so it can be switched back on.
-                let head_idx = *head.data::<u32>().unwrap_or(&0) as usize;
-                let output_name = state
-                    .output_management_state
-                    .heads
-                    .get(head_idx)
-                    .map(|h| h.output_name.clone())
+                let output_name = head
+                    .data::<u32>()
+                    .and_then(|id| state.output_management_state.head_name(*id))
                     .unwrap_or_default();
                 if !output_name.is_empty() {
                     let mut pending = data.lock().unwrap();
                     pending.heads.push(PendingHeadConfig {
                         output_name,
-                        mode_idx: None,
+                        mode: None,
                         position: None,
                         scale: None,
                         disable: true,
@@ -524,7 +562,7 @@ impl Dispatch<ZwlrOutputConfigurationV1, Mutex<PendingConfig>, Lantern> for Lant
                         "  head '{}' disable={} mode={:?} pos={:?} scale={:?}",
                         hc.output_name,
                         hc.disable,
-                        hc.mode_idx,
+                        hc.mode.map(|(_, mi)| mi),
                         hc.position,
                         hc.scale,
                     );
@@ -615,8 +653,9 @@ impl Dispatch<ZwlrOutputConfigurationHeadV1, ConfigHeadData, Lantern> for Lanter
 
         match request {
             zwlr_output_configuration_head_v1::Request::SetMode { mode } => {
-                let (_, mi) = *mode.data::<(u32, u32)>().unwrap_or(&(0, 0));
-                hc.mode_idx = Some(mi as usize);
+                if let Some((head_id, mi)) = mode.data::<(u32, u32)>() {
+                    hc.mode = Some((*head_id, *mi as usize));
+                }
             }
             zwlr_output_configuration_head_v1::Request::SetCustomMode { .. } => {
                 // Custom modes not supported

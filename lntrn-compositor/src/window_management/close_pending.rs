@@ -108,6 +108,8 @@ impl Lantern {
                     surface: p.surface.clone(),
                     window: p.window.clone(),
                     location: p.location,
+                    // Hidden, not forgotten: its workspace still has it.
+                    output: self.workspaces.output_of(&p.surface).unwrap_or_default(),
                 });
                 return false;
             }

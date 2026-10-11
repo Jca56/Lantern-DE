@@ -61,24 +61,12 @@ impl Lantern {
         &self,
         point: smithay::utils::Point<i32, Logical>,
     ) -> Rectangle<i32, Logical> {
+        // Nearest output for a point on none: a Wine game sits a title
+        // bar's height above its monitor, and "the first output" sent its
+        // close animation off toward the primary.
         let output_geo = self
-            .workspaces
-            .outputs_iter()
-            .find_map(|o| {
-                self.workspaces.output_geometry(o).and_then(|g| {
-                    if g.contains(point) {
-                        Some(g)
-                    } else {
-                        None
-                    }
-                })
-            })
-            .or_else(|| {
-                self.workspaces
-                    .outputs_iter()
-                    .next()
-                    .and_then(|o| self.workspaces.output_geometry(o))
-            })
+            .output_at_point(smithay::utils::Point::from((point.x as f64, point.y as f64)))
+            .and_then(|o| self.workspaces.output_geometry(&o))
             .unwrap_or_else(|| Rectangle::new((0, 0).into(), (1920, 1080).into()));
         Self::minimize_target_in_output(output_geo)
     }
@@ -142,10 +130,16 @@ impl Lantern {
             .workspaces
             .element_location(&window)
             .unwrap_or_default();
+        let output = self
+            .workspaces
+            .output_of(surface)
+            .or_else(|| self.output_for_window(&window).map(|o| o.name()))
+            .unwrap_or_default();
         self.minimized_windows.push(MinimizedWindow {
             surface: surface.clone(),
             window: window.clone(),
             location,
+            output,
         });
         window.send_pending_configure();
         self.unmap_window_everywhere(&window);
@@ -184,31 +178,82 @@ impl Lantern {
             .position(|entry| entry.surface == *surface)?;
         let entry = self.minimized_windows.remove(index);
 
-        let location = if self.is_maximized(surface) {
-            // Window was maximized when minimized — restore to maximized
-            // using current output geometry (not the pre-maximize restore rect).
-            if let Some(output_geo) = self.window_output_geometry(&entry.window) {
-                entry.window.set_maximized(true);
-                entry.window.configure_rect(output_geo);
-                output_geo.loc
-            } else {
-                entry.location
-            }
-        } else {
-            entry.location
-        };
+        // The window comes back on the output it was minimized on (the
+        // entry follows that output through layout changes), or, with that
+        // one gone, on whichever its location falls.
+        let output = self
+            .workspaces
+            .output_by_name(&entry.output)
+            .cloned()
+            .or_else(|| {
+                self.output_at_point(smithay::utils::Point::from((
+                    entry.location.x as f64,
+                    entry.location.y as f64,
+                )))
+            })
+            .or_else(|| self.workspaces.outputs_iter().next().cloned());
+        let output_name = output.as_ref().map(|o| o.name()).unwrap_or_default();
 
-        // Decide the output the window will live on from its restore
-        // location (it's not yet in any Space, so `output_for_window`
-        // can't help us).
-        let output_name = self
-            .output_at_point(smithay::utils::Point::from((
-                location.x as f64,
-                location.y as f64,
-            )))
-            .or_else(|| self.workspaces.outputs_iter().next().cloned())
-            .map(|o| o.name())
-            .unwrap_or_default();
+        // Held in a state, it is fitted to that output as it is *now*: the
+        // window is in no workspace while minimized, so nothing re-fitted it
+        // when the output changed scale or moved, and it was told its size
+        // before. (Fitted to the first output instead, a window maximized on
+        // the 1080p monitor came back sized for the 4K one, squeezed into
+        // its old rect.)
+        let fullscreen_rect = output
+            .as_ref()
+            .filter(|_| self.is_fullscreen(surface))
+            .and_then(|o| self.workspaces.output_geometry(o));
+        let maximized_rect = output
+            .as_ref()
+            .filter(|_| self.is_maximized(surface))
+            .and_then(|o| self.output_work_area(o));
+        let location = if let Some(rect) = fullscreen_rect {
+            let was = self
+                .fullscreen_windows
+                .iter_mut()
+                .find(|e| e.surface == *surface)
+                .map(|e| std::mem::replace(&mut e.target, rect))
+                .unwrap_or(rect);
+            if was == rect {
+                // Nothing changed while it was away: exactly where it was
+                // (a Wine game sits a title bar above its output).
+                entry.location
+            } else {
+                let mut fit = rect;
+                let lift = was.loc.y - entry.location.y;
+                if entry.window.x11_surface().is_some()
+                    && lift > 0
+                    && entry.window.geometry().size.h == was.size.h + lift
+                {
+                    fit.loc.y -= lift;
+                    fit.size.h += lift;
+                }
+                entry.window.configure_rect(fit);
+                fit.loc
+            }
+        } else if let Some(rect) = maximized_rect {
+            if let Some(e) = self.maximized_windows.iter_mut().find(|e| e.surface == *surface) {
+                e.target = rect;
+            }
+            entry.window.set_maximized(true);
+            entry.window.configure_rect(rect);
+            rect.loc
+        } else {
+            // It has to show on its output: a location kept from a layout
+            // that no longer exists would map it where no screen is.
+            match output.as_ref().and_then(|o| self.workspaces.output_geometry(o)) {
+                Some(geo) => {
+                    let rect = Rectangle::new(entry.location, entry.window.geometry().size);
+                    if geo.overlaps(rect) {
+                        entry.location
+                    } else {
+                        crate::output_layout::clamp_into(rect, geo).loc
+                    }
+                }
+                None => entry.location,
+            }
+        };
         let active_ws_id = self.workspaces.active_id(&output_name);
 
         // Re-register the window with its workspace BEFORE mapping. This

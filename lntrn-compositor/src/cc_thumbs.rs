@@ -371,3 +371,16 @@ impl Drop for CcThumbnails {
         let _ = std::fs::remove_file(socket_path());
     }
 }
+
+impl crate::Lantern {
+    /// The output the Command Center's surface is on. Its thumbnail slots
+    /// and click positions are measured from that surface, which fills that
+    /// output — so they mean something there and nowhere else.
+    pub(crate) fn command_center_output(&self) -> Option<smithay::output::Output> {
+        self.layer_surface_namespaces
+            .iter()
+            .find(|(_, namespace)| namespace.as_str() == "lntrn-command-center")
+            .and_then(|(surface, _)| self.layer_surface_outputs.get(surface))
+            .cloned()
+    }
+}

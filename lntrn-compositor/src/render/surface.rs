@@ -130,7 +130,7 @@ pub fn render_surface(
         .map_or(true, |t| t.elapsed() >= Duration::from_millis(500));
     if periodic_due {
         state.last_periodic_tick = Some(Instant::now());
-        crate::udev_device::reload_monitor_positions(state);
+        state.poll_layout_config();
         // Pick up live cursor-color changes from the settings panel without
         // requiring a session restart. Each of its seven config reads walks
         // the cached lantern.toml text, so it belongs on the half-second
@@ -162,14 +162,21 @@ pub fn render_surface(
     // losing the race meant forget_window never ran (stale dock entries).
     state.reap_dead_windows();
 
-    let output = match state.workspaces.outputs_iter().find(|o| {
-        o.user_data()
-            .get::<UdevOutputId>()
-            .map(|id| id.device_id == node && id.crtc == crtc)
-            .unwrap_or(false)
-    }) {
-        Some(o) => o.clone(),
-        None => return,
+    let output = state
+        .workspaces
+        .outputs_iter()
+        .find(|o| {
+            o.user_data()
+                .get::<UdevOutputId>()
+                .map(|id| id.device_id == node && id.crtc == crtc)
+                .unwrap_or(false)
+        })
+        .cloned();
+    let Some(output) = output else {
+        // Not in the layout. Switched off by the user: it gets one empty
+        // frame instead of keeping the desktop it last showed.
+        crate::output_toggle::blank_disabled(state, node, crtc);
+        return;
     };
 
     // Space refresh (dead-element cleanup, output-presence updates): the
@@ -284,9 +291,16 @@ pub fn render_surface(
     // focus-at requests (click-outside-CC → focus underlying window) commit
     // before we take the long-lived immutable borrows below.
     let focus_at_points = state.cc_thumbs.take_focus_at();
+    // Measured from the Command Center's own surface: global only while its
+    // output happens to sit at the origin.
+    let cc_origin = state
+        .command_center_output()
+        .and_then(|o| state.workspaces.output_geometry(&o))
+        .map(|g| g.loc.to_f64())
+        .unwrap_or_default();
     for (px, py) in focus_at_points {
-        let pos =
-            smithay::utils::Point::<f64, smithay::utils::Logical>::from((px as f64, py as f64));
+        let pos = cc_origin
+            + smithay::utils::Point::<f64, smithay::utils::Logical>::from((px as f64, py as f64));
         let target = state.visible_element_under(pos).map(|(w, _)| w.clone());
         if let Some(window) = target {
             let serial = smithay::utils::SERIAL_COUNTER.next_serial();
@@ -428,7 +442,14 @@ pub fn render_surface(
     //  re-borrow state immutably here.)
     let cc_slots_and_windows: Vec<(crate::cc_thumbs::ThumbSlot, Window)> = {
         let slots = state.cc_thumbs.slots();
-        if slots.is_empty() {
+        // Only on the Command Center's own output. The slots are positions
+        // on its surface; drawn in every output's pass they put a second
+        // set of live thumbnails and close buttons on the other monitor,
+        // wherever the same coordinates fell there.
+        let elsewhere = state
+            .command_center_output()
+            .is_some_and(|cc| cc != output);
+        if slots.is_empty() || elsewhere {
             Vec::new()
         } else {
             let toplevels = state.foreign_toplevel_state.surface_app_id_titles();
@@ -505,6 +526,29 @@ pub fn render_surface(
                 }
             }
         }
+        // Stack them the way the global mirror does — the order the pointer
+        // is hit-tested in. Each workspace keeps its own order, but strung
+        // together output by output (in hash-map order, different every
+        // session) a window reaching over the seam was drawn under or over
+        // the other monitor's windows by luck, while clicks on it went by
+        // the global order: you clicked what you saw underneath.
+        let mut stacked: Vec<smithay::desktop::Window> = state
+            .space
+            .elements()
+            .filter(|w| windows.contains(w))
+            .cloned()
+            .collect();
+        if stacked.len() < windows.len() {
+            // In a workspace but not the mirror: keep it, at the bottom.
+            let mut rest: Vec<_> = windows
+                .iter()
+                .filter(|w| !stacked.contains(w))
+                .cloned()
+                .collect();
+            rest.append(&mut stacked);
+            stacked = rest;
+        }
+        windows = stacked;
         if let Some(ref scratch_surface) = state.scratchpad_surface {
             if let Some(scratch_win) = state
                 .space
@@ -599,13 +643,21 @@ pub fn render_surface(
             bbox.loc += window_loc - window.geometry().loc;
             bbox
         };
-        if !output_geo.overlaps(win_bbox) {
-            continue;
-        }
-
         let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(window) else {
             continue;
         };
+        // On this output where it is mapped — or where its state animation
+        // has it right now. A window sent to the other monitor is mapped at
+        // its destination at once and animated there from where it was: by
+        // the mapped box alone it vanished from this monitor the instant it
+        // left, instead of sliding off it.
+        let animated_here = state
+            .window_state_anim
+            .current_rect(&surface)
+            .is_some_and(|r| output_geo.overlaps(r));
+        if !output_geo.overlaps(win_bbox) && !animated_here {
+            continue;
+        }
 
         // Space only contains active-workspace windows (unmap/remap on switch).
         // Apply slide offset if a transition is running on this output.
@@ -936,7 +988,15 @@ pub fn render_surface(
         // Capture only when the window's buffers actually changed since the
         // last snapshot, at most every SNAPSHOT_MIN_INTERVAL, reusing the
         // texture when the size is unchanged. A static window costs nothing.
-        if !is_fullscreen && !is_opening && !resize_animating {
+        //
+        // And only in the pass of the output the window belongs to: a
+        // window hanging over the seam is drawn by both, and each capturing
+        // at its own scale reallocated the one texture on every other frame.
+        let snapshot_here = state
+            .workspaces
+            .window_workspace_ref(&surface)
+            .map_or(true, |(owner, _)| owner == output_name_str.as_str());
+        if !is_fullscreen && !is_opening && !resize_animating && snapshot_here {
             let content_key = window_content_key(window);
             let previous = state.window_snapshots.get(&surface);
             if snapshot_is_stale(previous, content_key) {
@@ -1009,14 +1069,15 @@ pub fn render_surface(
                 ));
                 let dst_size =
                     Size::<i32, Logical>::from((effective_size.w.max(1), effective_size.h.max(1)));
-                // Explicit src spans the full texture in *logical*
-                // coords — without this, sampling outside [0,1] UVs
-                // wraps and tiles the snapshot mid grow-animation.
+                // Explicit src spanning the full texture — without this,
+                // sampling outside [0,1] UVs wraps and tiles the snapshot
+                // mid grow-animation. The element is given the texture at
+                // scale 1, so its "logical" src is in texture pixels:
+                // divided by the output scale it took in only the top-left
+                // 1/scale of the snapshot, a zoomed crop on any output not
+                // at 1.0.
                 let src_rect = smithay::utils::Rectangle::<f64, Logical>::from_size(
-                    smithay::utils::Size::from((
-                        snap_phys.w as f64 / output_scale,
-                        snap_phys.h as f64 / output_scale,
-                    )),
+                    smithay::utils::Size::from((snap_phys.w as f64, snap_phys.h as f64)),
                 );
                 let tex_elem = smithay::backend::renderer::element::texture::TextureRenderElement::from_static_texture(
                     smithay::backend::renderer::element::Id::new(),
@@ -1306,7 +1367,15 @@ pub fn render_surface(
                 1,
                 Transform::Normal,
                 Some(anim_alpha),
-                None, // full src
+                // The whole snapshot, in its own pixels. Left out, the
+                // source defaults to the *destination* size in texture px:
+                // a crop of the top-left corner that shrinks with the
+                // animation instead of the window scaling down, and on an
+                // output not at 1.0 never the whole window to begin with.
+                Some(smithay::utils::Rectangle::from_size(Size::from((
+                    snap_phys_size.w as f64,
+                    snap_phys_size.h as f64,
+                )))),
                 Some(dst_size),
                 None,
                 Kind::Unspecified,
@@ -1417,7 +1486,7 @@ pub fn render_surface(
     let mut elements: Vec<CustomRenderElements> = Vec::with_capacity(window_elements.len() + 16);
 
     // Cursor: either compositor-drawn xcursor or client surface cursor
-    if let Some(cursor_elem) = state.cursor.render_element(renderer, cursor_pos) {
+    if let Some(cursor_elem) = state.cursor.render_element(renderer, cursor_pos, output_scale) {
         elements.push(CustomRenderElements::Memory(cursor_elem));
     } else if let smithay::input::pointer::CursorImageStatus::Surface(ref surface) =
         state.cursor.status
@@ -2463,8 +2532,17 @@ pub fn render_surface(
     // Keep the per-element render states: they say which surfaces were
     // actually presented on this output (vs. skipped as occluded / absent),
     // which routes frame callbacks + presentation feedback below.
-    let (rendered, frame_is_empty, render_states, cursor_on_plane) = match result {
+    let (rendered, frame_is_empty, render_states, cursor_on_plane, primary_drawn) = match result {
         Ok(mut result) => {
+            // Whether this frame was drawn into the swapchain buffer — the
+            // one GL still has bound, which a screencopy may read back.
+            let primary_drawn = match &result.primary_element {
+                PrimaryPlaneElement::Swapchain(element) => {
+                    let commit = element.damage.current_commit();
+                    surface.primary_commit.replace(commit) != Some(commit)
+                }
+                _ => false,
+            };
             // Smithay leaves GPU/KMS synchronisation to us when the driver
             // can't take an in-fence on the plane (no IN_FENCE_FD, or a
             // non-exportable sync): the swapchain buffer would otherwise be
@@ -2481,6 +2559,7 @@ pub fn render_surface(
                 result.is_empty,
                 states,
                 result.cursor_element.is_some(),
+                primary_drawn,
             )
         }
         Err(err) => {
@@ -2528,7 +2607,12 @@ pub fn render_surface(
                 matching,
                 &elements,
                 crate::screencopy_render::CaptureFrame {
-                    rendered,
+                    // Not `rendered`: a frame that only moved the cursor on
+                    // its plane is non-empty too, but drew nothing — the
+                    // framebuffer GL has bound is then whatever was drawn
+                    // last, the other monitor's as likely as not, and a
+                    // "hide the pointer" capture read that instead.
+                    rendered: primary_drawn,
                     nocapture: &nocapture_indices,
                     pointer_slots,
                     pointer_in_fb,

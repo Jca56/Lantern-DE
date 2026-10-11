@@ -1,6 +1,11 @@
+use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
+use std::rc::Rc;
 use std::time::{Instant, SystemTime};
+
+mod scaled;
+use scaled::{rasterize_to, SvgSource};
 
 use smithay::{
     backend::{
@@ -29,6 +34,8 @@ struct CachedCursor {
     buffer: MemoryRenderBuffer,
     hotspot: (i32, i32),
     size: (i32, i32),
+    /// The artwork, for outputs at another scale (None for bitmap cursors).
+    svg: Option<Rc<SvgSource>>,
     /// mtime of the on-disk source at rasterize time (None = embedded /
     /// no file). Re-checked on lookup so runtime SVG tweaks still land.
     mtime: Option<SystemTime>,
@@ -43,6 +50,8 @@ pub struct CursorState {
     buffer: MemoryRenderBuffer,
     hotspot: (i32, i32),
     size: (i32, i32),
+    /// The current image's artwork — see [`SvgSource`].
+    svg: Option<Rc<SvgSource>>,
     loaded: bool,
     cursor_size: u32,
     theme_name: String,
@@ -68,6 +77,8 @@ pub struct CursorState {
     spin_history: VecDeque<(Point<f64, Logical>, Instant)>,
     spin_scale: f64,
     spin_last_active: Instant,
+    /// When `tick_spin_decay` last ran.
+    spin_decay_tick: Instant,
     pub click_anim: crate::cursor_click::ClickAnimState,
     pub loading_anim: crate::cursor_loading::LoadingAnimState,
 }
@@ -96,6 +107,7 @@ impl CursorState {
             buffer: MemoryRenderBuffer::new(Fourcc::Argb8888, (1, 1), 1, Transform::Normal, None),
             hotspot: (0, 0),
             size: (0, 0),
+            svg: None,
             loaded: false,
             cursor_size,
             theme_name,
@@ -127,6 +139,7 @@ impl CursorState {
             spin_history: VecDeque::with_capacity(32),
             spin_scale: 1.0,
             spin_last_active: Instant::now(),
+            spin_decay_tick: Instant::now(),
             click_anim: crate::cursor_click::ClickAnimState::new(parse_hex_color(
                 &crate::input::read_input_setting("cursor_body_light", "#ffffff"),
             )),
@@ -215,6 +228,7 @@ impl CursorState {
         self.buffer = entry.buffer.clone();
         self.hotspot = entry.hotspot;
         self.size = entry.size;
+        self.svg = entry.svg.clone();
         self.loaded = true;
         true
     }
@@ -227,6 +241,7 @@ impl CursorState {
                 buffer: self.buffer.clone(),
                 hotspot: self.hotspot,
                 size: self.size,
+                svg: self.svg.clone(),
                 mtime,
             },
         );
@@ -465,22 +480,7 @@ impl CursorState {
         let scale = sx.min(sy);
         let w = (tree_size.width() * scale).round() as u32;
         let h = (tree_size.height() * scale).round() as u32;
-
-        let mut pixmap = resvg::tiny_skia::Pixmap::new(w, h)?;
-        let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
-        resvg::render(&tree, transform, &mut pixmap.as_mut());
-
-        // Convert from premultiplied RGBA to straight RGBA (ABGR8888 for smithay)
-        let pixels = pixmap.data();
-        let mut rgba = vec![0u8; (w * h * 4) as usize];
-        for i in 0..(w * h) as usize {
-            let idx = i * 4;
-            // resvg outputs premultiplied RGBA, smithay wants ABGR8888
-            rgba[idx] = pixels[idx + 2]; // B
-            rgba[idx + 1] = pixels[idx + 1]; // G
-            rgba[idx + 2] = pixels[idx]; // R
-            rgba[idx + 3] = pixels[idx + 3]; // A
-        }
+        let (rgba, sx, sy) = rasterize_to(&sanitized, w, h)?;
 
         // Hotspot is authored in the SVG's viewBox coordinate space
         // (e.g. (2, 2) for the arrow tip, (16, 16) for the symmetric
@@ -488,8 +488,8 @@ impl CursorState {
         // so the click point lands on the visible tip regardless of
         // cursor_size or DPI scaling.
         self.hotspot = (
-            (hotspot_viewbox.0 * scale).round() as i32,
-            (hotspot_viewbox.1 * scale).round() as i32,
+            (hotspot_viewbox.0 * sx).round() as i32,
+            (hotspot_viewbox.1 * sy).round() as i32,
         );
         self.size = (w as i32, h as i32);
         self.buffer = MemoryRenderBuffer::from_slice(
@@ -500,6 +500,11 @@ impl CursorState {
             Transform::Normal,
             None,
         );
+        self.svg = Some(Rc::new(SvgSource {
+            data: sanitized,
+            hotspot_viewbox,
+            scaled: RefCell::new(HashMap::new()),
+        }));
         self.loaded = true;
         Some(())
     }
@@ -578,6 +583,7 @@ impl CursorState {
             Transform::Normal,
             None,
         );
+        self.svg = None;
         self.loaded = true;
         self.loaded_icon_key = Some(icon_key);
         self.cache_store(cache_key, None);
@@ -623,6 +629,7 @@ impl CursorState {
             Transform::Normal,
             None,
         );
+        self.svg = None;
         self.loaded = true;
     }
 
@@ -684,12 +691,22 @@ impl CursorState {
     /// Decay the spin scale back toward 1.0 when the user stops spinning.
     /// Call once per render frame. Returns true if a redraw is needed.
     pub fn tick_spin_decay(&mut self) -> bool {
+        // By the clock, not by the call: this runs once per rendered frame
+        // of every output, so a fixed step per call shrank the cursor six
+        // times as fast on a 240 Hz + 120 Hz pair as on one 60 Hz monitor.
+        const DECAY_PER_SEC: f64 = 7.2; // 0.12 a frame at 60 Hz
+        let now = Instant::now();
+        let dt = now
+            .duration_since(self.spin_decay_tick)
+            .as_secs_f64()
+            .min(0.1);
+        self.spin_decay_tick = now;
         if self.spin_scale <= 1.0 {
             return false;
         }
         let elapsed = self.spin_last_active.elapsed().as_secs_f64();
         if elapsed > 0.3 {
-            self.spin_scale = (self.spin_scale - 0.12).max(1.0);
+            self.spin_scale = (self.spin_scale - DECAY_PER_SEC * dt).max(1.0);
             return true;
         }
         false
@@ -697,10 +714,19 @@ impl CursorState {
 
     // ── Rendering ────────────────────────────────────────────────────
 
+    /// How far the cursor image can reach from the pointer, in logical px:
+    /// a move this close to another output has to repaint it too.
+    pub fn reach(&self) -> f64 {
+        (self.cursor_size.max(32) as f64 * self.spin_scale).max(96.0)
+    }
+
+    /// The cursor as a render element for an output at `output_scale`, with
+    /// the pointer at `position` on it (physical px).
     pub fn render_element(
         &self,
         renderer: &mut GlesRenderer,
         position: Point<f64, Physical>,
+        output_scale: f64,
     ) -> Option<MemoryRenderBufferRenderElement<GlesRenderer>> {
         if !self.loaded {
             return None;
@@ -715,9 +741,19 @@ impl CursorState {
         }
 
         let scale = self.spin_scale;
+        if scale <= 1.001 && (output_scale - 1.0).abs() > 0.001 {
+            if let Some(elem) = self.render_scaled(renderer, position, output_scale) {
+                return Some(elem);
+            }
+        }
+
+        // The image is in logical px and `position` in physical: the
+        // hotspot is as many physical px as the output scale makes it.
+        // (Left out, the drawn tip sat 0.3 × hotspot down-right of the real
+        // pointer on the 1.3 monitor — 5px for the resize cursors.)
         let cursor_pos = (
-            position.x - self.hotspot.0 as f64 * scale,
-            position.y - self.hotspot.1 as f64 * scale,
+            position.x - self.hotspot.0 as f64 * scale * output_scale,
+            position.y - self.hotspot.1 as f64 * scale * output_scale,
         );
 
         let dst = if scale > 1.001 {

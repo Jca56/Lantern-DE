@@ -62,10 +62,21 @@ impl Lantern {
         let output = self.output_at_point(pos)?;
         let geo = self.workspaces.output_geometry(&output)?;
 
-        let near_left = pos.x - geo.loc.x as f64 <= edge_threshold;
-        let near_right = (geo.loc.x + geo.size.w) as f64 - pos.x <= edge_threshold;
-        let near_top = pos.y - geo.loc.y as f64 <= edge_threshold;
-        let near_bottom = (geo.loc.y + geo.size.h) as f64 - pos.y <= edge_threshold;
+        // Only an edge of the desktop is a snap edge. Where another monitor
+        // carries on past it, a window dropped just across the seam is on
+        // its way over, not asking to be tiled against it.
+        let open = |dx: f64, dy: f64| {
+            self.output_containing(Point::from((pos.x + dx, pos.y + dy)))
+                .is_none()
+        };
+        let left = pos.x - geo.loc.x as f64;
+        let right = (geo.loc.x + geo.size.w) as f64 - pos.x;
+        let top = pos.y - geo.loc.y as f64;
+        let bottom = (geo.loc.y + geo.size.h) as f64 - pos.y;
+        let near_left = left <= edge_threshold && open(-left - 1.0, 0.0);
+        let near_right = right <= edge_threshold && open(right, 0.0);
+        let near_top = top <= edge_threshold && open(0.0, -top - 1.0);
+        let near_bottom = bottom <= edge_threshold && open(0.0, bottom);
 
         match (near_left, near_right, near_top, near_bottom) {
             (true, _, true, _) => Some(SnapZone::TopLeft),
@@ -230,7 +241,12 @@ impl Lantern {
 
         let near_left = pos.x - geo.loc.x as f64 <= EDGE_THRESHOLD;
         let near_right = (geo.loc.x + geo.size.w) as f64 - pos.x <= EDGE_THRESHOLD;
-        let near_top = pos.y - geo.loc.y as f64 <= EDGE_THRESHOLD;
+        let top = pos.y - geo.loc.y as f64;
+        // The top of the desktop, not a seam with a monitor above.
+        let near_top = top <= EDGE_THRESHOLD
+            && self
+                .output_containing(Point::from((pos.x, pos.y - top - 1.0)))
+                .is_none();
 
         if near_top && !near_left && !near_right {
             Some(())

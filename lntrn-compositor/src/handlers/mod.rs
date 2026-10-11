@@ -1,5 +1,6 @@
 mod compositor;
 pub mod foreign_toplevel;
+mod fractional;
 mod layer_shell;
 pub mod output_management;
 pub mod screencopy;
@@ -10,13 +11,13 @@ pub mod xwayland;
 
 use crate::Lantern;
 
+pub use fractional::refresh_fractional_scales;
+
 use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::Resource;
-use smithay::wayland::compositor::with_states;
 use smithay::wayland::dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier};
-use smithay::wayland::fractional_scale::{self, FractionalScaleHandler};
 use smithay::wayland::idle_inhibit::IdleInhibitHandler;
 use smithay::wayland::output::OutputHandler;
 use smithay::wayland::pointer_constraints::{PointerConstraintsHandler, with_pointer_constraint};
@@ -43,16 +44,12 @@ use smithay::wayland::xdg_activation::{
 use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode;
 use smithay::{
     delegate_cursor_shape, delegate_data_control, delegate_data_device, delegate_dmabuf,
-    delegate_ext_data_control, delegate_fractional_scale, delegate_idle_inhibit,
+    delegate_ext_data_control, delegate_idle_inhibit,
     delegate_layer_shell, delegate_output, delegate_pointer_constraints,
     delegate_pointer_gestures, delegate_presentation, delegate_relative_pointer, delegate_seat,
     delegate_text_input_manager, delegate_viewporter, delegate_xdg_activation,
     delegate_xdg_decoration,
 };
-
-fn lantern_output_scale() -> f64 {
-    crate::output_scale()
-}
 
 impl SeatHandler for Lantern {
     type KeyboardFocus = crate::keyboard_focus::KeyboardFocusTarget;
@@ -150,65 +147,6 @@ delegate_ext_data_control!(Lantern);
 impl OutputHandler for Lantern {}
 delegate_output!(Lantern);
 
-impl FractionalScaleHandler for Lantern {
-    fn new_fractional_scale(&mut self, surface: WlSurface) {
-        let scale = self
-            .workspaces
-            .outputs_iter()
-            .next()
-            .map(|o| o.current_scale().fractional_scale())
-            .unwrap_or(lantern_output_scale());
-        with_states(&surface, |states| {
-            fractional_scale::with_fractional_scale(states, |fractional_scale| {
-                fractional_scale.set_preferred_scale(scale);
-            });
-        });
-    }
-}
-
-delegate_fractional_scale!(Lantern);
-
-/// Push the current per-output fractional scale to every mapped surface.
-/// Smithay only sends preferred_scale when the client creates its
-/// wp_fractional_scale object, so live scale changes (Settings slider,
-/// Gaming Mode) need this sweep. `set_preferred_scale` dedupes and no-ops
-/// for surfaces whose client never bound the protocol, so it's safe to
-/// call on everything.
-pub fn refresh_fractional_scales(state: &Lantern) {
-    use crate::window_ext::WindowExt;
-    let fallback = state
-        .workspaces
-        .outputs_iter()
-        .next()
-        .map(|o| o.current_scale().fractional_scale())
-        .unwrap_or(lantern_output_scale());
-    // The global Space holds every mapped window (all workspaces, active or
-    // not, plus scratchpad and override-redirect); minimized windows live
-    // nowhere, so sweep them separately.
-    let minimized = state.minimized_windows.iter().map(|e| &e.window);
-    for window in state.space.elements().chain(minimized) {
-        let Some(surface) = window.get_wl_surface() else {
-            continue;
-        };
-        let scale = state
-            .output_for_window(window)
-            .map(|o| o.current_scale().fractional_scale())
-            .unwrap_or(fallback);
-        with_states(&surface, |states| {
-            fractional_scale::with_fractional_scale(states, |f| f.set_preferred_scale(scale));
-        });
-    }
-    for ls in &state.layer_surfaces {
-        let scale = state
-            .layer_surface_outputs
-            .get(ls.wl_surface())
-            .map(|o| o.current_scale().fractional_scale())
-            .unwrap_or(fallback);
-        with_states(ls.wl_surface(), |states| {
-            fractional_scale::with_fractional_scale(states, |f| f.set_preferred_scale(scale));
-        });
-    }
-}
 delegate_viewporter!(Lantern);
 
 impl TabletSeatHandler for Lantern {}

@@ -18,17 +18,23 @@ use std::path::{Path, PathBuf};
 use smithay::backend::{allocator::Fourcc, renderer::element::memory::MemoryRenderBuffer};
 
 /// app_id → resolved icon buffer (None = no icon found, cached as a
-/// negative result so we don't re-scan the disk every frame).
+/// negative result so we don't re-scan the disk every frame), per size.
+///
+/// Per size because the switcher is drawn on every output and each wants
+/// its icons at its own scale (95px at 1.3, 73px at 1.0). One map for "the"
+/// size was emptied whenever the size changed — so with two monitors each
+/// output's frame threw away the other's icons, and every frame re-read the
+/// .desktop files and re-rasterized them on the render thread.
 pub struct SwitcherIconCache {
-    map: HashMap<String, Option<MemoryRenderBuffer>>,
-    /// Phys-pixel size every icon is rasterized at.
+    maps: HashMap<u32, HashMap<String, Option<MemoryRenderBuffer>>>,
+    /// Phys-pixel size icons are currently looked up (and rasterized) at.
     size: u32,
 }
 
 impl SwitcherIconCache {
     pub fn new(size: u32) -> Self {
         Self {
-            map: HashMap::new(),
+            maps: HashMap::new(),
             size,
         }
     }
@@ -36,7 +42,8 @@ impl SwitcherIconCache {
     /// Look up (loading + caching on first miss) the icon buffer for an
     /// app_id. Returns `None` if no icon could be resolved.
     pub fn get_or_load(&mut self, app_id: &str) -> Option<&MemoryRenderBuffer> {
-        if !self.map.contains_key(app_id) {
+        let map = self.maps.entry(self.size).or_default();
+        if !map.contains_key(app_id) {
             let buf = resolve_icon_name(app_id)
                 .and_then(|name| resolve_path(&name))
                 .and_then(|path| rasterize(&path, self.size))
@@ -50,17 +57,14 @@ impl SwitcherIconCache {
                         None,
                     )
                 });
-            self.map.insert(app_id.to_string(), buf);
+            map.insert(app_id.to_string(), buf);
         }
-        self.map.get(app_id).and_then(|o| o.as_ref())
+        map.get(app_id).and_then(|o| o.as_ref())
     }
 
-    /// Re-rasterize at a new size (called when output scale changes).
+    /// Switch to the icons of another size (the output being drawn).
     pub fn resize(&mut self, new_size: u32) {
-        if new_size != self.size {
-            self.map.clear();
-            self.size = new_size;
-        }
+        self.size = new_size;
     }
 }
 

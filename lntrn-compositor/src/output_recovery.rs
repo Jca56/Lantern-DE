@@ -241,7 +241,7 @@ pub(crate) fn retire_parked(state: &mut Lantern, onto: &str) {
                 continue;
             }
             info!(from = %name, to = %onto, "parked output replaced by another monitor");
-            state.migrate_windows_off_output(&name, onto);
+            state.evacuate_output(&name, onto);
         }
         crate::udev_device::teardown_output(state, node, crtc);
     }

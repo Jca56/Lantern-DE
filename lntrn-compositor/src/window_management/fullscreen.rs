@@ -179,8 +179,11 @@ impl Lantern {
             let entry = &self.minimized_windows[idx];
             (entry.window.clone(), entry.location)
         };
+        // On the output it was minimized on, not wherever its remembered
+        // corner falls now.
         let Some(output_geo) = self
-            .output_at_point(Point::from((location.x as f64, location.y as f64)))
+            .held_output(surface)
+            .or_else(|| self.output_at_point(Point::from((location.x as f64, location.y as f64))))
             .or_else(|| self.workspaces.outputs_iter().next().cloned())
             .and_then(|o| self.workspaces.output_geometry(&o))
         else {

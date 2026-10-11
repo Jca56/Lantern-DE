@@ -120,9 +120,21 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
                 // wider drag threshold and the eviction-aware snap so an
                 // occupied zone bumps its tenant to the largest free zone.
                 let pointer_pos = handle.current_location();
-                if let Some(zone) = data.detect_snap_zone_drag(pointer_pos) {
+                let zone = data.detect_snap_zone_drag(pointer_pos);
+                let top_edge = zone.is_none() && data.detect_top_edge(pointer_pos).is_some();
+                // The edge is an edge of the output the POINTER is on, so
+                // that is where the window is being put — wherever most of
+                // it happens to hang. Grabbed by the right end of its title
+                // bar and dropped at the 1080p monitor's top edge, it used
+                // to maximize on the 4K one its corner was still over.
+                if zone.is_some() || top_edge {
+                    if let Some(output) = data.output_containing(pointer_pos) {
+                        data.hand_window_to(&self.window, &output.name());
+                    }
+                }
+                if let Some(zone) = zone {
                     data.apply_floating_snap(&surface, zone);
-                } else if data.detect_top_edge(pointer_pos).is_some() {
+                } else if top_edge {
                     // Top edge = maximize. Restore to the rect the drag
                     // STARTED from — the mapped location right now is the
                     // mid-drag spot under the cursor (title bar usually

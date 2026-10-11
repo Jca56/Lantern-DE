@@ -6,7 +6,7 @@
 //! plus the per-card chrome helpers to draw shadows, the gold glow ring,
 //! rounded live previews, app-icon badges, and the close button.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use smithay::{
@@ -89,8 +89,11 @@ pub struct AltTabSwitcher {
     last_hover_pos: Option<Point<f64, Logical>>,
     /// When true, opened via hot corner — Alt-release won't dismiss.
     hot_corner_mode: bool,
-    // Full-screen backdrop dim (single size, reused).
-    overlay_buf: SolidColorBuffer,
+    // Full-screen backdrop dim, one buffer per output size. The overlay is
+    // drawn on every output: one shared buffer was resized back and forth
+    // between them each frame, and every resize is a new commit — full-
+    // output damage on both monitors for as long as the switcher was up.
+    overlay_bufs: HashMap<(i32, i32), SolidColorBuffer>,
     // Stable Ids for the per-card solid quads (built via
     // SolidColorRenderElement::new with explicit geometry so each card
     // can be a different size — a shared SolidColorBuffer can't do that).
@@ -115,7 +118,7 @@ impl AltTabSwitcher {
             minimized_surfaces: HashSet::new(),
             last_hover_pos: None,
             hot_corner_mode: false,
-            overlay_buf: SolidColorBuffer::new((1, 1), OVERLAY_COLOR),
+            overlay_bufs: HashMap::new(),
             dim_id: Id::new(),
             close_id: Id::new(),
         }
@@ -552,11 +555,10 @@ impl AltTabSwitcher {
     }
 
     /// The full-screen backdrop dim element. Drawn behind everything else.
-    /// `_output_size` is unused (the buffer is sized in `update_sizes`) but
-    /// kept for call-site symmetry with the other element builders.
+    /// The buffer for `output_size` is made in `update_sizes`.
     pub fn backdrop_element(
         &self,
-        _output_size: Size<i32, Logical>,
+        output_size: Size<i32, Logical>,
         scale: f64,
     ) -> Option<SolidColorRenderElement> {
         if !self.is_visible() {
@@ -564,7 +566,7 @@ impl AltTabSwitcher {
         }
         let kind = smithay::backend::renderer::element::Kind::Unspecified;
         Some(SolidColorRenderElement::from_buffer(
-            &self.overlay_buf,
+            self.overlay_bufs.get(&(output_size.w, output_size.h))?,
             Point::<i32, Physical>::from((0, 0)),
             scale,
             self.fade_alpha(),
@@ -635,12 +637,15 @@ impl AltTabSwitcher {
         self.fade_alpha()
     }
 
-    /// Resize the reused full-screen backdrop buffer for the current frame.
+    /// Make sure there is a backdrop buffer for an output of this size.
     pub fn update_sizes(&mut self, output_size: Size<i32, Logical>) {
         if !self.is_visible() {
             return;
         }
-        self.overlay_buf.resize((output_size.w, output_size.h));
+        let size = (output_size.w, output_size.h);
+        self.overlay_bufs
+            .entry(size)
+            .or_insert_with(|| SolidColorBuffer::new(size, OVERLAY_COLOR));
     }
 }
 

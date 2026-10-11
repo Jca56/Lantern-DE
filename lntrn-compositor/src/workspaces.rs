@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use smithay::{
-    desktop::{Space, Window},
+    desktop::{space::SpaceElement, Space, Window},
     output::Output,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Point, Rectangle, Size},
@@ -41,7 +41,7 @@ fn x11_root_offset(workspaces: &Lantern) -> Point<i32, Logical> {
     Point::from((-min_x, -min_y))
 }
 
-fn sync_x11_position(workspaces: &Lantern, window: &Window, location: Point<i32, Logical>) {
+pub(crate) fn sync_x11_position(workspaces: &Lantern, window: &Window, location: Point<i32, Logical>) {
     if let Some(x11) = window.x11_surface() {
         if x11.is_override_redirect() {
             // OR windows position themselves; configure() would error.
@@ -744,7 +744,7 @@ impl Lantern {
                 }
             }
         }
-        self.space.outputs().next().map(|o| o.name())
+        self.workspaces.outputs_iter().next().map(|o| o.name())
     }
 
     /// Switch the focused output to a workspace, updating focus from MRU.
@@ -800,9 +800,6 @@ impl Lantern {
         if target_id == 0 {
             return;
         }
-        let Some(output_name) = self.focused_output_name() else {
-            return;
-        };
         let Some(focused) = self.focused_surface.clone() else {
             return;
         };
@@ -810,7 +807,13 @@ impl Lantern {
         let Some((src_out, src_id)) = self.workspaces.window_workspace(&focused) else {
             return;
         };
-        if src_out == output_name && src_id == target_id {
+        // Its own output's workspaces, as the doc says — not the pointer's.
+        // With the pointer resting on the other monitor the window was
+        // handed to *that* monitor's workspace while keeping coordinates on
+        // this one: gone from here, and showing up over here whenever the
+        // other monitor switched to that workspace.
+        let output_name = src_out.clone();
+        if src_id == target_id {
             return;
         }
 
@@ -1023,6 +1026,11 @@ impl Lantern {
                         continue;
                     };
                     let pre_src = self.workspaces.window_workspace(&focused);
+                    // A workspace of the output the window is on: its
+                    // coordinates mean nothing on another one.
+                    if pre_src.as_ref().is_some_and(|(src_out, _)| *src_out != output) {
+                        continue;
+                    }
                     let window = self.find_window_anywhere(&focused);
                     let pre_loc = window
                         .as_ref()
@@ -1142,59 +1150,6 @@ impl Lantern {
         None
     }
 
-    /// Move every window off `from` onto the active workspace of `to`,
-    /// clamped fully inside `to`'s geometry so nothing lands off-screen.
-    /// Used when an output is disabled so its windows aren't stranded on a
-    /// monitor that no longer has a desktop. No-op if `to` has no geometry.
-    pub fn migrate_windows_off_output(&mut self, from: &str, to: &str) {
-        let Some(to_output) = self
-            .workspaces
-            .outputs_iter()
-            .find(|o| o.name() == to)
-            .cloned()
-        else {
-            return;
-        };
-        let Some(to_geo) = self.workspaces.output_geometry(&to_output) else {
-            return;
-        };
-        let target_id = self.workspaces.active_id(to);
-
-        for (surface, src_id) in self.workspaces.all_surfaces_on_output(from) {
-            let window = self.find_window_anywhere(&surface);
-            let old_loc = window
-                .as_ref()
-                .and_then(|w| self.window_location(w))
-                .unwrap_or(to_geo.loc);
-            let win_size = window
-                .as_ref()
-                .map(|w| w.geometry().size)
-                .unwrap_or_default();
-
-            if !self.workspaces.move_window(&surface, to, target_id) {
-                continue;
-            }
-            let Some(window) = window else { continue };
-
-            if let Some(src_space) = self.workspace_space_mut(from, src_id) {
-                src_space.unmap_elem(&window);
-            }
-
-            // Clamp the window's old position into the target output so it's
-            // fully visible there rather than keeping coordinates that fell on
-            // the now-gone monitor.
-            let max_x = (to_geo.loc.x + to_geo.size.w - win_size.w).max(to_geo.loc.x);
-            let max_y = (to_geo.loc.y + to_geo.size.h - win_size.h).max(to_geo.loc.y);
-            let new_loc = Point::from((
-                old_loc.x.clamp(to_geo.loc.x, max_x),
-                old_loc.y.clamp(to_geo.loc.y, max_y),
-            ));
-            if let Some(tspace) = self.workspace_space_mut(to, target_id) {
-                tspace.map_element(window, new_loc, true);
-            }
-        }
-    }
-
     /// Find a mapped Window on the ACTIVE workspace of any output.
     pub fn find_window_visible(&self, surface: &WlSurface) -> Option<Window> {
         for (_out, ow) in self.workspaces.iter() {
@@ -1222,16 +1177,35 @@ impl Lantern {
         self.workspaces.element_bbox(window)
     }
 
-    /// Hit-test a global point against visible (active-workspace) windows.
-    /// Picks the output containing the point, then queries that output's
-    /// active workspace's Space.
+    /// Hit-test a global point against visible (active-workspace) windows,
+    /// topmost first.
+    ///
+    /// Walks the global mirror — the stacking order `surface_under` (pointer
+    /// focus) goes by, holding every window whichever output owns it. This
+    /// used to ask only the Space of the output under the pointer, but a
+    /// window is drawn on every output it reaches onto: the part hanging
+    /// over the seam was visible, took pointer focus, and yet "no window"
+    /// was found there — so a click on it fell through to the outer resize
+    /// zone and started a resize instead.
     pub fn element_under_global(
         &self,
         pos: Point<f64, Logical>,
     ) -> Option<(Window, Point<i32, Logical>)> {
-        let output = self.output_at_point(pos)?;
-        let space = self.active_space_on(&output.name())?;
-        space.element_under(pos).map(|(w, l)| (w.clone(), l))
+        self.space.elements().rev().find_map(|window| {
+            // Workspace windows only, and only those showing: override-
+            // redirect popups and the scratchpad are in no workspace.
+            let surface = WindowExt::get_wl_surface(window)?;
+            let (output, ws) = self.workspaces.window_workspace_ref(&surface)?;
+            if ws != self.workspaces.active_id(output) {
+                return None;
+            }
+            let render_loc = self.space.element_location(window)? - window.geometry().loc;
+            let mut bbox = window.bbox();
+            bbox.loc += render_loc;
+            (bbox.to_f64().contains(pos)
+                && window.is_in_input_region(&(pos - render_loc.to_f64())))
+            .then(|| (window.clone(), render_loc))
+        })
     }
 
     /// Collect every Window currently visible (on the active workspace of
@@ -1327,6 +1301,8 @@ impl Lantern {
         }
         self.space.map_element(window.clone(), location, activate);
         sync_x11_position(self, &window, location);
+        // It is on `output_name` now: render for that monitor's scale.
+        self.send_window_scale(&window);
     }
 
     /// Re-map a window that already has a workspace assignment. Finds its
@@ -1348,6 +1324,38 @@ impl Lantern {
         self.remap_tracked_window_sized(window, location, size, activate);
     }
 
+    /// Make `output_name`'s active workspace the owner of `window`, leaving
+    /// it where it is on screen. Returns false if it already belongs to that
+    /// output or is in no workspace.
+    pub fn hand_window_to(&mut self, window: &Window, output_name: &str) -> bool {
+        let Some(surface) = WindowExt::get_wl_surface(window) else {
+            return false;
+        };
+        let Some((cur_output, cur_ws)) = self.workspaces.window_workspace(&surface) else {
+            return false;
+        };
+        if cur_output == output_name || self.workspaces.output_by_name(output_name).is_none() {
+            return false;
+        }
+        // Pull the window out of its current workspace's Space and
+        // bookkeeping, then drop it into the new output's active workspace.
+        let location = self.workspaces.element_location(window);
+        if let Some(old_space) = self.workspace_space_mut(&cur_output, cur_ws) {
+            old_space.unmap_elem(window);
+        }
+        self.workspaces.detach_window(&surface, &cur_output, cur_ws);
+        let new_ws = self.workspaces.active_id(output_name);
+        self.workspaces.attach_window(&surface, output_name, new_ws);
+        if let (Some(location), Some(space)) =
+            (location, self.workspace_space_mut(output_name, new_ws))
+        {
+            space.map_element(window.clone(), location, false);
+        }
+        // The other monitor may have another scale.
+        self.send_window_scale(window);
+        true
+    }
+
     /// `remap_tracked_window` with an explicit size for the output-handoff
     /// center. Use when the live `window.geometry()` is stale — e.g. a
     /// state-anim remap to the destination rect happens before the client
@@ -1361,43 +1369,41 @@ impl Lantern {
         activate: bool,
     ) {
         let surface = WindowExt::get_wl_surface(&window);
-        let mut ws_loc = surface
-            .as_ref()
-            .and_then(|s| self.workspaces.window_workspace(s));
+        let before = self.workspaces.element_bbox(&window);
 
         // Output handoff: which output does the window now sit on? Use the
         // window's center so a halfway-across drag commits at the seam, not
         // when the very top-left corner crosses.
-        if let (Some(s), Some((cur_output, cur_ws))) = (surface.as_ref(), ws_loc.clone()) {
+        if let Some((cur_output, _)) = surface
+            .as_ref()
+            .and_then(|s| self.workspaces.window_workspace(s))
+        {
             let center = Point::<f64, Logical>::from((
                 (location.x + size.w / 2) as f64,
                 (location.y + size.h / 2) as f64,
             ));
-            let target = self.output_at_point(center).map(|o| o.name());
-
-            if let Some(new_output) = target {
-                if new_output != cur_output {
-                    // Pull the window out of its current workspace's Space
-                    // and bookkeeping, then drop it into the new output's
-                    // active workspace.
-                    if let Some(old_space) = self.workspace_space_mut(&cur_output, cur_ws) {
-                        old_space.unmap_elem(&window);
-                    }
-                    self.workspaces.detach_window(s, &cur_output, cur_ws);
-
-                    self.workspaces.ensure_output(&new_output);
-                    let new_ws_id = self
-                        .workspaces
-                        .output_workspaces(&new_output)
-                        .map(|ow| ow.active)
-                        .unwrap_or(1);
-                    self.workspaces.attach_window(s, &new_output, new_ws_id);
-                    ws_loc = Some((new_output, new_ws_id));
+            // Larger than its own output, a window's center can be on the
+            // neighbour without anyone having moved it there (a game
+            // restoring a 2560×1440 window on the 1080p monitor). While its
+            // corner is still on its own output it stays.
+            let oversized_at_home = self
+                .workspaces
+                .output_by_name(&cur_output)
+                .and_then(|o| self.workspaces.output_geometry(o))
+                .is_some_and(|g| {
+                    (size.w > g.size.w || size.h > g.size.h) && g.contains(location)
+                });
+            if !oversized_at_home {
+                if let Some(new_output) = self.output_containing(center).map(|o| o.name()) {
+                    self.hand_window_to(&window, &new_output);
                 }
             }
         }
 
-        if let Some((output_name, ws_id)) = ws_loc {
+        if let Some((output_name, ws_id)) = surface
+            .as_ref()
+            .and_then(|s| self.workspaces.window_workspace(s))
+        {
             if let Some(s) = surface.as_ref() {
                 if let Some(ow) = self.workspaces.output_workspaces_mut(&output_name) {
                     if let Some(w) = ow.workspaces.get_mut(&ws_id) {
@@ -1411,6 +1417,25 @@ impl Lantern {
         }
         self.space.map_element(window.clone(), location, activate);
         sync_x11_position(self, &window, location);
+
+        // Repaint every output the window was on or is on now. A window is
+        // drawn on each output it reaches onto, but moving one (a drag) only
+        // ever repainted the output under the cursor: the part hanging over
+        // the seam stayed frozen on the other monitor.
+        let after = self.workspaces.element_bbox(&window);
+        let touched: Vec<Output> = self
+            .workspaces
+            .outputs_iter()
+            .filter(|o| {
+                self.workspaces.output_geometry(o).is_some_and(|geo| {
+                    before.is_some_and(|r| geo.overlaps(r)) || after.is_some_and(|r| geo.overlaps(r))
+                })
+            })
+            .cloned()
+            .collect();
+        for output in &touched {
+            crate::udev::schedule_render_output(self, output);
+        }
     }
 
     /// Unmap a window from its owning workspace's Space AND the global Space.

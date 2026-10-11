@@ -3,6 +3,7 @@
 
 use smithay::{
     desktop::Window,
+    output::Output,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Rectangle},
 };
@@ -41,6 +42,8 @@ impl Lantern {
         self.foreign_toplevel_state.set_states(surface, states);
     }
 
+    /// The work area of the output a window belongs to (see
+    /// `output_for_window`).
     pub(crate) fn window_output_geometry(
         &self,
         window: &Window,
@@ -48,68 +51,34 @@ impl Lantern {
         let output = self
             .output_for_window(window)
             .or_else(|| self.workspaces.outputs_iter().next().cloned())?;
-        let geo = self.workspaces.output_geometry(&output)?;
-
-        let mut result = Rectangle::new(geo.loc.into(), geo.size);
-
-        // Subtract exclusive zones only from layer surfaces on this output
-        let (top_excl, bottom_excl, left_excl, right_excl) =
-            self.exclusive_zone_offsets_for_output(&output);
-        result.loc.x += left_excl;
-        result.loc.y += top_excl;
-        result.size.w -= left_excl + right_excl;
-        result.size.h -= top_excl + bottom_excl;
-        Some(result)
+        self.output_work_area(&output)
     }
 
-    /// Check if exclusive zone offsets changed and reconfigure maximized/snapped windows.
+    /// An output's geometry less the exclusive zones of the layer surfaces
+    /// on it.
+    pub(crate) fn output_work_area(&self, output: &Output) -> Option<Rectangle<i32, Logical>> {
+        let geo = self.workspaces.output_geometry(output)?;
+        let (top_excl, bottom_excl, left_excl, right_excl) =
+            self.exclusive_zone_offsets_for_output(output);
+        Some(Rectangle::new(
+            (geo.loc.x + left_excl, geo.loc.y + top_excl).into(),
+            (
+                geo.size.w - left_excl - right_excl,
+                geo.size.h - top_excl - bottom_excl,
+            )
+                .into(),
+        ))
+    }
+
+    /// Re-fit maximized and solo-tiled windows when an output's exclusive
+    /// zones changed. Compared per output: the insets summed over all of
+    /// them stay the same when a panel moves from one monitor to the other,
+    /// and that is exactly when both monitors' windows need re-fitting.
     pub fn check_exclusive_zone_change(&mut self) {
-        let offsets = self.exclusive_zone_offsets();
-        if offsets == self.last_exclusive_offsets {
+        if !self.remember_insets() {
             return;
         }
-        self.last_exclusive_offsets = offsets;
-
-        // Reconfigure all maximized windows with new geometry
-        let maximized_surfaces: Vec<_> = self
-            .maximized_windows
-            .iter()
-            .map(|e| e.surface.clone())
-            .collect();
-        for surface in &maximized_surfaces {
-            if let Some(window) = self.find_mapped_window(surface) {
-                if let Some(geo) = self.window_output_geometry(&window) {
-                    // The renderer draws a maximized window into the stored
-                    // target, not its live buffer: keep it in step or the
-                    // client's new, smaller buffer gets stretched into the
-                    // old full-output rect under the panel.
-                    if let Some(e) = self.maximized_windows.iter_mut().find(|e| e.surface == *surface) {
-                        e.target = geo;
-                    }
-                    window.configure_rect(geo);
-                    self.remap_tracked_window(window, geo.loc, false);
-                }
-            }
-        }
-
-        // Reconfigure snapped windows too
-        let snapped: Vec<_> = self
-            .snapped_windows
-            .iter()
-            .map(|e| (e.surface.clone(), e.zone))
-            .collect();
-        for (surface, zone) in &snapped {
-            if let Some(target) = self.snap_zone_geometry(*zone) {
-                if let Some(window) = self.find_mapped_window(&surface) {
-                    if let Some(e) = self.snapped_windows.iter_mut().find(|e| e.surface == *surface) {
-                        e.target = target;
-                    }
-                    window.configure_rect(target);
-                    self.remap_tracked_window(window, target.loc, false);
-                }
-            }
-        }
-
+        self.reflow_held_windows();
         self.schedule_render();
     }
 

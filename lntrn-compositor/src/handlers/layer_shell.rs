@@ -39,7 +39,13 @@ impl WlrLayerShellHandler for Lantern {
         //   3. Focused output (pointer → focused window → first). Used by
         //      contextual surfaces like notifications.
         //   4. First enumerated output (last-resort fallback).
-        let prefers_primary = namespace == "lntrn-command-center";
+        // The desktop and the notification daemon keep one surface for the
+        // whole session, so "where the pointer is" would only mean "where it
+        // happened to be when they started".
+        let prefers_primary = matches!(
+            namespace.as_str(),
+            "lntrn-command-center" | "lntrn-desktop" | "lntrn-notifyd"
+        );
         let output = wl_output
             .and_then(|wl| Output::from_resource(&wl))
             .or_else(|| {

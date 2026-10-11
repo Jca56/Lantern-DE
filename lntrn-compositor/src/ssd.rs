@@ -135,7 +135,7 @@ pub struct SsdState {
     #[allow(dead_code)]
     close_hover_buf: SolidColorBuffer,
     btn_hover_buf: SolidColorBuffer,
-    decor_cache: Option<(DecorKey, Vec<SolidColorRenderElement>, Vec<PixelShaderElement>)>,
+    decor_cache: Vec<(DecorKey, Vec<SolidColorRenderElement>, Vec<PixelShaderElement>)>,
 }
 
 impl SsdState {
@@ -147,7 +147,7 @@ impl SsdState {
             hovered_button: None,
             close_hover_buf: SolidColorBuffer::new((1, 1), close_hover),
             btn_hover_buf: SolidColorBuffer::new((1, 1), btn_hover),
-            decor_cache: None,
+            decor_cache: Vec::new(),
         }
     }
 }
@@ -269,10 +269,8 @@ pub fn render_decoration(
         bar_h,
         shaders: (icon_shader.is_some(), header_shader.is_some()),
     };
-    if let Some((cached_key, solids, shaders)) = &state.decor_cache {
-        if *cached_key == key {
-            return (solids.clone(), shaders.clone());
-        }
+    if let Some((_, solids, shaders)) = state.decor_cache.iter().find(|(k, _, _)| *k == key) {
+        return (solids.clone(), shaders.clone());
     }
 
     let mut solids = Vec::with_capacity(2);
@@ -403,7 +401,15 @@ pub fn render_decoration(
         ));
     }
 
-    state.decor_cache = Some((key, solids.clone(), shaders.clone()));
+    // One entry an output the window can show on at once: hanging over the
+    // seam it is drawn by both, at two positions and (on mixed-scale
+    // monitors) two scales, and a single slot missed on every other frame —
+    // fresh element ids each time, so the title bar was damaged every frame.
+    const DECOR_CACHE_SLOTS: usize = 3;
+    if state.decor_cache.len() >= DECOR_CACHE_SLOTS {
+        state.decor_cache.remove(0);
+    }
+    state.decor_cache.push((key, solids.clone(), shaders.clone()));
     (solids, shaders)
 }
 

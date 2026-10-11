@@ -22,7 +22,7 @@ use smithay::{
             gles::GlesRenderer,
         },
     },
-    utils::{Logical, Physical, Point, Transform},
+    utils::{Logical, Physical, Point, Rectangle, Size, Transform},
 };
 
 const RING_COUNT: usize = 3;
@@ -190,7 +190,12 @@ impl ClickAnimState {
                     .buffers
                     .entry(diameter_phys)
                     .or_insert_with(|| build_ring_buffer(diameter_phys, color, RING_STROKE_PX));
-                let half_phys = diameter_phys as f64 * 0.5;
+                // The element's size is logical: left to default it is the
+                // buffer's pixel count, which the output scale then multiplies
+                // a second time (rings 1.3× too big and off-centre on the
+                // 1.3 monitor). Say how big the whole buffer is to be shown.
+                let logical = (diameter_phys as f64 / output_scale).round().max(1.0);
+                let half_phys = logical * output_scale * 0.5;
                 let loc: Point<f64, Physical> =
                     Point::from((phys_origin.0 - half_phys, phys_origin.1 - half_phys));
                 if let Ok(elem) = MemoryRenderBufferRenderElement::from_buffer(
@@ -198,8 +203,11 @@ impl ClickAnimState {
                     loc,
                     buffer,
                     Some(alpha),
-                    None,
-                    None,
+                    Some(Rectangle::from_size(Size::from((
+                        diameter_phys as f64,
+                        diameter_phys as f64,
+                    )))),
+                    Some(Size::from((logical as i32, logical as i32))),
                     // Not Kind::Cursor: with the hardware cursor plane enabled the
                     // DRM compositor would otherwise try to put a ripple ring on
                     // the plane whenever the real cursor didn't fit there.

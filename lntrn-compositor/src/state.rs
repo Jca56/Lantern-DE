@@ -417,6 +417,9 @@ pub struct Lantern {
     /// (no dead pointer/window zone) but the connector stays plugged in, so we
     /// stash what we need to rebuild it on re-enable. Keyed by output name.
     pub disabled_outputs: std::collections::HashMap<String, crate::output_toggle::DisabledOutput>,
+    /// Where the outputs are meant to sit and what the layout last came to.
+    /// See `output_layout`.
+    pub layout: crate::output_layout::LayoutState,
     /// Set to the output name while it is being deliberately re-enabled, so the
     /// startup "honor persisted-off" reconcile inside `connector_connected`
     /// doesn't immediately tear the freshly-rebuilt output back down.
@@ -462,8 +465,6 @@ pub struct Lantern {
     /// it used to be one stat per key press AND release).
     pub layer_config_checked: Option<std::time::Instant>,
 
-    // Cached exclusive zone offsets — reconfigure maximized windows when these change
-    pub last_exclusive_offsets: (i32, i32, i32, i32),
     /// Raised by layer-surface map / commit / destroy; the event loop's
     /// post-dispatch callback recomputes the work area only when set.
     pub exclusive_zones_dirty: bool,
@@ -712,6 +713,7 @@ impl Lantern {
             hdr_active_outputs: std::collections::HashSet::new(),
             hdr_pending_confirm: std::collections::HashMap::new(),
             disabled_outputs: std::collections::HashMap::new(),
+            layout: Default::default(),
             enabling_output: None,
             gesture: GestureState::new(),
             scratchpad_surface: None,
@@ -726,7 +728,6 @@ impl Lantern {
             layer_active_keys: std::collections::HashMap::new(),
             layer_config_mtime: None,
             layer_config_checked: None,
-            last_exclusive_offsets: (0, 0, 0, 0),
             exclusive_zones_dirty: true,
             ssd: SsdManager::new(),
             mouse_speed: crate::input::read_input_setting_f64("mouse_speed", 0.0),
@@ -1180,15 +1181,46 @@ impl Lantern {
                 self.noflip_callbacks_wanted.extend(all);
             }
         }
-        match output {
-            Some(o) => crate::udev::schedule_render_output(self, &o),
-            None => crate::udev::schedule_render_all(self),
+        let Some(owner) = output else {
+            crate::udev::schedule_render_all(self);
+            return;
+        };
+        // A window is drawn on every output it reaches onto, so each of
+        // them has to repaint for its new frame: the part hanging over the
+        // seam used to keep showing an old one until the other monitor
+        // happened to draw for some other reason.
+        let reach = self
+            .find_window_anywhere(surface)
+            .and_then(|w| self.workspaces.element_bbox(&w));
+        let also: Vec<Output> = match reach {
+            Some(bbox) => self
+                .workspaces
+                .outputs_iter()
+                .filter(|o| {
+                    **o != owner
+                        && self
+                            .workspaces
+                            .output_geometry(o)
+                            .is_some_and(|geo| geo.overlaps(bbox))
+                })
+                .cloned()
+                .collect(),
+            None => Vec::new(),
+        };
+        crate::udev::schedule_render_output(self, &owner);
+        for output in &also {
+            crate::udev::schedule_render_output(self, output);
         }
     }
 
-    /// Pointer-path render scheduling: repaint the output under the cursor,
-    /// plus the previous output when the cursor just crossed a monitor seam
-    /// (it must repaint once to erase the cursor it's still showing).
+    /// Pointer-path render scheduling: repaint every output the cursor image
+    /// reaches, where it was and where it is now.
+    ///
+    /// Not only the output the hotspot is on. The cursor is drawn on each
+    /// output it overhangs, so near a seam two of them show a piece of it —
+    /// and the one the hotspot had just left got a single last repaint, with
+    /// that piece (or, on its cursor plane, the whole cursor) still on it,
+    /// frozen there until something else made it draw again.
     pub fn schedule_render_pointer(
         &mut self,
         prev_loc: Point<f64, Logical>,
@@ -1198,20 +1230,29 @@ impl Lantern {
             self.request_winit_redraw();
             return;
         }
-        let cur = self.output_at_point(pos);
-        match &cur {
-            Some(o) => {
-                let o = o.clone();
-                crate::udev::schedule_render_output(self, &o);
-            }
-            None => crate::udev::schedule_render_all(self),
+        let reach = self.cursor.reach();
+        let touched: Vec<Output> = self
+            .workspaces
+            .outputs_iter()
+            .filter(|o| {
+                self.workspaces.output_geometry(o).is_some_and(|geo| {
+                    let geo = geo.to_f64();
+                    let near = |p: Point<f64, Logical>| {
+                        p.x >= geo.loc.x - reach
+                            && p.x < geo.loc.x + geo.size.w + reach
+                            && p.y >= geo.loc.y - reach
+                            && p.y < geo.loc.y + geo.size.h + reach
+                    };
+                    near(pos) || near(prev_loc)
+                })
+            })
+            .cloned()
+            .collect();
+        if touched.is_empty() {
+            crate::udev::schedule_render_all(self);
         }
-        if let Some(prev) = self.output_at_point(prev_loc) {
-            // Output PartialEq is Arc identity; both handles come from the
-            // same workspaces registry, so this is a reliable comparison.
-            if cur.as_ref() != Some(&prev) {
-                crate::udev::schedule_render_output(self, &prev);
-            }
+        for output in &touched {
+            crate::udev::schedule_render_output(self, output);
         }
     }
 
@@ -1270,61 +1311,64 @@ impl Lantern {
 
     // ── Output & exclusive-zone geometry ────────────────────────────────
 
-    /// Find the output whose geometry contains `point`.
-    /// Falls back to the closest output if the point is between monitors.
-    pub fn output_at_point(&self, point: Point<f64, Logical>) -> Option<Output> {
-        // Exact containment check
-        for output in self.workspaces.outputs_iter() {
-            if let Some(geo) = self.workspaces.output_geometry(output) {
-                if geo.to_f64().contains(point) {
-                    return Some(output.clone());
-                }
-            }
-        }
-        // Fallback: closest output center. Skip outputs that workspaces
-        // doesn't know about (mid-removal, etc.) instead of panicking.
-        self.space
-            .outputs()
-            .filter_map(|o| self.workspaces.output_geometry(o).map(|g| (o, g)))
-            .min_by_key(|(_, geo)| {
-                let cx = geo.loc.x + geo.size.w / 2;
-                let cy = geo.loc.y + geo.size.h / 2;
-                let dx = point.x - cx as f64;
-                let dy = point.y - cy as f64;
-                (dx * dx + dy * dy) as i64
+    /// The output whose geometry contains `point`, if any does.
+    pub fn output_containing(&self, point: Point<f64, Logical>) -> Option<Output> {
+        self.workspaces
+            .outputs_iter()
+            .find(|o| {
+                self.workspaces
+                    .output_geometry(o)
+                    .is_some_and(|geo| geo.to_f64().contains(point))
             })
-            .map(|(o, _)| o.clone())
+            .cloned()
     }
 
-    /// Find the output a window lives on by checking which output contains its
-    /// top-left. Center-based detection misclassifies oversized windows whose
-    /// centers land on the wrong monitor — when this misclassifies, render-path
-    /// consumers like per-output frame-callback pacing drop the window from the
-    /// rendering output's surface set and the client stops getting frame
-    /// callbacks (stutter).
-    pub fn output_for_window(&self, window: &Window) -> Option<Output> {
-        let loc = self.workspaces.element_location(window)?;
-        self.output_at_point(Point::from((loc.x as f64, loc.y as f64)))
-    }
-
-    /// Combined bounding box of all outputs.
-    pub fn total_output_bounds(&self) -> Rectangle<i32, Logical> {
-        let mut min_x = i32::MAX;
-        let mut min_y = i32::MAX;
-        let mut max_x = i32::MIN;
-        let mut max_y = i32::MIN;
+    /// Find the output whose geometry contains `point`, or failing that the
+    /// one it is nearest to. Nearest to the *rectangle*: measured to the
+    /// center, a point just off the edge of a large monitor belonged to a
+    /// small neighbour whose center happened to be closer.
+    pub fn output_at_point(&self, point: Point<f64, Logical>) -> Option<Output> {
+        if let Some(output) = self.output_containing(point) {
+            return Some(output);
+        }
+        let mut nearest: Option<(f64, &Output)> = None;
         for output in self.workspaces.outputs_iter() {
-            if let Some(geo) = self.workspaces.output_geometry(output) {
-                min_x = min_x.min(geo.loc.x);
-                min_y = min_y.min(geo.loc.y);
-                max_x = max_x.max(geo.loc.x + geo.size.w);
-                max_y = max_y.max(geo.loc.y + geo.size.h);
+            let Some(geo) = self.workspaces.output_geometry(output) else {
+                continue;
+            };
+            // To the nearest pixel the output has: its right and bottom
+            // edges are not its own, so a point straight above the seam is
+            // nearer the output it is over than the one that ends there.
+            let (left, top) = (geo.loc.x as f64, geo.loc.y as f64);
+            let x = point.x.clamp(left, (left + geo.size.w as f64 - 1.0).max(left));
+            let y = point.y.clamp(top, (top + geo.size.h as f64 - 1.0).max(top));
+            let d = (point.x - x).powi(2) + (point.y - y).powi(2);
+            if nearest.map_or(true, |(best, _)| d < best) {
+                nearest = Some((d, output));
             }
         }
-        if min_x == i32::MAX {
-            return Rectangle::default();
+        nearest.map(|(_, o)| o.clone())
+    }
+
+    /// The output a window belongs to: the one whose workspaces hold it.
+    /// That is what decides where it is drawn from and which monitor's
+    /// workspace switch hides it, and unlike any point of its rectangle it
+    /// doesn't flip while the window hangs over a seam, sits partly
+    /// off-screen (a Wine game shifted up to hide its title bar) or is
+    /// larger than its monitor. For a window in no workspace
+    /// (override-redirect, scratchpad) it is the output its top-left is on;
+    /// for a minimized one, the output it was minimized on.
+    pub fn output_for_window(&self, window: &Window) -> Option<Output> {
+        if let Some(owner) = crate::window_ext::WindowExt::get_wl_surface(window)
+            .and_then(|s| self.held_output(&s))
+        {
+            return Some(owner);
         }
-        Rectangle::new((min_x, min_y).into(), (max_x - min_x, max_y - min_y).into())
+        let loc = self
+            .workspaces
+            .element_location(window)
+            .or_else(|| self.space.element_location(window))?;
+        self.output_at_point(Point::from((loc.x as f64, loc.y as f64)))
     }
 
     /// Whether the given layer surface should render / receive input on
@@ -1367,6 +1411,8 @@ impl Lantern {
             gone.leave(surface);
             target.enter(surface);
             *assigned = target.clone();
+            // So it can go back when that output does (`welcome_home`).
+            self.layout.note_layer_moved(&gone.name(), surface);
             moved += 1;
         }
         if moved > 0 {
@@ -1401,43 +1447,6 @@ impl Lantern {
                 if ls_output.name() != output_name {
                     continue;
                 }
-            }
-            let cached = with_states(ls.wl_surface(), |states| {
-                *states
-                    .cached_state
-                    .get::<LayerSurfaceCachedState>()
-                    .current()
-            });
-            let zone = match cached.exclusive_zone {
-                ExclusiveZone::Exclusive(v) => v as i32,
-                _ => continue,
-            };
-            let anchor = cached.anchor;
-            if anchor.contains(Anchor::TOP) && !anchor.contains(Anchor::BOTTOM) {
-                top = top.max(zone + cached.margin.top);
-            } else if anchor.contains(Anchor::BOTTOM) && !anchor.contains(Anchor::TOP) {
-                bottom = bottom.max(zone + cached.margin.bottom);
-            } else if anchor.contains(Anchor::LEFT) && !anchor.contains(Anchor::RIGHT) {
-                left = left.max(zone + cached.margin.left);
-            } else if anchor.contains(Anchor::RIGHT) && !anchor.contains(Anchor::LEFT) {
-                right = right.max(zone + cached.margin.right);
-            }
-        }
-
-        (top, bottom, left, right)
-    }
-
-    /// Global exclusive zone offsets (sum across all outputs). Legacy fallback.
-    pub fn exclusive_zone_offsets(&self) -> (i32, i32, i32, i32) {
-        use smithay::wayland::compositor::with_states;
-        let mut top = 0i32;
-        let mut bottom = 0i32;
-        let mut left = 0i32;
-        let mut right = 0i32;
-
-        for ls in &self.layer_surfaces {
-            if !ls.alive() {
-                continue;
             }
             let cached = with_states(ls.wl_surface(), |states| {
                 *states

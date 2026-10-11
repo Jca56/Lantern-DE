@@ -20,7 +20,7 @@
 use std::time::Duration;
 
 use smithay::backend::renderer::element::{
-    default_primary_scanout_output_compare, RenderElementStates,
+    default_primary_scanout_output_compare, RenderElementState, RenderElementStates,
 };
 use smithay::desktop::utils::{
     send_frames_surface_tree, surface_presentation_feedback_flags_from_states,
@@ -42,16 +42,47 @@ use crate::Lantern;
 /// `wl_surface.frame` without letting them render invisibly at refresh rate.
 pub const HIDDEN_SURFACE_THROTTLE: Duration = Duration::from_secs(1);
 
-/// Every surface the render path can present: windows in the global Space
-/// (all workspaces — hidden ones must be visited so a previous "primary =
-/// this output" mark gets cleared), layer surfaces, lock surfaces and a
-/// client-provided cursor surface.
+/// The primary scan-out choice for a surface seen on two outputs: the output
+/// it belongs to, if that is one of them.
+///
+/// Smithay's default takes the higher refresh rate (or twice the visible
+/// area), which on a 240 Hz + 120 Hz pair means any sliver of a window on
+/// the fast monitor makes that one primary. A window mostly on the slow
+/// monitor, owned by it and repainted on it, then had its frame callbacks
+/// tied to the vblank of a monitor nothing was making draw: it fell to the
+/// once-a-second trickle until the mouse stirred the other screen.
+fn prefer_owner<'o>(
+    owner: Option<&'o Output>,
+) -> impl for<'a> Fn(
+    &'a Output,
+    &'a RenderElementState,
+    &'a Output,
+    &'a RenderElementState,
+) -> &'a Output
+       + 'o {
+    move |current, current_state, next, next_state| {
+        if owner == Some(next) {
+            next
+        } else if owner == Some(current) {
+            current
+        } else {
+            default_primary_scanout_output_compare(current, current_state, next, next_state)
+        }
+    }
+}
+
+/// Every surface the render path can present, with the output it belongs
+/// to where it has one: windows in the global Space (all workspaces —
+/// hidden ones must be visited so a previous "primary = this output" mark
+/// gets cleared), layer surfaces, lock surfaces and a client-provided
+/// cursor surface.
 fn for_each_presentable_surface<F>(state: &Lantern, mut f: F)
 where
-    F: FnMut(&WlSurface, &SurfaceData),
+    F: FnMut(Option<&Output>, &WlSurface, &SurfaceData),
 {
     for window in state.space.elements() {
-        window.with_surfaces(&mut f);
+        let owner = state.output_for_window(window);
+        window.with_surfaces(|surface, data| f(owner.as_ref(), surface, data));
     }
     // Minimized windows are unmapped from every Space, so they'd otherwise be
     // invisible here and never get a frame callback at all — a client that
@@ -61,24 +92,29 @@ where
     // 1 Hz `HIDDEN_SURFACE_THROTTLE` trickle hidden workspaces already get.
     for entry in &state.minimized_windows {
         if entry.window.alive() {
-            entry.window.with_surfaces(&mut f);
+            entry
+                .window
+                .with_surfaces(|surface, data| f(None, surface, data));
         }
     }
     for ls in &state.layer_surfaces {
         if ls.alive() {
-            with_surfaces_surface_tree(ls.wl_surface(), &mut f);
+            let owner = state.layer_surface_outputs.get(ls.wl_surface());
+            with_surfaces_surface_tree(ls.wl_surface(), |surface, data| f(owner, surface, data));
         }
     }
     if let Some(lock) = state.session_lock.as_ref() {
         for ls in lock.surfaces.values() {
             if ls.alive() {
-                with_surfaces_surface_tree(ls.wl_surface(), &mut f);
+                with_surfaces_surface_tree(ls.wl_surface(), |surface, data| {
+                    f(None, surface, data)
+                });
             }
         }
     }
     if let CursorImageStatus::Surface(ref surface) = state.cursor.status {
         if surface.alive() {
-            with_surfaces_surface_tree(surface, &mut f);
+            with_surfaces_surface_tree(surface, |surface, data| f(None, surface, data));
         }
     }
 }
@@ -92,14 +128,8 @@ pub(crate) fn update_primary_scanout_outputs(
     output: &Output,
     states: &RenderElementStates,
 ) {
-    for_each_presentable_surface(state, |surface, data| {
-        update_surface_primary_scanout_output(
-            surface,
-            output,
-            data,
-            states,
-            default_primary_scanout_output_compare,
-        );
+    for_each_presentable_surface(state, |owner, surface, data| {
+        update_surface_primary_scanout_output(surface, output, data, states, prefer_owner(owner));
     });
 }
 

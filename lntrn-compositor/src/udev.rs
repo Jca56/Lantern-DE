@@ -105,6 +105,13 @@ pub(crate) struct OutputSurface {
     /// When this output last answered frame callbacks (vblank or no-flip
     /// timer). Paces the no-flip path.
     pub last_callbacks_at: Option<Instant>,
+    /// The primary plane's damage commit as of the last render: it moves
+    /// exactly when a frame was drawn into the swapchain buffer, which a
+    /// non-empty frame needn't be (a cursor-plane-only update is one too).
+    pub primary_commit: Option<smithay::backend::renderer::utils::CommitCounter>,
+    /// Switched off in System Settings and shown an empty frame since (see
+    /// `output_toggle::blank_disabled`). Cleared when it is switched on.
+    pub blanked: bool,
     /// Its monitor is gone but the output was kept because it was the last
     /// one: nothing is rendered or flipped until the monitor comes back.
     /// See `output_recovery`.

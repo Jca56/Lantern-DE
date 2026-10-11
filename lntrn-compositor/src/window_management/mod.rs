@@ -14,6 +14,7 @@ mod half_pose;
 mod lifecycle;
 mod maximize;
 mod minimize;
+mod placement;
 mod smart_snap;
 mod smooth_resize;
 mod solo_tile;

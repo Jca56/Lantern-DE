@@ -185,11 +185,13 @@ impl Lantern {
     fn window_rects_response(&self, output_name: &str) -> String {
         let mut body = String::new();
 
+        // No name means the primary — the first output in config order, not
+        // whichever key a hash map hands out first.
         let name = if output_name.is_empty() {
             self.workspaces
-                .outputs()
+                .outputs_iter()
                 .next()
-                .cloned()
+                .map(|o| o.name())
                 .unwrap_or_default()
         } else {
             output_name.to_string()

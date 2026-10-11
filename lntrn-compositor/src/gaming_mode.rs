@@ -13,11 +13,12 @@
 //! 3840x2160@240) with pixel-aligned input and no buffer/viewport mismatch.
 //!
 //! Because the primary's LOGICAL size grows when its scale drops (2742 → 3840
-//! wide at 4K/1.4), every other output is re-positioned so the layout keeps a
-//! clean left-to-right chain — no overlap, no dead seam the cursor can hide
-//! in. Toggling off restores the configured desktop scale and the exact
-//! `[[monitors]]` positions from lantern.toml. Toggle with Super+G (before
-//! launching the game) or the Command Center tile.
+//! wide at 4K/1.4), the layout is resolved again afterwards (`output_layout`):
+//! every other output keeps its side of the primary and moves out of its way,
+//! windows included — no overlap, no dead seam the cursor can hide in.
+//! Toggling off restores the configured desktop scale and the outputs close
+//! back up. Toggle with Super+G (before launching the game) or the Command
+//! Center tile.
 
 use crate::handlers::output_management::OutputChange;
 use crate::state::Lantern;
@@ -47,9 +48,9 @@ impl Lantern {
         self.gaming_ipc.broadcast_state(enabled);
     }
 
-    /// Re-apply the gaming layout for the current flag state. Called from
-    /// `connector_connected` so an output hotplugged mid-game doesn't land on
-    /// its configured position (computed for desktop scale → overlap).
+    /// Re-apply the gaming scale for the current flag state. Called from
+    /// `connector_connected` so the primary, hotplugged mid-game, doesn't
+    /// stay at the desktop scale it comes up with.
     pub fn reapply_gaming_layout(&mut self) {
         if !self.gaming_mode {
             return;
@@ -59,7 +60,7 @@ impl Lantern {
         };
         let changes = self.gaming_layout_changes(&primary_name, true);
         if !changes.is_empty() {
-            tracing::info!("Gaming mode: re-chaining outputs after hotplug");
+            tracing::info!("Gaming mode: primary back at native scale after hotplug");
             crate::udev_device::apply_output_config(self, changes);
         }
     }
@@ -73,70 +74,30 @@ impl Lantern {
             .or_else(|| self.workspaces.outputs_iter().next().map(|o| o.name()))
     }
 
-    /// Compute the OutputChange set for entering (`engage`) or leaving gaming
-    /// mode. The primary keeps its left edge and changes scale; every other
-    /// output keeps its scale. X positions are re-chained left-to-right using
-    /// post-change logical widths so outputs neither overlap nor leave a gap.
-    /// On restore, outputs with a `[[monitors]]` entry snap back to their
-    /// exact configured position instead (config is the source of truth).
+    /// The OutputChange set for entering (`engage`) or leaving gaming mode:
+    /// the primary's scale, and nothing else. The primary's logical size
+    /// changes with it, and `relayout` moves the other outputs (with their
+    /// windows) out of its way or back up against it — whichever side they
+    /// are on, not only in a left-to-right row.
     fn gaming_layout_changes(&self, primary_name: &str, engage: bool) -> Vec<OutputChange> {
-        let mut snapshot: Vec<(String, i32, i32, f64, i32)> = self
-            .workspaces
-            .known_outputs()
-            .filter_map(|(o, loc)| {
-                let phys_w = o.current_mode()?.size.w;
-                let scale = o.current_scale().fractional_scale();
-                Some((o.name(), loc.x, loc.y, scale, phys_w))
-            })
-            .collect();
-        snapshot.sort_by_key(|(_, x, _, _, _)| *x);
-
-        let configs = if engage {
-            Vec::new()
-        } else {
-            crate::read_monitor_configs()
+        let Some(primary) = self.workspaces.output_by_name(primary_name) else {
+            return Vec::new();
         };
-        let config_pos = |name: &str| configs.iter().find(|c| c.name == name).map(|c| (c.x, c.y));
-
-        let mut changes = Vec::new();
-        // Right edge of the previous output in the chain; None = leftmost
-        // output, which anchors the chain at its current left edge.
-        let mut next_x: Option<i32> = None;
-
-        for (name, cur_x, cur_y, cur_scale, phys_w) in &snapshot {
-            let is_primary = name == primary_name;
-            let target_scale = if is_primary {
-                if engage {
-                    1.0
-                } else {
-                    crate::monitor_scale(name)
-                }
-            } else {
-                *cur_scale
-            };
-            let logical_w = (*phys_w as f64 / target_scale).round() as i32;
-
-            let (target_x, target_y) = match config_pos(name) {
-                // Restoring with an explicit config entry: exact positions.
-                Some(pos) => pos,
-                None => (next_x.unwrap_or(*cur_x), *cur_y),
-            };
-            next_x = Some(target_x + logical_w);
-
-            let scale_change =
-                (is_primary && (target_scale - cur_scale).abs() > 0.001).then_some(target_scale);
-            let pos_change =
-                ((target_x, target_y) != (*cur_x, *cur_y)).then_some((target_x, target_y));
-            if scale_change.is_some() || pos_change.is_some() {
-                changes.push(OutputChange {
-                    output_name: name.clone(),
-                    drm_mode_index: None,
-                    position: pos_change,
-                    scale: scale_change,
-                    enabled: None,
-                });
-            }
+        let cur_scale = primary.current_scale().fractional_scale();
+        let target_scale = if engage {
+            1.0
+        } else {
+            crate::monitor_scale(primary_name)
+        };
+        if (target_scale - cur_scale).abs() <= 0.001 {
+            return Vec::new();
         }
-        changes
+        vec![OutputChange {
+            output_name: primary_name.to_string(),
+            drm_mode_index: None,
+            position: None,
+            scale: Some(target_scale),
+            enabled: None,
+        }]
     }
 }

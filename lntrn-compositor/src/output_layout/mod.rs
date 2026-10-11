@@ -26,8 +26,43 @@
 //! positions: `[[monitors]]` entries as they are read, and the head batch a
 //! wlr-output-management client (System Settings) applies.
 
+//!
+//! Normalizing is the last step of a larger one: positions are *intent*,
+//! resolved against the sizes the outputs have right now ([`resolve`]) and
+//! applied with each output's windows in tow ([`apply`]); what a departing
+//! output owned is moved off it and brought back on its return
+//! ([`evacuate`]).
+
+mod apply;
+mod evacuate;
+mod pointer;
+mod reflow;
+mod resolve;
+
+pub use apply::LayoutState;
+
+use smithay::utils::{Logical, Rectangle};
+
 use crate::handlers::output_management::OutputChange;
 use crate::MonitorConfig;
+
+/// `rect` moved, not resized, to lie inside `area`: wholly where it fits,
+/// otherwise with its top-left corner on `area`'s.
+pub(crate) fn clamp_into(
+    rect: Rectangle<i32, Logical>,
+    area: Rectangle<i32, Logical>,
+) -> Rectangle<i32, Logical> {
+    let max_x = (area.loc.x + area.size.w - rect.size.w).max(area.loc.x);
+    let max_y = (area.loc.y + area.size.h - rect.size.h).max(area.loc.y);
+    Rectangle::new(
+        (
+            rect.loc.x.clamp(area.loc.x, max_x),
+            rect.loc.y.clamp(area.loc.y, max_y),
+        )
+            .into(),
+        rect.size,
+    )
+}
 
 /// Top-left corner of the bounding box of `positions`, or (0, 0) when empty.
 pub(crate) fn layout_origin(positions: impl IntoIterator<Item = (i32, i32)>) -> (i32, i32) {

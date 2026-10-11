@@ -146,7 +146,7 @@ pub fn init_winit(
                             })
                             .unwrap_or_default();
 
-                        if let Some(cursor) = state.cursor.render_element(renderer, cursor_phys_pos)
+                        if let Some(cursor) = state.cursor.render_element(renderer, cursor_phys_pos, scale)
                         {
                             elements.push(WinitRenderElements::Wallpaper(cursor));
                         } else if let smithay::input::pointer::CursorImageStatus::Surface(

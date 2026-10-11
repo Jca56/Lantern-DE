@@ -31,7 +31,6 @@ use crate::shaders::{
     TOP_CENTER_GLOW_SHADER_SRC,
 };
 use crate::udev::{GpuBackend, OutputSurface, UdevOutputId, SUPPORTED_FORMATS};
-use crate::window_ext::WindowExt;
 use crate::Lantern;
 
 pub fn device_added(
@@ -380,6 +379,15 @@ pub(crate) fn connector_connected(
         return;
     }
 
+    let output_name = format!(
+        "{}-{}",
+        connector.interface().as_str(),
+        connector.interface_id()
+    );
+    // Where it is first mapped; `relayout` below settles the whole layout
+    // once it is registered.
+    let (x, y) = state.layout_admit(&output_name);
+
     let udev = match state.udev.as_mut() {
         Some(u) => u,
         None => return,
@@ -390,11 +398,6 @@ pub(crate) fn connector_connected(
         None => return,
     };
 
-    let output_name = format!(
-        "{}-{}",
-        connector.interface().as_str(),
-        connector.interface_id()
-    );
     if backend.surfaces.contains_key(&crtc) {
         warn!(
             "Connector {} connected on a CRTC that already drives an output; ignoring",
@@ -464,36 +467,6 @@ pub(crate) fn connector_connected(
             model: "Unknown".into(),
         },
     );
-
-    // Check monitor config for explicit position, otherwise auto-layout horizontally
-    let monitor_configs = crate::read_monitor_configs();
-    let (x, y) = if let Some(cfg) = monitor_configs.iter().find(|c| c.name == output_name) {
-        // Positions are normalized (layout top-left → (0, 0)); say so when
-        // the file's raw arrangement had a different origin so the log and
-        // lantern.toml can be reconciled at a glance.
-        let raw = crate::read_monitor_configs_raw();
-        let origin = crate::output_layout::layout_origin(
-            raw.iter().filter(|c| c.enabled).map(|c| (c.x, c.y)),
-        );
-        if origin == (0, 0) {
-            info!(
-                "Using configured position for {}: ({}, {})",
-                output_name, cfg.x, cfg.y
-            );
-        } else {
-            info!(
-                "Using configured position for {}: ({}, {}) — layout origin ({}, {}) in \
-                 lantern.toml normalized to (0, 0) so XWayland/Wine see no dead zone",
-                output_name, cfg.x, cfg.y, origin.0, origin.1
-            );
-        }
-        (cfg.x, cfg.y)
-    } else {
-        let auto_x = state.space.outputs().fold(0, |acc, o| {
-            acc + state.workspaces.output_geometry(o).unwrap().size.w
-        });
-        (auto_x, 0)
-    };
 
     output.set_preferred(wl_mode);
     output.change_current_state(
@@ -586,6 +559,8 @@ pub(crate) fn connector_connected(
             watchdog_timer: None,
             noflip_timer: None,
             last_callbacks_at: None,
+            primary_commit: None,
+            blanked: false,
             parked: false,
             relight: None,
         },
@@ -613,9 +588,8 @@ pub(crate) fn connector_connected(
 
     render_device(state, node, Some(crtc));
 
-    // If Gaming Mode is active, this output just landed on its configured
-    // position — computed for desktop scale, so it may overlap the rescaled
-    // primary. Re-chain the layout. No-op when gaming mode is off.
+    // If Gaming Mode is active and this is the primary coming back, it came
+    // up at its desktop scale. No-op when gaming mode is off.
     state.reapply_gaming_layout();
 
     // Honor any monitor the user persisted as `enabled = false` in
@@ -626,6 +600,13 @@ pub(crate) fn connector_connected(
     crate::output_recovery::cancel_connect_retry(state, node, connector.handle());
     // A parked output was only kept because it was the last one.
     crate::output_recovery::retire_parked(state, &output_name);
+
+    // Whatever was moved off this output while it was away comes back, and
+    // the layout is resolved with it in: its configured position was right
+    // for the sizes the others had when it was written, which a scale
+    // change (or Gaming Mode) since may have made an overlap.
+    state.welcome_home(&output_name);
+    state.relayout();
 }
 
 pub fn connector_disconnected(state: &mut Lantern, node: DrmNode, crtc: crtc::Handle) {
@@ -670,16 +651,28 @@ pub(crate) fn teardown_output(state: &mut Lantern, node: DrmNode, crtc: crtc::Ha
         crtc,
     });
 
+    let drives = |o: &smithay::output::Output| {
+        o.user_data()
+            .get::<UdevOutputId>()
+            .is_some_and(|id| id.device_id == node && id.crtc == crtc)
+    };
+    // A monitor switched off in System Settings is in no Space, only in
+    // `disabled_outputs`. Unplugged and left there, its dead output would be
+    // mapped back in by the next "enable", and the fresh one a replug builds
+    // could never be switched off (it already counted as off).
     let output = state
         .space
         .outputs()
-        .find(|o| {
-            o.user_data()
-                .get::<UdevOutputId>()
-                .map(|id| id.device_id == node && id.crtc == crtc)
-                .unwrap_or(false)
-        })
-        .cloned();
+        .find(|o| drives(o))
+        .cloned()
+        .or_else(|| {
+            state
+                .disabled_outputs
+                .values()
+                .map(|d| &d.output)
+                .find(|o| drives(o))
+                .cloned()
+        });
 
     if let Some(output) = output {
         let name = output.name();
@@ -693,9 +686,18 @@ pub(crate) fn teardown_output(state: &mut Lantern, node: DrmNode, crtc: crtc::Ha
         state.output_management_state.remove_head(&name);
         state.output_management_state.broadcast_done();
         state.hdr_ipc.remove_output(&name);
+        state.disabled_outputs.remove(&name);
+        // Its windows go to a monitor that is still there, and come back
+        // when this one does. Left on it they sat at coordinates no screen
+        // showed, reachable only by the monitor returning.
+        if let Some(refuge) = crate::output_toggle::pick_target_output(state, &name) {
+            state.evacuate_output(&name, &refuge);
+        }
         state.space.unmap_output(&output);
         state.workspaces.unregister_output(&output);
         state.reroute_layer_surfaces_from(&output);
+        // The outputs that remain close up, back to the origin.
+        state.relayout();
     }
 }
 
@@ -732,213 +734,123 @@ pub fn device_removed(state: &mut Lantern, node: DrmNode) {
     }
 }
 
-/// Apply output configuration changes from wlr-output-management.
+/// Apply output configuration changes from wlr-output-management (and
+/// Gaming Mode). Modes and scales are set here; positions are recorded as
+/// intent and the layout is then resolved as a whole, so a batch that makes
+/// one output wider can't leave it overlapping the next. Returns false if
+/// any part of the batch could not be applied (the rest still is).
 pub fn apply_output_config(
     state: &mut Lantern,
     changes: Vec<crate::handlers::output_management::OutputChange>,
 ) -> bool {
-    use smithay::output::{Mode as WlMode, Scale};
+    let mut ok = true;
+    let mut resized = false;
+    // Before anything changes size under it.
+    let pointer = state.pointer_anchor();
 
     for change in &changes {
-        // On/off toggles go through the output_toggle engine (teardown /
-        // rebuild). Such rows carry no mode/pos/scale to apply afterward.
+        let name = &change.output_name;
         match change.enabled {
             Some(false) => {
-                crate::output_toggle::disable_output(state, &change.output_name);
+                ok &= crate::output_toggle::disable_output(state, name);
                 continue;
             }
-            Some(true) if state.disabled_outputs.contains_key(&change.output_name) => {
-                crate::output_toggle::enable_output(state, &change.output_name);
-                continue;
+            // Back on, then configured like any other head: a batch may
+            // switch a monitor on *and* say where it goes.
+            Some(true) if state.disabled_outputs.contains_key(name) => {
+                crate::output_toggle::enable_output(state, name);
             }
             _ => {}
         }
 
-        let output = match state
-            .workspaces
-            .outputs_iter()
-            .find(|o| o.name() == change.output_name)
-            .cloned()
-        {
-            Some(o) => o,
-            None => return false,
+        let Some(output) = state.workspaces.output_by_name(name).cloned() else {
+            ok = false;
+            continue;
         };
 
-        let oid = match output.user_data().get::<UdevOutputId>() {
-            Some(id) => *id,
-            None => return false,
-        };
-
-        // Apply mode change
         if let Some(drm_idx) = change.drm_mode_index {
-            let modes = match output.user_data().get::<crate::udev::UdevOutputModes>() {
-                Some(m) => m,
-                None => return false,
-            };
-            if drm_idx >= modes.drm_modes.len() {
-                return false;
+            if !switch_mode(state, &output, drm_idx) {
+                ok = false;
+                continue;
             }
-            let drm_mode = modes.drm_modes[drm_idx];
-            let wl_mode = WlMode::from(drm_mode);
-
-            // Switch DRM mode via drm_output_manager
-            let udev = match state.udev.as_mut() {
-                Some(u) => u,
-                None => return false,
-            };
-            let backend = match udev.backends.get_mut(&oid.device_id) {
-                Some(b) => b,
-                None => return false,
-            };
-            let renderer = match udev.renderer.as_mut() {
-                Some(r) => r,
-                None => return false,
-            };
-            if let Err(e) = backend
-                .drm_output_manager
-                .use_mode::<_, CustomRenderElements>(
-                    &oid.crtc,
-                    drm_mode,
-                    renderer,
-                    &DrmOutputRenderElements::default(),
-                )
-            {
-                tracing::warn!("Failed to switch DRM mode: {:?}", e);
-                return false;
-            }
-
-            output.set_preferred(wl_mode);
-            let cur_scale = change
-                .scale
-                .unwrap_or_else(|| crate::monitor_scale(&change.output_name));
-            output.change_current_state(
-                Some(wl_mode),
-                None,
-                Some(Scale::Fractional(cur_scale)),
-                None,
-            );
+            resized = true;
         }
 
-        // Apply scale change (if no mode change already applied it)
-        if change.drm_mode_index.is_none() {
-            if let Some(new_scale) = change.scale {
-                output.change_current_state(None, None, Some(Scale::Fractional(new_scale)), None);
+        if let Some(scale) = change.scale {
+            output.change_current_state(None, None, Some(Scale::Fractional(scale)), None);
+            resized = true;
+        }
+
+        if change.drm_mode_index.is_some() || change.scale.is_some() {
+            if let Some(geo) = state.workspaces.output_geometry(&output) {
+                info!(
+                    output = %name,
+                    scale = output.current_scale().fractional_scale(),
+                    logical = %format!("{}x{}", geo.size.w, geo.size.h),
+                    "Output mode/scale applied"
+                );
             }
         }
 
-        // Apply position change
-        if let Some((x, y)) = change.position {
-            output.change_current_state(None, None, None, Some((x, y).into()));
-            state.space.map_output(&output, (x, y));
-            state
-                .workspaces
-                .register_output(output.clone(), (x, y).into());
+        if let Some(pos) = change.position {
+            state.layout_intend(name, pos);
         }
     }
 
-    if let Some(output) = state.workspaces.outputs_iter().next().cloned() {
-        if let Some(mode) = output.current_mode() {
-            let scale = output.current_scale().fractional_scale();
-            let logical_w = mode.size.w as f64 / scale;
-            let logical_h = mode.size.h as f64 / scale;
-            tracing::info!(
-                scale,
-                logical = %format!("{:.0}x{:.0}", logical_w, logical_h),
-                "Output scale applied"
-            );
-        }
+    if resized {
+        // Wallpapers are decoded at the output's size.
+        state.wallpaper.clear_cache();
     }
-
-    // Reconfigure maximized windows for new output geometry
-    let maximized_surfaces: Vec<_> = state
-        .maximized_windows
-        .iter()
-        .map(|e| e.surface.clone())
-        .collect();
-    for surface in &maximized_surfaces {
-        if let Some(window) = state.find_mapped_window(surface) {
-            if let Some(geo) = state.window_output_geometry(&window) {
-                window.configure_rect(geo);
-                state.remap_tracked_window(window, geo.loc, false);
-            }
-        }
-    }
-
-    // Reconfigure fullscreen windows for new raw output geometry
-    let fullscreen_surfaces: Vec<_> = state
-        .fullscreen_windows
-        .iter()
-        .map(|e| e.surface.clone())
-        .collect();
-    for surface in &fullscreen_surfaces {
-        if let Some(window) = state.find_mapped_window(surface) {
-            if let Some(output_geo) = state
-                .output_for_window(&window)
-                .or_else(|| state.workspaces.outputs_iter().next().cloned())
-                .and_then(|o| state.workspaces.output_geometry(&o))
-            {
-                window.configure_rect(output_geo);
-                state.remap_tracked_window(window, output_geo.loc, false);
-            }
-        }
-    }
-
-    // Reconfigure snapped windows
-    let snapped: Vec<_> = state
-        .snapped_windows
-        .iter()
-        .map(|e| (e.surface.clone(), e.zone))
-        .collect();
-    for (surface, zone) in &snapped {
-        if let Some(target) = state.snap_zone_geometry(*zone) {
-            if let Some(window) = state.find_mapped_window(&surface) {
-                window.configure_rect(target);
-                state.remap_tracked_window(window, target.loc, false);
-            }
-        }
-    }
-
-    // Layer surfaces are only sized when their client commits — push the new
-    // output geometry to them now, or an idle full-output overlay keeps the
-    // old logical size until it next draws.
-    state.reconfigure_layer_surfaces();
-
-    // Keep wlr-output-management heads in sync (and notify bound clients)
-    // — otherwise System Settings shows pre-apply positions/scales.
-    state.output_management_state.sync_applied_changes(&changes);
-    state.output_management_state.broadcast_done();
-
     // The primary output's scale may have changed — re-apply the XWayland
     // scale override so newly-spawned X11 games still see native physical
     // resolution under the new UI scale.
     crate::xwayland::refresh_xwayland_scale(state);
 
-    // Tell Wayland-native clients about the new scale too — Smithay only
-    // sends wp_fractional_scale preferred_scale at object creation, so
-    // scale-aware apps (Fox, …) would otherwise keep rendering at the old
-    // scale until restart.
-    crate::handlers::refresh_fractional_scales(state);
+    state.output_management_state.sync_applied_modes(&changes);
+    // Moves the outputs (windows in tow), re-fits maximized / fullscreen
+    // windows and layer surfaces, pushes the new scales to clients and the
+    // new head state to wlr-output-management clients, and repaints.
+    state.relayout_from(pointer, true);
+    ok
+}
 
-    // Invalidate wallpaper cache
-    state.wallpaper.clear_cache();
-
-    // Collect render targets, then schedule re-renders
-    let render_targets: Vec<(DrmNode, crtc::Handle)> = changes
-        .iter()
-        .filter_map(|change| {
-            let output = state
-                .workspaces
-                .outputs_iter()
-                .find(|o| o.name() == change.output_name)?;
-            let oid = output.user_data().get::<UdevOutputId>()?;
-            Some((oid.device_id, oid.crtc))
-        })
-        .collect();
-
-    for (node, crtc) in render_targets {
-        render_device(state, node, Some(crtc));
+/// Switch `output` to the DRM mode at `drm_idx` of its mode list, keeping
+/// its scale.
+fn switch_mode(state: &mut Lantern, output: &Output, drm_idx: usize) -> bool {
+    let Some(oid) = output.user_data().get::<UdevOutputId>().copied() else {
+        return false;
+    };
+    let Some(drm_mode) = output
+        .user_data()
+        .get::<crate::udev::UdevOutputModes>()
+        .and_then(|m| m.drm_modes.get(drm_idx).copied())
+    else {
+        return false;
+    };
+    let Some(udev) = state.udev.as_mut() else {
+        return false;
+    };
+    let Some(backend) = udev.backends.get_mut(&oid.device_id) else {
+        return false;
+    };
+    let Some(renderer) = udev.renderer.as_mut() else {
+        return false;
+    };
+    if let Err(e) = backend
+        .drm_output_manager
+        .use_mode::<_, CustomRenderElements>(
+            &oid.crtc,
+            drm_mode,
+            renderer,
+            &DrmOutputRenderElements::default(),
+        )
+    {
+        warn!("Failed to switch DRM mode: {:?}", e);
+        return false;
     }
-
+    let wl_mode = WlMode::from(drm_mode);
+    output.set_preferred(wl_mode);
+    output.change_current_state(Some(wl_mode), None, None, None);
     true
 }
 
@@ -961,40 +873,5 @@ pub fn render_device(state: &mut Lantern, node: DrmNode, crtc: Option<crtc::Hand
 
     for crtc in crtcs {
         render_surface(state, node, crtc);
-    }
-}
-
-/// Re-read monitor positions from config and reposition outputs if changed.
-pub fn reload_monitor_positions(state: &mut Lantern) {
-    let configs = crate::read_monitor_configs();
-    if configs.is_empty() {
-        return;
-    }
-
-    let mut changed = false;
-    let outputs: Vec<_> = state.workspaces.outputs_iter().cloned().collect();
-
-    for output in &outputs {
-        let name = output.name();
-        if let Some(cfg) = configs.iter().find(|c| c.name == name) {
-            let current_geo = state.workspaces.output_geometry(output).unwrap_or_default();
-            if current_geo.loc.x != cfg.x || current_geo.loc.y != cfg.y {
-                output.change_current_state(None, None, None, Some((cfg.x, cfg.y).into()));
-                state.space.map_output(output, (cfg.x, cfg.y));
-                state
-                    .workspaces
-                    .register_output(output.clone(), (cfg.x, cfg.y).into());
-                info!(
-                    "Live-reloaded position for {}: ({}, {})",
-                    name, cfg.x, cfg.y
-                );
-                changed = true;
-            }
-        }
-    }
-
-    if changed {
-        // Reconfigure maximized/snapped windows for new output positions
-        state.check_exclusive_zone_change();
     }
 }
