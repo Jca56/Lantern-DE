@@ -36,6 +36,9 @@ pub struct FullscreenWindow {
     /// new size. Without it, the render would briefly fall back to the
     /// stale `window.geometry().size` and the window would visually snap.
     pub target: Rectangle<i32, Logical>,
+    /// It was maximized when it went fullscreen (`restore` is then the rect
+    /// from before *that*), so leaving fullscreen maximizes it again.
+    pub was_maximized: bool,
 }
 
 /// A window currently maximized. `restore` is the pre-maximize rect.

@@ -7,7 +7,7 @@ use smithay::{
 
 use crate::state::Lantern;
 use crate::window_ext::WindowExt;
-use crate::window_state::FullscreenWindow;
+use crate::window_state::{FullscreenWindow, MaximizedWindow};
 
 impl Lantern {
     pub fn is_fullscreen(&self, surface: &WlSurface) -> bool {
@@ -43,12 +43,11 @@ impl Lantern {
             .unwrap_or_default();
         let restore = Rectangle::new(location, window.geometry().size);
 
-        // If maximized, use the maximized restore instead
-        let restore = if let Some(max_restore) = self.take_maximized_restore(surface) {
-            max_restore
-        } else {
-            restore
-        };
+        // If maximized, use the maximized restore instead — and remember it
+        // was, so that leaving fullscreen maximizes it again.
+        let max_restore = self.take_maximized_restore(surface);
+        let was_maximized = max_restore.is_some();
+        let restore = max_restore.unwrap_or(restore);
 
         // If snapped, use the snapped restore instead
         let restore = if let Some(idx) = self
@@ -65,6 +64,7 @@ impl Lantern {
             surface: surface.clone(),
             restore,
             target: output_geo,
+            was_maximized,
         });
 
         // Capture animation start (or redirect from in-flight anim).
@@ -113,7 +113,11 @@ impl Lantern {
         else {
             return false;
         };
-        let restore = self.fullscreen_windows.remove(idx).restore;
+        let FullscreenWindow {
+            restore,
+            was_maximized,
+            ..
+        } = self.fullscreen_windows.remove(idx);
 
         // Iconified window leaving fullscreen: DXGI/SDL drop exclusive
         // fullscreen when they minimize. Nothing is on screen to animate or
@@ -129,6 +133,14 @@ impl Lantern {
             let window = entry.window.clone();
             window.set_fullscreen(false);
             window.configure_rect(restore);
+            if was_maximized {
+                // Maximized again; the restore path fits it to its output.
+                self.maximized_windows.push(MaximizedWindow {
+                    surface: surface.clone(),
+                    restore,
+                    target: restore,
+                });
+            }
             self.update_foreign_toplevel_states(surface);
             self.refresh_vrr();
             tracing::info!("Window left fullscreen (while minimized)");
@@ -150,7 +162,27 @@ impl Lantern {
             .unwrap_or(current_rect);
 
         window.set_fullscreen(false);
-        self.animate_resize(surface, &window, anim_start, restore);
+        // Back to what it was before. A window that was maximized when it
+        // went fullscreen is maximized again, not dropped at the rect it had
+        // before it was ever maximized — a maximized browser leaving a
+        // fullscreen video came back as a loose window, sized for whichever
+        // monitor it was first opened on and hanging off this one.
+        let maximized_area = was_maximized
+            .then(|| self.window_output_geometry(&window))
+            .flatten();
+        let back_to = match maximized_area {
+            Some(area) => {
+                self.maximized_windows.push(MaximizedWindow {
+                    surface: surface.clone(),
+                    restore,
+                    target: area,
+                });
+                window.set_maximized(true);
+                area
+            }
+            None => restore,
+        };
+        self.animate_resize(surface, &window, anim_start, back_to);
         self.update_foreign_toplevel_states(surface);
         if serial != Serial::from(0) {
             self.focus_window(&window, serial);
@@ -190,13 +222,15 @@ impl Lantern {
             return false;
         };
 
-        let restore = self
-            .take_maximized_restore(surface)
-            .unwrap_or_else(|| Rectangle::new(location, window.geometry().size));
+        let max_restore = self.take_maximized_restore(surface);
+        let was_maximized = max_restore.is_some();
+        let restore =
+            max_restore.unwrap_or_else(|| Rectangle::new(location, window.geometry().size));
         self.fullscreen_windows.push(FullscreenWindow {
             surface: surface.clone(),
             restore,
             target: output_geo,
+            was_maximized,
         });
         self.minimized_windows[idx].location = output_geo.loc;
 
