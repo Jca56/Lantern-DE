@@ -1,4 +1,5 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::path::Path;
+use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -7,12 +8,10 @@ use gstreamer::prelude::*;
 use gstreamer::{self as gst, ClockTime, Element, SeekFlags, State as GstState};
 use gstreamer_app as gst_app;
 use gstreamer_video as gst_video;
+use lntrn_render::{GpuContext, GpuTexture, TexturePass};
 
-use crate::fft::SpectrumAnalyzer;
-
-const FFT_SIZE: usize = 1024;
-const FFT_SAMPLE_RATE: u32 = 44_100;
-const FFT_UPDATE_HZ: u32 = 30;
+use crate::audio_tap::{self, AudioTap};
+use crate::event_pump::Waker;
 
 /// How long a Null transition may block the caller. Normal teardown is a few
 /// ms; anything longer means the audio sink is stuck waiting on the PipeWire
@@ -25,29 +24,23 @@ pub const TEARDOWN_TIMEOUT: Duration = Duration::from_millis(1500);
 /// stream, which left the player as a blank window with a deadlocked UI.
 pub const PREROLL_TIMEOUT: Duration = Duration::from_secs(6);
 
-// ── Video frame ─────────────────────────────────────────────────────────────
+/// A seek normally reports back (ASYNC_DONE) within a frame or two; after
+/// this long without one the next seek goes out anyway.
+const SEEK_PATIENCE: Duration = Duration::from_secs(1);
 
-pub struct VideoFrame {
-    pub rgba: Vec<u8>,
-    pub width: u32,
-    pub height: u32,
-}
-
-// ── Spectrum data ───────────────────────────────────────────────────────────
-
-pub const SPECTRUM_BANDS: usize = 64;
+/// The newest decoded video frame, straight from the appsink. Held as the
+/// GStreamer sample (a refcount, no pixel copy); the UI thread maps and
+/// uploads it only when it's about to draw.
+type FrameSlot = Arc<Mutex<Option<gst::Sample>>>;
 
 // ── Pipeline ────────────────────────────────────────────────────────────────
 
 pub struct MediaPipeline {
     pipeline: Element,
-    frame: Arc<Mutex<Option<VideoFrame>>>,
-    spectrum_shared: Arc<Mutex<Vec<f32>>>,
-    spectrum_dirty: Arc<AtomicBool>,
+    frame: FrameSlot,
+    tap: AudioTap,
     spectrum: Vec<f32>,
     eos: bool,
-    /// The autoaudiosink; kept so we can log which real sink it settled on.
-    audiosink: Element,
     sink_logged: bool,
     /// First fatal bus error, until `take_error` consumes it.
     error: Option<String>,
@@ -59,12 +52,24 @@ pub struct MediaPipeline {
     created: Instant,
     /// Volume requested before preroll; applied once it is safe to.
     pending_volume: Option<f64>,
+    /// When the seek now in flight was sent (None once ASYNC_DONE answers it).
+    seek_started: Option<Instant>,
+    /// Latest position asked for while a seek was in flight. Only the newest
+    /// matters: holding → sends one seek at a time instead of a pile-up.
+    queued_seek: Option<u64>,
 }
 
 impl MediaPipeline {
-    pub fn new(uri: &str) -> Result<Self> {
+    /// Build a playbin for `path`. `waker` is poked from GStreamer's threads
+    /// whenever the UI has something to pick up: a video frame, a spectrum,
+    /// a bus message.
+    pub fn new(path: &Path, waker: Waker) -> Result<Self> {
+        // A real file URI: `#`, `%` and `?` in a file name must be escaped or
+        // the source can't find the file.
+        let uri = gst::glib::filename_to_uri(path, None)
+            .map_err(|e| anyhow!("Can't make a URI for {}: {e}", path.display()))?;
         let pipeline = gst::ElementFactory::make("playbin")
-            .property("uri", uri)
+            .property("uri", uri.as_str())
             .build()
             .map_err(|e| anyhow!("Failed to create playbin: {e}"))?;
 
@@ -78,194 +83,77 @@ impl MediaPipeline {
             .max_buffers(1)
             .drop(true)
             .build();
-
         pipeline.set_property("video-sink", &appsink);
 
-        let frame: Arc<Mutex<Option<VideoFrame>>> = Arc::new(Mutex::new(None));
-        let frame_ref = frame.clone();
-
+        let frame: FrameSlot = Arc::new(Mutex::new(None));
+        // Playing frames arrive as samples; a paused pipeline (a seek while
+        // paused, the first frame of a paused open) delivers its picture as
+        // a preroll. Both land in the same slot.
+        let store = |slot: FrameSlot, waker: Waker| {
+            move |sample: Result<gst::Sample, gst::glib::BoolError>| {
+                let sample = sample.map_err(|_| gst::FlowError::Eos)?;
+                if let Ok(mut lock) = slot.lock() {
+                    *lock = Some(sample);
+                }
+                waker.wake();
+                Ok(gst::FlowSuccess::Ok)
+            }
+        };
+        let on_sample = store(frame.clone(), waker.clone());
+        let on_preroll = store(frame.clone(), waker.clone());
         appsink.set_callbacks(
             gst_app::AppSinkCallbacks::builder()
-                .new_sample(move |sink| {
-                    // Skip the expensive copy if we already have an unconsumed frame
-                    if let Ok(lock) = frame_ref.lock() {
-                        if lock.is_some() {
-                            return Ok(gst::FlowSuccess::Ok);
-                        }
-                    }
-
-                    let sample = sink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
-                    let buffer = sample.buffer().ok_or(gst::FlowError::Error)?;
-                    let caps = sample.caps().ok_or(gst::FlowError::Error)?;
-                    let info =
-                        gst_video::VideoInfo::from_caps(caps).map_err(|_| gst::FlowError::Error)?;
-
-                    let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
-                    let width = info.width();
-                    let height = info.height();
-
-                    let stride = info.stride()[0] as usize;
-                    let row_bytes = (width as usize) * 4;
-                    let rgba = if stride == row_bytes {
-                        map.as_slice().to_vec()
-                    } else {
-                        let mut rgba = Vec::with_capacity(row_bytes * height as usize);
-                        for row in 0..height as usize {
-                            let start = row * stride;
-                            let end = start + row_bytes;
-                            if end <= map.len() {
-                                rgba.extend_from_slice(&map[start..end]);
-                            }
-                        }
-                        rgba
-                    };
-
-                    if let Ok(mut lock) = frame_ref.lock() {
-                        *lock = Some(VideoFrame {
-                            rgba,
-                            width,
-                            height,
-                        });
-                    }
-                    Ok(gst::FlowSuccess::Ok)
-                })
+                .new_sample(move |sink| on_sample(sink.pull_sample()))
+                .new_preroll(move |sink| on_preroll(sink.pull_preroll()))
                 .build(),
         );
 
-        // ── Audio bin: tee playback + FFT analysis ─────────────────────
-        // ghostpad-sink → tee ┬→ queue → autoaudiosink   (playback)
-        //                     └→ queue → audioconvert → audioresample →
-        //                          capsfilter(f32 mono 44.1k) → appsink (FFT)
-        let tee = gst::ElementFactory::make("tee")
-            .build()
-            .map_err(|e| anyhow!("Failed to create tee: {e}"))?;
-        let queue_play = gst::ElementFactory::make("queue")
-            .build()
-            .map_err(|e| anyhow!("Failed to create playback queue: {e}"))?;
-        let audiosink = gst::ElementFactory::make("autoaudiosink")
-            .build()
-            .map_err(|e| anyhow!("Failed to create autoaudiosink: {e}"))?;
-        let queue_fft = gst::ElementFactory::make("queue")
-            .build()
-            .map_err(|e| anyhow!("Failed to create fft queue: {e}"))?;
-        let audioconvert = gst::ElementFactory::make("audioconvert")
-            .build()
-            .map_err(|e| anyhow!("Failed to create audioconvert: {e}"))?;
-        let audioresample = gst::ElementFactory::make("audioresample")
-            .build()
-            .map_err(|e| anyhow!("Failed to create audioresample: {e}"))?;
+        let tap = audio_tap::build(waker.clone())?;
+        pipeline.set_property("audio-sink", &tap.bin);
 
-        let fft_caps = gst::Caps::builder("audio/x-raw")
-            .field("format", "F32LE")
-            .field("channels", 1i32)
-            .field("rate", FFT_SAMPLE_RATE as i32)
-            .field("layout", "interleaved")
-            .build();
-        let audio_appsink = gst_app::AppSink::builder()
-            .caps(&fft_caps)
-            .max_buffers(2)
-            .drop(true)
-            .build();
-
-        let spectrum_shared: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(vec![0.0; SPECTRUM_BANDS]));
-        let spectrum_dirty = Arc::new(AtomicBool::new(false));
-        let analyzer = Arc::new(Mutex::new(SpectrumAnalyzer::new(
-            FFT_SIZE,
-            SPECTRUM_BANDS,
-            FFT_SAMPLE_RATE,
-            FFT_UPDATE_HZ,
-        )));
-
-        let spec_ref = spectrum_shared.clone();
-        let dirty_ref = spectrum_dirty.clone();
-        let analyzer_ref = analyzer.clone();
-        audio_appsink.set_callbacks(
-            gst_app::AppSinkCallbacks::builder()
-                .new_sample(move |sink| {
-                    let sample = sink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
-                    let buffer = sample.buffer().ok_or(gst::FlowError::Error)?;
-                    let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
-                    let bytes = map.as_slice();
-                    // SAFETY: caps pin format to F32LE interleaved mono, so the
-                    // buffer is a packed array of native-endian f32 on LE hosts.
-                    let samples: &[f32] = unsafe {
-                        std::slice::from_raw_parts(
-                            bytes.as_ptr() as *const f32,
-                            bytes.len() / std::mem::size_of::<f32>(),
-                        )
-                    };
-                    if let Ok(mut a) = analyzer_ref.lock() {
-                        if let Some(bands) = a.push_samples(samples) {
-                            drop(a);
-                            if let Ok(mut s) = spec_ref.lock() {
-                                *s = bands;
-                                dirty_ref.store(true, Ordering::Release);
-                            }
-                        }
-                    }
-                    Ok(gst::FlowSuccess::Ok)
-                })
-                .build(),
-        );
-
-        let audio_bin = gst::Bin::new();
-        let appsink_elem: &gst::Element = audio_appsink.upcast_ref();
-        audio_bin.add_many([
-            &tee,
-            &queue_play,
-            &audiosink,
-            &queue_fft,
-            &audioconvert,
-            &audioresample,
-            appsink_elem,
-        ])?;
-        gst::Element::link_many([&tee, &queue_play, &audiosink])?;
-        gst::Element::link_many([
-            &tee,
-            &queue_fft,
-            &audioconvert,
-            &audioresample,
-            appsink_elem,
-        ])?;
-
-        let pad = tee
-            .static_pad("sink")
-            .ok_or_else(|| anyhow!("No sink pad on tee"))?;
-        audio_bin
-            .add_pad(&gst::GhostPad::with_target(&pad)?)
-            .map_err(|e| anyhow!("Failed to add ghost pad: {e}"))?;
-
-        pipeline.set_property("audio-sink", &audio_bin.upcast::<gst::Element>());
-
-        let spectrum = vec![0.0f32; SPECTRUM_BANDS];
+        // EOS, errors and ASYNC_DONE reach the UI thread promptly instead of
+        // on its next timer. `Pass` leaves the message queued for `poll_bus`.
+        if let Some(bus) = pipeline.bus() {
+            bus.set_sync_handler(move |_, _| {
+                waker.wake();
+                gst::BusSyncReply::Pass
+            });
+        }
 
         Ok(Self {
             pipeline,
             frame,
-            spectrum_shared,
-            spectrum_dirty,
-            spectrum,
+            spectrum: vec![crate::fft::DB_FLOOR; audio_tap::SPECTRUM_BANDS],
+            tap,
             eos: false,
-            audiosink,
             sink_logged: false,
             error: None,
             prerolled: false,
             created: Instant::now(),
             pending_volume: None,
+            seek_started: None,
+            queued_seek: None,
         })
     }
 
     /// Drain the pipeline bus — EOS, errors, warnings, and a one-time note of
     /// which real sink autoaudiosink settled on — then pull the latest
-    /// spectrum if the audio appsink has computed a fresh one. Call each frame.
+    /// spectrum if the audio appsink has computed a fresh one (returns true
+    /// when it did). Call on every wake-up.
     pub fn poll_bus(&mut self) -> bool {
         if let Some(bus) = self.pipeline.bus() {
             while let Some(msg) = bus.pop() {
                 self.handle_message(&msg);
             }
         }
-        if self.spectrum_dirty.swap(false, Ordering::Acquire) {
-            if let Ok(s) = self.spectrum_shared.lock() {
+        // A seek that never reported back mustn't hold the queue forever.
+        if self.queued_seek.is_some() && !self.seek_in_flight() {
+            if let Some(target) = self.queued_seek.take() {
+                self.start_seek(target);
+            }
+        }
+        if self.tap.dirty.swap(false, Ordering::Acquire) {
+            if let Ok(s) = self.tap.spectrum.lock() {
                 self.spectrum.clone_from(&s);
             }
             true
@@ -293,13 +181,17 @@ impl MediaPipeline {
                         self.set_volume(v);
                     }
                 }
+                // The seek in flight has landed; send the newest queued one.
+                self.seek_started = None;
+                if let Some(target) = self.queued_seek.take() {
+                    self.start_seek(target);
+                }
             }
             gst::MessageView::Error(e) => {
                 let debug = e.debug().map(|d| d.to_string()).unwrap_or_default();
                 eprintln!("[media-player] gst error from {}: {} ({debug})", src(), e.error());
                 // First error wins; the rest is usually fallout from it.
-                self.error
-                    .get_or_insert_with(|| format!("{}: {}", src(), e.error()));
+                self.error.get_or_insert_with(|| e.error().to_string());
             }
             gst::MessageView::Warning(w) => {
                 let debug = w.debug().map(|d| d.to_string()).unwrap_or_default();
@@ -330,7 +222,7 @@ impl MediaPipeline {
     /// take the sound card away from everyone else.
     fn log_audio_sink(&mut self) {
         self.sink_logged = true;
-        let Some(bin) = self.audiosink.downcast_ref::<gst::Bin>() else {
+        let Some(bin) = self.tap.sink.downcast_ref::<gst::Bin>() else {
             return;
         };
         let picked = bin
@@ -354,8 +246,20 @@ impl MediaPipeline {
         !self.prerolled && self.created.elapsed() > PREROLL_TIMEOUT
     }
 
-    /// Check playbin's n-video property to detect audio-only streams.
-    /// Returns None if pipeline isn't ready yet, Some(true) for audio-only.
+    /// When `preroll_stalled` would turn true, while still waiting.
+    pub fn preroll_deadline(&self) -> Option<Instant> {
+        (!self.prerolled).then(|| self.created + PREROLL_TIMEOUT)
+    }
+
+    /// When a queued seek stops waiting for the one in flight.
+    pub fn seek_deadline(&self) -> Option<Instant> {
+        self.queued_seek
+            .and(self.seek_started)
+            .map(|at| at + SEEK_PATIENCE)
+    }
+
+    /// Check playbin's n-video property to detect audio-only streams. False
+    /// until the pipeline has prerolled.
     pub fn is_audio_only(&self) -> bool {
         if !self.prerolled {
             return false;
@@ -366,6 +270,10 @@ impl MediaPipeline {
 
     pub fn is_eos(&self) -> bool {
         self.eos
+    }
+
+    pub fn clear_eos(&mut self) {
+        self.eos = false;
     }
 
     pub fn spectrum(&self) -> &[f32] {
@@ -392,18 +300,38 @@ impl MediaPipeline {
         }
     }
 
-    pub fn seek(&self, position_ns: u64) {
+    /// Seek to `position_ns`. While an earlier seek is still settling the
+    /// request is remembered (newest wins) and sent the moment that one
+    /// lands, so rapid seeks coalesce instead of queueing up in the decoder.
+    pub fn seek(&mut self, position_ns: u64) {
         if !self.prerolled {
             return;
         }
-        let _ = self.pipeline.seek_simple(
+        if self.seek_in_flight() {
+            self.queued_seek = Some(position_ns);
+        } else {
+            self.start_seek(position_ns);
+        }
+    }
+
+    /// A seek is still landing (or waiting its turn): position reports
+    /// aren't trustworthy yet.
+    pub fn seek_busy(&self) -> bool {
+        self.seek_in_flight() || self.queued_seek.is_some()
+    }
+
+    fn seek_in_flight(&self) -> bool {
+        self.seek_started
+            .is_some_and(|at| at.elapsed() < SEEK_PATIENCE)
+    }
+
+    fn start_seek(&mut self, position_ns: u64) {
+        self.eos = false;
+        let sent = self.pipeline.seek_simple(
             SeekFlags::FLUSH | SeekFlags::ACCURATE,
             ClockTime::from_nseconds(position_ns),
         );
-    }
-
-    pub fn clear_eos(&mut self) {
-        self.eos = false;
+        self.seek_started = sent.is_ok().then(Instant::now);
     }
 
     pub fn position(&self) -> Option<u64> {
@@ -424,8 +352,46 @@ impl MediaPipeline {
             .map(|t| t.nseconds())
     }
 
-    pub fn take_frame(&self) -> Option<VideoFrame> {
-        self.frame.lock().ok()?.take()
+    /// A decoded frame is waiting to be shown.
+    pub fn has_frame(&self) -> bool {
+        self.frame.lock().is_ok_and(|f| f.is_some())
+    }
+
+    /// Upload the newest decoded frame into `slot`, reusing its texture when
+    /// the resolution is unchanged (the common case) so playback doesn't
+    /// churn VRAM. Returns the frame's size when one was uploaded. Called
+    /// only when a frame is about to be drawn: a hidden window costs nothing.
+    pub fn upload_frame(
+        &self,
+        gpu: &GpuContext,
+        tex_pass: &TexturePass,
+        slot: &mut Option<GpuTexture>,
+    ) -> Option<(u32, u32)> {
+        let sample = self.frame.lock().ok()?.take()?;
+        let info = gst_video::VideoInfo::from_caps(sample.caps()?).ok()?;
+        let map = sample.buffer()?.map_readable().ok()?;
+        let (width, height) = (info.width(), info.height());
+        let stride = *info.stride().first()? as usize;
+        let row_bytes = width as usize * 4;
+        let rows = height as usize;
+        if width == 0 || rows == 0 || stride < row_bytes {
+            return None;
+        }
+        if stride == row_bytes {
+            // Tightly packed: straight from the decoder's buffer to the GPU.
+            let pixels = map.as_slice().get(..row_bytes * rows)?;
+            tex_pass.upload_reuse(gpu, slot, pixels, width, height);
+        } else {
+            // Padded rows: repack. A short buffer is skipped whole rather
+            // than uploaded at the wrong size.
+            let mut rgba = Vec::with_capacity(row_bytes * rows);
+            for row in 0..rows {
+                let start = row * stride;
+                rgba.extend_from_slice(map.as_slice().get(start..start + row_bytes)?);
+            }
+            tex_pass.upload_reuse(gpu, slot, &rgba, width, height);
+        }
+        Some((width, height))
     }
 
     /// Safe before `play()` (no streaming threads yet) and after preroll; in

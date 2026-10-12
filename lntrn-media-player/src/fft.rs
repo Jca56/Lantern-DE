@@ -4,7 +4,8 @@
 
 use std::f32::consts::PI;
 
-const DB_FLOOR: f32 = -80.0;
+/// What silence measures as, in dB.
+pub const DB_FLOOR: f32 = -80.0;
 
 pub struct SpectrumAnalyzer {
     fft_size: usize,

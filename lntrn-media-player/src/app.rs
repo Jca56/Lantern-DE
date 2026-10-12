@@ -3,42 +3,35 @@ use std::time::{Duration, Instant};
 
 use lntrn_render::{GpuContext, GpuTexture, TexturePass};
 
+mod playlist;
+mod transport;
+
+pub use transport::LoopMode;
+
+use crate::event_pump::Waker;
 use crate::pipeline::MediaPipeline;
-use crate::position_store::PositionStore;
+use crate::position_store;
+use crate::visualizer::Visualizer;
+use playlist::{resolve, store_key};
 
 /// Resume positions in the first/last `RESUME_MARGIN_NS` of a file are dropped:
 /// the start isn't worth resuming, and the tail means the file basically
 /// finished — both should reopen from the beginning instead.
-const RESUME_MARGIN_NS: i64 = 5_000_000_000; // 5 seconds
-
-pub const VIS_BARS: usize = 20;
-
-const MEDIA_EXTENSIONS: &[&str] = &[
-    "mp4", "mkv", "webm", "avi", "mov", "flv", "wmv", "m4v", "mp3", "flac", "wav", "ogg", "m4a",
-    "aac", "opus", "wma",
-];
-
-/// What happens when the current track reaches the end.
-#[derive(Clone, Copy, PartialEq)]
-pub enum LoopMode {
-    /// Stop after the current track finishes ("play once").
-    Once,
-    /// Repeat the current track forever ("loop").
-    RepeatOne,
-    /// Advance to the next file in the folder ("continue").
-    Continue,
-}
-
-impl LoopMode {
-    /// Cycle order: Continue → RepeatOne → Once → Continue.
-    pub fn next(self) -> Self {
-        match self {
-            LoopMode::Continue => LoopMode::RepeatOne,
-            LoopMode::RepeatOne => LoopMode::Once,
-            LoopMode::Once => LoopMode::Continue,
-        }
-    }
-}
+const RESUME_MARGIN_NS: u64 = 5_000_000_000; // 5 seconds
+/// Position drives the seek bar + timestamps; ~10 Hz is plenty for the UI and
+/// avoids hammering the pipeline (each query can briefly grab its stream lock).
+const QUERY_INTERVAL: Duration = Duration::from_millis(100);
+/// How long a fresh pipeline is asked for its duration before we stop
+/// waking up for it (a stream that never reports one would poll forever).
+const DURATION_PATIENCE: Duration = Duration::from_secs(10);
+/// After a seek the pipeline can still report the old position for a moment;
+/// the position we asked for is shown until it has had time to land.
+const SEEK_SETTLE: Duration = Duration::from_millis(300);
+/// Controls stay up this long after the pointer last moved.
+const CONTROLS_GRACE: Duration = Duration::from_millis(1500);
+/// The volume readout: fully visible this long, then fading out.
+const OSD_HOLD: Duration = Duration::from_millis(1200);
+const OSD_FADE: Duration = Duration::from_millis(300);
 
 pub struct App {
     pub pipeline: Option<MediaPipeline>,
@@ -47,38 +40,47 @@ pub struct App {
     pub video_height: u32,
     pub file_path: Option<PathBuf>,
     pub file_name: String,
+    /// Proper (escaped) `file://` URI of the open file, for MPRIS.
+    pub file_uri: String,
     pub volume: f64,
     pub position_ns: u64,
     pub duration_ns: u64,
     pub seeking: bool,
     pub seek_value: f32,
+    /// Why nothing is playing ("No media loaded", an error). Drawn in the
+    /// middle of the window whenever there is no pipeline.
     pub status_text: String,
     pub audio_only: bool,
-    pub vis_bars: Vec<f32>,
+    pub visualizer: Visualizer,
     // Playlist
     pub loop_mode: LoopMode,
     pub playlist: Vec<PathBuf>,
     pub playlist_index: usize,
+    /// The track played to its end and stopped there (play-once, or the last
+    /// file of the folder). Play starts it over.
+    pub ended: bool,
     // Hover-reveal controls (0.0 = hidden, 1.0 = fully shown)
     pub controls_alpha: f32,
     pub controls_last_move: Instant,
     pub pointer_in_window: bool,
-    pub last_tick: Instant,
-    // Throttle for pipeline position/duration queries (each can briefly grab the
-    // GStreamer stream lock, so we don't want to ask every frame).
-    pub last_query: Instant,
     // Visualizer theme (index into vis_theme::VIS_THEMES) + View dropdown state.
     pub vis_theme_index: usize,
     pub view_menu_open: bool,
-    // Resume-where-you-left-off: remembered positions keyed by file URI,
-    // persisted to disk. `pending_resume_ns` is a seek queued at open time and
-    // applied once the pipeline prerolls (a known duration means it's seekable).
-    position_store: PositionStore,
+    /// When the volume last changed: drives the on-screen readout.
+    volume_changed_at: Option<Instant>,
+    last_query: Instant,
+    opened_at: Instant,
+    /// Position reports are ignored until then (a seek is landing).
+    position_hold_until: Instant,
+    /// A seek queued at open time (resume where you left off), applied once
+    /// the pipeline knows its duration — which means it's seekable.
     pending_resume_ns: Option<u64>,
+    waker: Waker,
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(waker: Waker) -> Self {
+        let now = Instant::now();
         Self {
             pipeline: None,
             video_texture: None,
@@ -86,6 +88,7 @@ impl App {
             video_height: 0,
             file_path: None,
             file_name: String::new(),
+            file_uri: String::new(),
             volume: 1.0,
             position_ns: 0,
             duration_ns: 0,
@@ -93,19 +96,22 @@ impl App {
             seek_value: 0.0,
             status_text: "No media loaded".into(),
             audio_only: false,
-            vis_bars: vec![0.0; VIS_BARS],
+            visualizer: Visualizer::new(),
             loop_mode: LoopMode::Continue,
             playlist: Vec::new(),
             playlist_index: 0,
+            ended: false,
             controls_alpha: 0.0,
-            controls_last_move: Instant::now(),
+            controls_last_move: now,
             pointer_in_window: false,
-            last_tick: Instant::now(),
-            last_query: Instant::now(),
             vis_theme_index: crate::vis_theme::load_theme_index(),
             view_menu_open: false,
-            position_store: PositionStore::load(),
+            volume_changed_at: None,
+            last_query: now,
+            opened_at: now,
+            position_hold_until: now,
             pending_resume_ns: None,
+            waker,
         }
     }
 
@@ -115,275 +121,169 @@ impl App {
         crate::vis_theme::save_theme_index(self.vis_theme_index);
     }
 
-    pub fn open_file(&mut self, path: &str) {
-        let abs = match Path::new(path).canonicalize() {
-            Ok(p) => p,
-            Err(e) => {
-                self.status_text = format!("File not found: {path} ({e})");
-                return;
-            }
-        };
+    // ── Opening files ───────────────────────────────────────────────────
 
-        self.open_file_internal(&abs.clone());
-        self.scan_directory(&abs);
+    pub fn open_file(&mut self, path: &Path) {
+        let Some(abs) = resolve(path) else {
+            self.status_text = format!("File not found: {}", path.display());
+            return;
+        };
+        self.open_file_internal(&abs);
+        (self.playlist, self.playlist_index) = playlist::scan(&abs);
     }
 
     fn open_file_internal(&mut self, abs: &Path) {
         // Remember where we were in the outgoing file before swapping pipelines
         // (covers next/prev and folder auto-advance, not just app close).
         self.save_current_position();
+        // The old pipeline comes down before the new one starts, so two
+        // tracks never sound at once.
+        self.pipeline = None;
 
-        let uri = format!("file://{}", abs.display());
-        match MediaPipeline::new(&uri) {
+        let now = Instant::now();
+        self.file_name = abs
+            .file_name()
+            .map(|n| n.to_string_lossy().into())
+            .unwrap_or_default();
+        self.file_path = Some(abs.to_path_buf());
+        self.file_uri = gstreamer::glib::filename_to_uri(abs, None)
+            .map(|uri| uri.to_string())
+            .unwrap_or_default();
+        self.video_texture = None;
+        self.video_width = 0;
+        self.video_height = 0;
+        self.position_ns = 0;
+        self.duration_ns = 0;
+        self.seeking = false;
+        self.audio_only = false;
+        self.ended = false;
+        self.visualizer.reset();
+        self.opened_at = now;
+        self.last_query = now;
+        self.position_hold_until = now;
+        self.pending_resume_ns = None;
+
+        match MediaPipeline::new(abs, self.waker.clone()) {
             Ok(mut pipe) => {
                 pipe.set_volume(self.volume);
                 pipe.play();
                 self.pipeline = Some(pipe);
-                self.file_name = abs
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into())
-                    .unwrap_or_default();
-                self.file_path = Some(abs.to_path_buf());
-                self.status_text = abs.to_string_lossy().into();
-                self.video_texture = None;
-                self.video_width = 0;
-                self.video_height = 0;
-                self.position_ns = 0;
-                self.duration_ns = 0;
-                self.seeking = false;
-                self.audio_only = false;
-                self.vis_bars = vec![0.0; VIS_BARS];
+                self.status_text.clear();
                 // Queue a resume to the remembered spot. Can't seek yet — the
                 // pipeline hasn't prerolled — so `tick` applies it once a
                 // duration is known. None if we've never seen this file.
-                self.pending_resume_ns = self.position_store.get_position(&uri).map(|p| p as u64);
+                self.pending_resume_ns = position_store::get(&store_key(abs));
             }
-            Err(e) => {
-                self.status_text = format!("Failed to open: {e}");
-            }
+            Err(e) => self.status_text = format!("Can't play {}: {e}", self.file_name),
         }
     }
 
-    fn scan_directory(&mut self, file_path: &Path) {
-        let dir = match file_path.parent() {
-            Some(d) => d,
-            None => return,
-        };
-        let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
-            .ok()
-            .into_iter()
-            .flatten()
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| {
-                p.extension()
-                    .and_then(|ext| ext.to_str())
-                    .map(|ext| MEDIA_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
-                    .unwrap_or(false)
-            })
-            .collect();
-        files.sort();
-        self.playlist_index = files.iter().position(|p| p == file_path).unwrap_or(0);
-        self.playlist = files;
-    }
+    // ── Timers and pipeline upkeep ──────────────────────────────────────
 
-    /// Grab the latest decoded frame and upload it as a GPU texture.
-    /// Returns true if a new frame was uploaded or spectrum updated (needs redraw).
-    pub fn tick(&mut self, gpu: &GpuContext, tex_pass: &TexturePass) -> bool {
-        let pipe = match &mut self.pipeline {
-            Some(p) => p,
-            None => return false,
+    /// Pipeline upkeep for one wake-up: bus messages, position/duration,
+    /// the queued resume seek, end-of-stream and errors. Returns true when
+    /// something the window shows has changed.
+    pub fn tick(&mut self, now: Instant) -> bool {
+        let mut changed = false;
+        if self
+            .volume_changed_at
+            .is_some_and(|at| now >= at + OSD_HOLD + OSD_FADE)
+        {
+            self.volume_changed_at = None;
+            changed = true;
+        }
+        let Some(pipe) = &mut self.pipeline else {
+            return changed;
         };
+        let fresh_spectrum = pipe.poll_bus();
 
-        // Position drives the seek bar + timestamps; ~10 Hz is plenty for the UI
-        // and avoids hammering the pipeline every frame. Duration is fixed for a
-        // file (reset to 0 on each new track), so query it only until it's known
-        // — query_duration is the expensive one and never changes mid-file.
-        if self.last_query.elapsed() >= Duration::from_millis(100) {
-            self.last_query = Instant::now();
-            if let Some(pos) = pipe.position() {
-                self.position_ns = pos;
+        if now.duration_since(self.last_query) >= QUERY_INTERVAL {
+            self.last_query = now;
+            // Not while a seek is landing: the old position would yank the
+            // seek bar back for a moment.
+            if now >= self.position_hold_until && !pipe.seek_busy() {
+                if let Some(pos) = pipe.position().filter(|&p| p != self.position_ns) {
+                    self.position_ns = pos;
+                    changed |= self.controls_alpha > 0.0;
+                }
             }
             if self.duration_ns == 0 {
-                if let Some(dur) = pipe.duration() {
+                if let Some(dur) = pipe.duration().filter(|&d| d > 0) {
                     self.duration_ns = dur;
+                    changed = true;
                 }
             }
-            // Apply a queued resume once the pipeline has prerolled (a known
-            // duration means it's seekable). Clamp away from the very end and
-            // run it exactly once.
-            if let Some(target) = self.pending_resume_ns {
-                if self.duration_ns > 0 {
-                    let safe_end = self.duration_ns.saturating_sub(RESUME_MARGIN_NS as u64);
-                    let clamped = target.min(safe_end);
-                    pipe.seek(clamped);
-                    self.position_ns = clamped;
-                    self.pending_resume_ns = None;
-                }
+            // Clamp the resume away from the very end and run it exactly once.
+            if let Some(target) = self.pending_resume_ns.filter(|_| self.duration_ns > 0) {
+                let clamped = target.min(self.duration_ns.saturating_sub(RESUME_MARGIN_NS));
+                pipe.seek(clamped);
+                self.position_ns = clamped;
+                self.position_hold_until = now + SEEK_SETTLE;
+                self.pending_resume_ns = None;
+                changed = true;
             }
         }
 
-        // Detect audio-only — only trust n-video after duration is known
+        // Detect audio-only — only trust n-video after duration is known.
         if !self.audio_only && self.duration_ns > 0 && pipe.is_audio_only() {
             self.audio_only = true;
+            changed = true;
         }
+        if fresh_spectrum && self.audio_only && pipe.is_playing() {
+            self.visualizer.set_spectrum(Some(pipe.spectrum()));
+            changed = true;
+        }
+        changed |= pipe.has_frame();
+        changed |= self.check_error();
+        changed |= self.check_eos();
+        changed
+    }
 
-        // Poll bus for spectrum messages + EOS + log-scale into visual bars
-        pipe.poll_bus();
-        let raw = pipe.spectrum();
-        let log_bars = log_group_spectrum(raw, VIS_BARS);
-        for i in 0..VIS_BARS {
-            let target = log_bars[i];
-            let current = self.vis_bars[i];
-            if target > current {
-                self.vis_bars[i] = current + (target - current) * 0.7;
-            } else {
-                self.vis_bars[i] = current + (target - current) * 0.25;
+    /// The next moment `tick` has something to do without being woken for it.
+    pub fn next_deadline(&self, now: Instant) -> Option<Instant> {
+        let mut due: Vec<Instant> = Vec::new();
+        if let Some(pipe) = &self.pipeline {
+            let wants_duration =
+                self.duration_ns == 0 && now.duration_since(self.opened_at) < DURATION_PATIENCE;
+            if pipe.is_playing() || wants_duration {
+                due.push(self.last_query + QUERY_INTERVAL);
+            }
+            due.extend(pipe.preroll_deadline());
+            due.extend(pipe.seek_deadline());
+        }
+        // The moments an animation starts on its own (a deadline already
+        // past would spin the loop; `is_animating` covers those from there).
+        let grace_end = self.controls_last_move + CONTROLS_GRACE;
+        due.extend(Some(grace_end).filter(|&at| at > now && self.controls_alpha > 0.0));
+        if let Some(at) = self.volume_changed_at {
+            due.extend(Some(at + OSD_HOLD).filter(|&at| at > now));
+        }
+        due.into_iter().min()
+    }
+
+    /// Something is easing toward a new state and wants a frame every
+    /// refresh until it gets there.
+    pub fn is_animating(&self, now: Instant) -> bool {
+        let controls = self.controls_alpha != self.controls_target(now);
+        let bars = !self.video_mode() && !self.visualizer.is_settled();
+        let osd = self.volume_changed_at.is_some_and(|at| now >= at + OSD_HOLD);
+        controls || bars || osd
+    }
+
+    /// Bring everything that changes over time up to `now` and upload the
+    /// newest video frame. Called right before drawing, never otherwise: a
+    /// hidden window does no per-frame work.
+    pub fn prepare_frame(&mut self, gpu: &GpuContext, tex_pass: &TexturePass, now: Instant, dt: f32) {
+        if let Some(pipe) = &self.pipeline {
+            if let Some((w, h)) = pipe.upload_frame(gpu, tex_pass, &mut self.video_texture) {
+                self.audio_only = false;
+                self.video_width = w;
+                self.video_height = h;
             }
         }
-
-        // Grab latest video frame. Reuse the existing GPU texture when the
-        // resolution is unchanged (the common case) so playback doesn't churn
-        // ~8 MB of VRAM per frame — that allocation thrash was the random stutter.
-        if let Some(frame) = pipe.take_frame() {
-            self.audio_only = false;
-            self.video_width = frame.width;
-            self.video_height = frame.height;
-            tex_pass.upload_reuse(
-                gpu,
-                &mut self.video_texture,
-                &frame.rgba,
-                frame.width,
-                frame.height,
-            );
-            return true;
-        }
-
-        self.audio_only
-    }
-
-    /// Check for end-of-stream. Returns true if a new track was loaded.
-    pub fn check_eos(&mut self) -> bool {
-        let is_eos = self.pipeline.as_ref().map(|p| p.is_eos()).unwrap_or(false);
-        if !is_eos {
-            return false;
-        }
-        self.handle_eos()
-    }
-
-    /// Surface a fatal pipeline error — a decoder failing, or the audio sink
-    /// losing the PipeWire daemon under it. The pipeline is dropped (bounded,
-    /// see `MediaPipeline`'s Drop) so nothing else in the UI can block on it.
-    /// Returns true when an error was consumed.
-    pub fn check_error(&mut self) -> bool {
-        let stalled = self.pipeline.as_ref().is_some_and(|p| p.preroll_stalled());
-        let msg = match self.pipeline.as_mut().and_then(|p| p.take_error()) {
-            Some(m) => m,
-            None if stalled => {
-                let secs = crate::pipeline::PREROLL_TIMEOUT.as_secs();
-                eprintln!(
-                    "[media-player] gst: no preroll after {secs}s — the audio sink never came up; dropping this pipeline"
-                );
-                format!("Audio device did not respond ({secs}s)")
-            }
-            None => return false,
-        };
-        self.status_text = format!("Playback error: {msg}");
-        self.pipeline = None;
-        self.seeking = false;
-        self.pending_resume_ns = None;
-        true
-    }
-
-    fn handle_eos(&mut self) -> bool {
-        match self.loop_mode {
-            LoopMode::RepeatOne => {
-                if let Some(pipe) = &mut self.pipeline {
-                    pipe.clear_eos();
-                    pipe.seek(0);
-                    pipe.play();
-                }
-                true
-            }
-            LoopMode::Once => {
-                // Stop at the end of the current track; leave it paused on the
-                // last frame so the user can replay or pick another file.
-                if let Some(pipe) = &mut self.pipeline {
-                    pipe.clear_eos();
-                    pipe.pause();
-                }
-                false
-            }
-            LoopMode::Continue => {
-                if let Some(pipe) = &mut self.pipeline {
-                    pipe.clear_eos();
-                }
-                self.next_track()
-            }
-        }
-    }
-
-    pub fn next_track(&mut self) -> bool {
-        if self.playlist.len() <= 1 {
-            return false;
-        }
-        if self.playlist_index + 1 < self.playlist.len() {
-            self.playlist_index += 1;
-        } else {
-            // Past the last file: wrap only when explicitly looping the folder.
-            return false;
-        }
-        let path = self.playlist[self.playlist_index].clone();
-        self.open_file_internal(&path);
-        true
-    }
-
-    pub fn prev_track(&mut self) -> bool {
-        if self.playlist.len() <= 1 {
-            return false;
-        }
-        // If we're past 3 seconds, restart current track instead
-        if self.position_ns > 3_000_000_000 {
-            if let Some(pipe) = &self.pipeline {
-                pipe.seek(0);
-            }
-            return true;
-        }
-        if self.playlist_index > 0 {
-            self.playlist_index -= 1;
-        } else {
-            return false;
-        }
-        let path = self.playlist[self.playlist_index].clone();
-        self.open_file_internal(&path);
-        true
-    }
-
-    pub fn cycle_loop_mode(&mut self) {
-        self.loop_mode = self.loop_mode.next();
-    }
-
-    /// Drive the hover-reveal fade. Controls ramp toward 1.0 while the pointer
-    /// is in the window, and toward 0.0 after a brief grace period once it leaves.
-    pub fn update_controls_alpha(&mut self) {
-        let now = Instant::now();
-        let dt = (now - self.last_tick).as_secs_f32().min(0.1);
-        self.last_tick = now;
-
-        // Controls stay up while the pointer is in the window, briefly after it
-        // moves, and whenever playback is paused (so you can always see the seek
-        // bar and hit play again without fishing for the controls).
-        let target = if self.pointer_in_window
-            || !self.is_playing()
-            || self.view_menu_open
-            || self.controls_last_move.elapsed().as_secs_f32() < 1.5
-        {
-            1.0
-        } else {
-            0.0
-        };
 
         // Fade rate: ~180ms in, ~250ms out
+        let target = self.controls_target(now);
         let rate = if target > self.controls_alpha {
             1.0 / 0.18
         } else {
@@ -397,68 +297,46 @@ impl App {
         } else {
             self.controls_alpha -= step;
         }
-    }
 
-    pub fn note_pointer_activity(&mut self) {
-        self.controls_last_move = Instant::now();
-    }
-
-    pub fn is_playing(&self) -> bool {
-        self.pipeline
-            .as_ref()
-            .map(|p| p.is_playing())
-            .unwrap_or(false)
-    }
-
-    pub fn toggle_play_pause(&mut self) {
-        if let Some(pipe) = &self.pipeline {
-            pipe.toggle();
+        // The bars follow the music only while it plays; paused, ended or
+        // with nothing loaded they sink back to rest.
+        if !(self.audio_only && self.is_playing()) {
+            self.visualizer.set_spectrum(None);
         }
+        self.visualizer.step(dt);
     }
 
-    pub fn seek_relative(&mut self, delta_ns: i64) {
-        if let Some(pipe) = &self.pipeline {
-            let pos = self.position_ns as i64 + delta_ns;
-            let clamped = pos.max(0) as u64;
-            let clamped = if self.duration_ns > 0 {
-                clamped.min(self.duration_ns)
-            } else {
-                clamped
-            };
-            pipe.seek(clamped);
-        }
-    }
-
-    pub fn seek_to_fraction(&mut self, frac: f32) {
-        if let Some(pipe) = &self.pipeline {
-            let target = (frac.clamp(0.0, 1.0) as f64 * self.duration_ns as f64) as u64;
-            pipe.seek(target);
-        }
-        self.seeking = false;
-    }
-
-    /// Persist the current playback position for the open file so reopening it
-    /// later resumes from here. Positions in the first or last `RESUME_MARGIN_NS`
-    /// are cleared instead — too trivial to resume, or the file effectively
-    /// finished. Safe to call any time (no-op when nothing is open).
-    pub fn save_current_position(&mut self) {
-        let Some(path) = &self.file_path else { return };
-        let uri = format!("file://{}", path.display());
-        let pos = self.position_ns as i64;
-        let dur = self.duration_ns as i64;
-        let resumable = pos > RESUME_MARGIN_NS && (dur == 0 || pos < dur - RESUME_MARGIN_NS);
-        if resumable {
-            self.position_store.set_position(&uri, pos);
+    /// Controls stay up while the pointer is in the window, briefly after it
+    /// moves, and whenever playback is paused (so you can always see the seek
+    /// bar and hit play again without fishing for the controls).
+    fn controls_target(&self, now: Instant) -> f32 {
+        let shown = self.pointer_in_window
+            || !self.is_playing()
+            || self.view_menu_open
+            || now < self.controls_last_move + CONTROLS_GRACE;
+        if shown {
+            1.0
         } else {
-            self.position_store.clear_position(&uri);
+            0.0
         }
-        self.position_store.save();
     }
 
-    pub fn adjust_volume(&mut self, delta: f64) {
-        self.volume = (self.volume + delta).clamp(0.0, 1.0);
-        if let Some(pipe) = &mut self.pipeline {
-            pipe.set_volume(self.volume);
+    /// Showing video rather than the visualizer.
+    pub fn video_mode(&self) -> bool {
+        !self.audio_only && self.pipeline.is_some()
+    }
+
+    /// Opacity of the volume readout right now (0 = not showing).
+    pub fn volume_osd_alpha(&self, now: Instant) -> f32 {
+        let Some(at) = self.volume_changed_at else {
+            return 0.0;
+        };
+        let age = now.duration_since(at);
+        if age <= OSD_HOLD {
+            1.0
+        } else {
+            let fade = (age - OSD_HOLD).as_secs_f32() / OSD_FADE.as_secs_f32();
+            (1.0 - fade).clamp(0.0, 1.0)
         }
     }
 
@@ -466,7 +344,7 @@ impl App {
         if self.duration_ns == 0 {
             0.0
         } else {
-            (self.position_ns as f64 / self.duration_ns as f64) as f32
+            (self.position_ns as f64 / self.duration_ns as f64).min(1.0) as f32
         }
     }
 
@@ -481,33 +359,4 @@ impl App {
             format!("{mins}:{secs:02}")
         }
     }
-}
-
-/// Group linear FFT bins into log-spaced visual bars.
-fn log_group_spectrum(raw: &[f32], num_bars: usize) -> Vec<f32> {
-    let n = raw.len();
-    if n == 0 {
-        return vec![0.0; num_bars];
-    }
-    // The top ~12% of bands sit above ~16kHz — effectively silent for music, so
-    // the last bar never moved. Map the bars only across the usable/musical span
-    // so every bar (including the far right) gets real energy.
-    let usable = ((n as f32) * 0.86).round().max(1.0) as usize;
-    let usable = usable.min(n);
-
-    let mut bars = Vec::with_capacity(num_bars);
-    for i in 0..num_bars {
-        let lo = ((i as f64 / num_bars as f64).powf(2.0) * usable as f64) as usize;
-        let hi = (((i + 1) as f64 / num_bars as f64).powf(2.0) * usable as f64) as usize;
-        let lo = lo.min(usable.saturating_sub(1));
-        let hi = hi.max(lo + 1).min(usable);
-
-        let sum: f32 = raw[lo..hi].iter().sum();
-        let avg = sum / (hi - lo) as f32;
-        let freq_t = i as f64 / num_bars as f64;
-        let treble_boost = (freq_t * 25.0) as f32;
-        let normalized = ((avg + treble_boost + 40.0) / 40.0).clamp(0.0, 1.0);
-        bars.push(normalized.powf(0.8));
-    }
-    bars
 }

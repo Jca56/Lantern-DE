@@ -2,8 +2,8 @@
 //! desktop bars and media key daemons can discover it and send transport commands.
 
 use std::sync::mpsc;
-use std::time::Duration;
 
+use crate::event_pump::Waker;
 use lntrn_dbus::{
     align_to, encode_dict_entry_sv, encode_signature, encode_string, encode_u32,
     encode_variant_bool, encode_variant_double, encode_variant_i64, encode_variant_string,
@@ -18,11 +18,16 @@ const IFACE_PROPS: &str = "org.freedesktop.DBus.Properties";
 // ── Public types ────────────────────────────────────────────────────────────
 
 /// Snapshot of player state sent from the main thread.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct PlayerState {
     pub title: String,
-    pub file_path: String,
+    /// Proper (escaped) `file://` URI of the open file; empty when none.
+    pub url: String,
+    /// Something is loaded (otherwise the status is "Stopped").
+    pub has_media: bool,
     pub playing: bool,
+    pub can_go_next: bool,
+    pub can_go_previous: bool,
     pub position_ns: u64,
     pub duration_ns: u64,
     pub volume: f64,
@@ -41,9 +46,10 @@ pub enum MprisCmd {
 
 // ── Spawn ───────────────────────────────────────────────────────────────────
 
-/// Create the D-Bus connection and claim the bus name on the CALLING thread,
-/// then hand the connection off to a background thread for message handling.
-pub fn spawn() -> (mpsc::Sender<PlayerState>, mpsc::Receiver<MprisCmd>) {
+/// Run the MPRIS server on its own thread: it connects to the session bus,
+/// claims the bus name and answers calls there. `waker` is poked after every
+/// command so the main loop acts on it at once instead of on its next timer.
+pub fn spawn(waker: Waker) -> (mpsc::Sender<PlayerState>, mpsc::Receiver<MprisCmd>) {
     let (state_tx, state_rx) = mpsc::channel();
     let (cmd_tx, cmd_rx) = mpsc::channel();
 
@@ -62,7 +68,7 @@ pub fn spawn() -> (mpsc::Sender<PlayerState>, mpsc::Receiver<MprisCmd>) {
             };
             log(&format!("D-Bus connected as {}", conn.unique_name()));
 
-            // Dup the fd to a high number so GStreamer can't accidentally close it
+            // Noted for diagnosing fd clashes with GStreamer's own D-Bus use.
             let raw_fd = conn.as_raw_fd();
             log(&format!("D-Bus socket fd={raw_fd}"));
 
@@ -72,7 +78,7 @@ pub fn spawn() -> (mpsc::Sender<PlayerState>, mpsc::Receiver<MprisCmd>) {
             }
             log(&format!("Claimed {BUS_NAME}"));
 
-            server_thread_with_conn(conn, state_rx, cmd_tx);
+            server_thread_with_conn(conn, state_rx, cmd_tx, waker);
         })
         .expect("spawn mpris server thread");
 
@@ -81,33 +87,65 @@ pub fn spawn() -> (mpsc::Sender<PlayerState>, mpsc::Receiver<MprisCmd>) {
 
 // ── Server thread ───────────────────────────────────────────────────────────
 
+/// The log starts over once it passes this size.
+const LOG_CAP: u64 = 256 * 1024;
+
+/// `~/.lantern/log/media-player-mpris.log`, with the other Lantern logs.
 fn log(msg: &str) {
     use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/lntrn-mpris.log")
-    {
+    use std::sync::OnceLock;
+    static PATH: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
+    let path = PATH.get_or_init(|| {
+        let dir = lntrn_theme::config::lantern_home()?.join("log");
+        std::fs::create_dir_all(&dir).ok()?;
+        let path = dir.join("media-player-mpris.log");
+        if std::fs::metadata(&path).is_ok_and(|m| m.len() > LOG_CAP) {
+            let _ = std::fs::remove_file(&path);
+        }
+        Some(path)
+    });
+    let Some(path) = path else { return };
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(f, "{msg}");
     }
 }
+
+/// How long the server waits on the bus before looking at fresh player state.
+const POLL_MS: i32 = 200;
 
 fn server_thread_with_conn(
     mut conn: Connection,
     state_rx: mpsc::Receiver<PlayerState>,
     cmd_tx: mpsc::Sender<MprisCmd>,
+    waker: Waker,
 ) {
     log("MPRIS server thread running");
 
     let mut state = PlayerState {
         title: String::new(),
-        file_path: String::new(),
+        url: String::new(),
+        has_media: false,
         playing: false,
+        can_go_next: false,
+        can_go_previous: false,
         position_ns: 0,
         duration_ns: 0,
         volume: 1.0,
     };
     loop {
+        // Sleep until a call arrives (answered at once, not on a 50 ms tick).
+        let mut fds = [libc::pollfd {
+            fd: conn.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        }];
+        // SAFETY: `fds` is a live one-element array.
+        unsafe { libc::poll(fds.as_mut_ptr(), 1, POLL_MS) };
+        if fds[0].revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
+            log("D-Bus connection closed; MPRIS server stopping");
+            return;
+        }
+
         // Drain state updates (keep only the latest). Clients query Position /
         // PlaybackStatus on demand, so we just need the freshest snapshot.
         while let Ok(new_state) = state_rx.try_recv() {
@@ -115,22 +153,26 @@ fn server_thread_with_conn(
         }
 
         // Handle incoming D-Bus method calls
+        let mut commanded = false;
         while let Some(msg) = conn.try_read() {
             if msg.is_method_call() {
-                handle_method(&mut conn, &msg, &state, &cmd_tx);
+                commanded |= handle_method(&mut conn, &msg, &state, &cmd_tx);
             }
         }
-
-        std::thread::sleep(Duration::from_millis(50));
+        if commanded {
+            waker.wake();
+        }
     }
 }
 
+/// Answer one call. Returns true when it queued a command for the main thread.
 fn handle_method(
     conn: &mut Connection,
     msg: &Message,
     state: &PlayerState,
     cmd_tx: &mpsc::Sender<MprisCmd>,
-) {
+) -> bool {
+    let is_command = msg.interface == IFACE_PLAYER;
     match (msg.interface.as_str(), msg.member.as_str()) {
         (IFACE_PROPS, "Get") => {
             let mut reader = BodyReader::new(&msg.body, &msg.signature);
@@ -202,6 +244,7 @@ fn handle_method(
             conn.send_reply(msg.serial, &msg.sender, "", &[]);
         }
     }
+    is_command
 }
 
 // ── Property encoding ───────────────────────────────────────────────────────
@@ -216,7 +259,11 @@ fn encode_property(buf: &mut Vec<u8>, iface: &str, prop: &str, state: &PlayerSta
         (IFACE_ROOT, "SupportedUriSchemes") => encode_variant_empty_array_string(buf),
         (IFACE_ROOT, "SupportedMimeTypes") => encode_variant_empty_array_string(buf),
         (IFACE_PLAYER, "PlaybackStatus") => {
-            let s = if state.playing { "Playing" } else { "Paused" };
+            let s = match (state.has_media, state.playing) {
+                (false, _) => "Stopped",
+                (true, true) => "Playing",
+                (true, false) => "Paused",
+            };
             encode_variant_string(buf, s);
         }
         (IFACE_PLAYER, "Metadata") => encode_variant_metadata(buf, state),
@@ -228,8 +275,8 @@ fn encode_property(buf: &mut Vec<u8>, iface: &str, prop: &str, state: &PlayerSta
         (IFACE_PLAYER, "Rate") => encode_variant_double(buf, 1.0),
         (IFACE_PLAYER, "MinimumRate") => encode_variant_double(buf, 1.0),
         (IFACE_PLAYER, "MaximumRate") => encode_variant_double(buf, 1.0),
-        (IFACE_PLAYER, "CanGoNext") => encode_variant_bool(buf, false),
-        (IFACE_PLAYER, "CanGoPrevious") => encode_variant_bool(buf, false),
+        (IFACE_PLAYER, "CanGoNext") => encode_variant_bool(buf, state.can_go_next),
+        (IFACE_PLAYER, "CanGoPrevious") => encode_variant_bool(buf, state.can_go_previous),
         (IFACE_PLAYER, "CanPlay") => encode_variant_bool(buf, true),
         (IFACE_PLAYER, "CanPause") => encode_variant_bool(buf, true),
         (IFACE_PLAYER, "CanSeek") => encode_variant_bool(buf, true),
@@ -321,9 +368,9 @@ fn encode_variant_metadata(buf: &mut Vec<u8>, state: &PlayerState) {
     }
 
     // xesam:url
-    if !state.file_path.is_empty() {
+    if !state.url.is_empty() {
         encode_dict_entry_sv(buf, "xesam:url", |b| {
-            encode_variant_string(b, &format!("file://{}", state.file_path));
+            encode_variant_string(b, &state.url);
         });
     }
 
