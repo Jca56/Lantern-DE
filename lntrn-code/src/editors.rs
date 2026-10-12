@@ -11,7 +11,7 @@ use crate::git::view::draw_git;
 use crate::preview::draw_preview;
 use crate::problems::{ProblemRow, draw_problems};
 use crate::search::view::draw_search;
-use crate::term::draw_terminal;
+use crate::term::{TermId, draw_terminal};
 
 impl App {
     pub fn draw_editor_header(&mut self, editor: Editor, ui: &mut Ui, cx: &mut AreaCx<TabState>) {
@@ -20,6 +20,12 @@ impl App {
                 if let Some(t) = cx.state.term.and_then(|id| self.terminals.iter().find(|t| t.id == id)) {
                     let title = t.title();
                     ui.label_dim(&title);
+                }
+            }
+            Editor::Run => {
+                let state = self.run_state();
+                if !state.is_empty() {
+                    ui.label_dim(&state);
                 }
             }
             Editor::Diff => {
@@ -33,6 +39,54 @@ impl App {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Terminal `id` over the area's body: its screen, the keyboard when
+    /// the area becomes the active one, and what a click, a drop or a
+    /// right click on it asks for.
+    fn draw_term(&mut self, id: TermId, ui: &mut Ui, cx: &mut AreaCx<TabState>) {
+        let active = cx.active;
+        // The frame this area became the active one: the terminal
+        // takes the keyboard without a click.
+        let grab_focus = active && self.term_active_area != Some(cx.area);
+        if active {
+            self.term_active_area = Some(cx.area);
+        } else if self.term_active_area == Some(cx.area) {
+            self.term_active_area = None;
+        }
+        let settings = &self.settings;
+        if let Some(t) = self.terminals.iter_mut().find(|t| t.id == id) {
+            let out = draw_terminal(ui, t, settings, active, grab_focus);
+            if out.focused {
+                self.last_editor_focus = Some(ui.id("term"));
+            }
+            // A file dragged out of the tree: lit while it hovers,
+            // its path typed at the prompt when it lands.
+            if self.tree.drag.as_ref().is_some_and(|d| d.started) && out.rect.contains(ui.state.pointer) {
+                let saved = ui.draw.layer();
+                ui.draw.set_layer(saved + 2);
+                ui.draw.stroke_rect(out.rect, ui.m.px(2.0), 0.0, ui.theme.accent);
+                ui.draw.set_layer(saved);
+            }
+            if let Some((p, _, _)) = self.pending_drop.take_if(|(_, at, _)| out.rect.contains(*at)) {
+                t.type_path(&p);
+                ui.state.focus = Some(ui.id("term"));
+                cx.rebuild();
+            }
+            if let Some((path, line, col)) = out.open {
+                self.pending_paths.push(path.clone());
+                self.pending_goto = Some((path, Goto::Printed { line, col }));
+                cx.rebuild();
+            }
+            if let Some(url) = out.open_url {
+                crate::launch::open_external(&url);
+                cx.host().toast(&format!("Opening {url}"));
+            }
+            if let Some(at) = out.context {
+                self.context_term = Some(id);
+                cx.request(ShellRequest::MenuAt("terminal".to_owned(), at));
+            }
         }
     }
 
@@ -104,46 +158,15 @@ impl App {
                         id
                     }
                 };
-                let active = cx.active;
-                // The frame this area became the active one: the terminal
-                // takes the keyboard without a click.
-                let grab_focus = active && self.term_active_area != Some(cx.area);
-                if active {
-                    self.term_active_area = Some(cx.area);
-                } else if self.term_active_area == Some(cx.area) {
-                    self.term_active_area = None;
-                }
-                let settings = &self.settings;
-                if let Some(t) = self.terminals.iter_mut().find(|t| t.id == id) {
-                    let out = draw_terminal(ui, t, settings, active, grab_focus);
-                    if out.focused {
-                        self.last_editor_focus = Some(ui.id("term"));
-                    }
-                    // A file dragged out of the tree: lit while it hovers,
-                    // its path typed at the prompt when it lands.
-                    if self.tree.drag.as_ref().is_some_and(|d| d.started) && out.rect.contains(ui.state.pointer) {
-                        let saved = ui.draw.layer();
-                        ui.draw.set_layer(saved + 2);
-                        ui.draw.stroke_rect(out.rect, ui.m.px(2.0), 0.0, ui.theme.accent);
-                        ui.draw.set_layer(saved);
-                    }
-                    if let Some((p, _, _)) = self.pending_drop.take_if(|(_, at, _)| out.rect.contains(*at)) {
-                        t.type_path(&p);
-                        ui.state.focus = Some(ui.id("term"));
-                        cx.rebuild();
-                    }
-                    if let Some((path, line, col)) = out.open {
-                        self.pending_paths.push(path.clone());
-                        self.pending_goto = Some((path, Goto::Printed { line, col }));
-                        cx.rebuild();
-                    }
-                    if let Some(url) = out.open_url {
-                        crate::launch::open_external(&url);
-                        cx.host().toast(&format!("Opening {url}"));
-                    }
-                    if let Some(at) = out.context {
-                        self.context_term = Some(id);
-                        cx.request(ShellRequest::MenuAt("terminal".to_owned(), at));
+                self.draw_term(id, ui, cx);
+                false
+            }
+            Editor::Run => {
+                match self.run.term.filter(|id| self.terminals.iter().any(|t| t.id == *id)) {
+                    Some(id) => self.draw_term(id, ui, cx),
+                    None => {
+                        ui.heading("Run");
+                        ui.label_dim("Nothing has run yet. Press Run in the status bar, or F5, and the open file or project runs here.");
                     }
                 }
                 false

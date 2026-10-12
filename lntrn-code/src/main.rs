@@ -1,9 +1,10 @@
 //! lntrn-code: the Lantern DE code editor, on Lantern UI 2. A `Host` with
-//! eight editors (Code, Files, Terminal, Problems, Preview, Diff,
-//! Preferences, Key Bindings) that the shell lays out in areas the user
-//! splits, tabs and swaps; files open into the Code area's own file tabs
-//! (pictures too, shown rather than read), and Claude Code's proposed
-//! edits into the Diff editor.
+//! its editors (Code, Files, Search, Git, Terminal, Run, Problems,
+//! Preview, Diff, Preferences, Key Bindings) that the shell lays out in
+//! areas the user splits, tabs and swaps; files open into the Code
+//! area's own file tabs (pictures too, shown rather than read), Claude
+//! Code's proposed edits into the Diff editor, and the program the
+//! status bar's Run button starts into the Run editor.
 
 mod actions;
 mod app;
@@ -33,6 +34,7 @@ mod pending;
 mod picture;
 mod preview;
 mod problems;
+mod run;
 mod search;
 mod session;
 mod settings;

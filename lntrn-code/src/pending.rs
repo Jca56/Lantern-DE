@@ -37,7 +37,7 @@ impl App {
     /// Bring an editor on screen: focus the area that has it, or split
     /// one off for it (Files on the left, Terminal below, the rest to the
     /// right of the focused area).
-    fn show_editor(&mut self, shell: &mut Shell<Self>, editor: Editor) -> Option<AreaId> {
+    pub(crate) fn show_editor(&mut self, shell: &mut Shell<Self>, editor: Editor) -> Option<AreaId> {
         if let Some(a) = shell.screen.target(editor) {
             shell.screen.active = Some(a);
             return Some(a);
@@ -67,8 +67,9 @@ impl App {
                 }
             },
             Editor::Terminal => shell.screen.split(base, Axis::Vertical, 0.65, editor)?,
-            // Problems sit beside the terminal whose output they came from.
-            Editor::Problems => match shell.screen.target(Editor::Terminal) {
+            // Problems sit beside the terminal whose output they came
+            // from, and a run's output where the terminal is looked for.
+            Editor::Problems | Editor::Run => match shell.screen.target(Editor::Terminal) {
                 Some(a) => {
                     shell.screen.add_tab(a, editor);
                     a
@@ -180,6 +181,7 @@ impl App {
             self.show_editor(shell, e);
             again = true;
         }
+        again |= self.run_apply(shell);
         if let Some(cwd) = self.pending_new_terminal.take() {
             let area = match shell.screen.target(Editor::Terminal) {
                 Some(a) => {
@@ -290,9 +292,15 @@ impl App {
         id
     }
 
-    /// Terminals no area of the main window holds any more are closed.
+    /// Terminals no area of the main window holds any more are closed,
+    /// what runs in them with them.
     pub(crate) fn reap_terminals(&mut self, shell: &Shell<Self>) {
-        let used: HashSet<TermId> = shell.screen.area_ids().filter_map(|a| shell.screen.area(a)).flat_map(|a| a.tabs.iter().filter_map(|t| t.state.term)).collect();
+        let mut used: HashSet<TermId> = shell.screen.area_ids().filter_map(|a| shell.screen.area(a)).flat_map(|a| a.tabs.iter().filter_map(|t| t.state.term)).collect();
+        // The run's terminal is no tab's own: it lives while a Run tab
+        // is there to show it.
+        if shell.screen.tab_hosting(Editor::Run).is_some() {
+            used.extend(self.run.term);
+        }
         self.terminals.retain(|t| used.contains(&t.id));
     }
 }

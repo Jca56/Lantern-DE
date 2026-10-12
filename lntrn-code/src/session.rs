@@ -1,6 +1,7 @@
 //! What was open last time: the project folder, the files with their
-//! caret positions, the pictures, and the projects opened before, as a
-//! small text file in the config directory.
+//! caret positions, the pictures, the projects opened before, and the
+//! run commands given to projects, as a small text file in the config
+//! directory.
 
 use std::path::{Path, PathBuf};
 
@@ -15,6 +16,8 @@ pub struct Session {
     pub pictures: Vec<PathBuf>,
     /// Projects opened before, newest first.
     pub recent: Vec<PathBuf>,
+    /// The command Run starts in a project, where one was set by hand.
+    pub run: Vec<(PathBuf, String)>,
 }
 
 const FILE: &str = "session.txt";
@@ -50,6 +53,13 @@ impl Session {
                 if !rest.is_empty() {
                     s.pictures.push(PathBuf::from(rest));
                 }
+            } else if let Some(rest) = line.strip_prefix("run\t") {
+                if let Some((root, command)) = rest.split_once('\t')
+                    && !root.is_empty()
+                    && !command.is_empty()
+                {
+                    s.run.push((PathBuf::from(root), command.to_owned()));
+                }
             } else if let Some(rest) = line.strip_prefix("open\t") {
                 let mut parts = rest.split('\t');
                 let path = parts.next().unwrap_or_default();
@@ -77,6 +87,9 @@ impl Session {
         for r in &self.recent {
             out.push_str(&format!("recent\t{}\n", r.display()));
         }
+        for (root, command) in &self.run {
+            out.push_str(&format!("run\t{}\t{command}\n", root.display()));
+        }
         out
     }
 
@@ -85,6 +98,21 @@ impl Session {
         self.recent.retain(|r| r != root);
         self.recent.insert(0, root.to_path_buf());
         self.recent.truncate(RECENT_CAP);
+    }
+
+    /// The run command set for the project at `root`.
+    pub fn run_command(&self, root: &Path) -> Option<&str> {
+        self.run.iter().find(|(r, _)| r == root).map(|(_, c)| c.as_str())
+    }
+
+    /// Set the project's run command, on one line; `None` or nothing but
+    /// spaces forgets it.
+    pub fn set_run_command(&mut self, root: &Path, command: Option<&str>) {
+        self.run.retain(|(r, _)| r != root);
+        let line = command.unwrap_or_default().split_whitespace().collect::<Vec<_>>().join(" ");
+        if !line.is_empty() {
+            self.run.push((root.to_path_buf(), line));
+        }
     }
 
     /// The saved caret of `path`, if it was open.
@@ -99,7 +127,7 @@ mod tests {
 
     #[test]
     fn round_trip() {
-        let mut s = Session { root: Some(PathBuf::from("/home/x/proj")), open: vec![(PathBuf::from("/home/x/proj/a.rs"), 3, 7), (PathBuf::from("/tmp/b c.md"), 0, 0)], pictures: vec![PathBuf::from("/home/x/proj/logo one.png")], recent: Vec::new() };
+        let mut s = Session { root: Some(PathBuf::from("/home/x/proj")), open: vec![(PathBuf::from("/home/x/proj/a.rs"), 3, 7), (PathBuf::from("/tmp/b c.md"), 0, 0)], pictures: vec![PathBuf::from("/home/x/proj/logo one.png")], recent: Vec::new(), run: Vec::new() };
         s.remember(Path::new("/home/x/old"));
         s.remember(Path::new("/home/x/proj"));
         s.remember(Path::new("/home/x/old"));
@@ -108,5 +136,15 @@ mod tests {
         assert_eq!(back, s);
         assert_eq!(back.caret(Path::new("/home/x/proj/a.rs")), Some((3, 7)));
         assert_eq!(Session::parse("garbage\n").root, None);
+        // Run commands: one per project, on one line, forgotten when emptied.
+        s.set_run_command(Path::new("/home/x/proj"), Some("cargo run"));
+        s.set_run_command(Path::new("/home/x/my games"), Some(" python\tmain.py  --fast\n"));
+        s.set_run_command(Path::new("/home/x/proj"), Some("make run && ./out"));
+        assert_eq!(s.run_command(Path::new("/home/x/proj")), Some("make run && ./out"));
+        assert_eq!(s.run_command(Path::new("/home/x/my games")), Some("python main.py --fast"));
+        assert_eq!(Session::parse(&s.to_text()), s);
+        s.set_run_command(Path::new("/home/x/proj"), Some("  "));
+        s.set_run_command(Path::new("/home/x/my games"), None);
+        assert!(s.run.is_empty());
     }
 }

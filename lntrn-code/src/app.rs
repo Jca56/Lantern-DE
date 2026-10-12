@@ -22,6 +22,7 @@ use crate::git::Git;
 use crate::git::gutter::LineMark;
 use crate::lsp::{CodeAction, Lsp};
 use crate::picture::Pictures;
+use crate::run::Run;
 use crate::editor::lsp_ui::LspUi;
 use crate::search::Search;
 use crate::session::Session;
@@ -50,6 +51,8 @@ pub struct App {
     pub last_revealed: Option<DocId>,
     pub terminals: Vec<Terminal>,
     pub(crate) next_term: u64,
+    /// What Run started last, and what it would start now.
+    pub run: Run,
     pub finder: Finder,
     pub search: Search,
     /// The language servers and their popups in the code view.
@@ -149,6 +152,7 @@ impl App {
             last_revealed: None,
             terminals: Vec::new(),
             next_term: 1,
+            run: Run::default(),
             finder: Finder::default(),
             search: Search::default(),
             lsp: Lsp::default(),
@@ -325,6 +329,7 @@ impl App {
             open: self.docs.iter().filter_map(|d| d.path.as_ref().map(|p| (p.clone(), d.cursor.line, d.cursor.col))).collect(),
             pictures: self.pictures.iter().map(|p| p.path.clone()).collect(),
             recent: self.session.recent.clone(),
+            run: self.session.run.clone(),
         };
         self.session.save(APP_ID);
     }

@@ -42,6 +42,7 @@ fn terminal_area_at_runtime() {
     h.key(Key::Enter);
     h.key(Key::ArrowUp);
     h.key_with(Key::Char('c'), Modifiers::CTRL);
+    // F5 is the program's in a shell's terminal, not Run's.
     h.key(Key::F(5));
     h.wheel(3.0);
     h.move_to(rect.center() + Vec2::new(10.0, 10.0));
@@ -52,6 +53,7 @@ fn terminal_area_at_runtime() {
         app.apply_pending(&mut shell);
         app.reap_terminals(&shell);
     }
+    assert!(app.run.term.is_none(), "nothing was run");
     // Resize to something tiny and back.
     let mut small = Harness::new(300.0, 200.0);
     for _ in 0..3 {

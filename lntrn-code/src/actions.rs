@@ -542,6 +542,7 @@ impl App {
                 }
             }
             IDE_SEND => self.pending_ide_send = true,
+            RUN | RUN_STOP | RUN_SET | RUN_SET_GO | RUN_FORGET | SHOW_RUN => self.run_do(action, cx),
             other => {
                 if let Some(p) = other.strip_prefix(OPEN_PREFIX) {
                     self.pending_paths.push(PathBuf::from(p));

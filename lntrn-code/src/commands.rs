@@ -130,11 +130,23 @@ pub const REFRESH_TREE: &str = "files.refresh";
 pub const IDE_ACCEPT: &str = "ide.accept";
 pub const IDE_REJECT: &str = "ide.reject";
 pub const IDE_SEND: &str = "ide.send_selection";
+/// Start the open file or the project in the Run editor; interrupt it.
+pub const RUN: &str = "run.start";
+pub const RUN_STOP: &str = "run.stop";
+/// Ask for the project's run command, set it, go back to working it out.
+pub const RUN_SET: &str = "run.set_command";
+pub const RUN_SET_GO: &str = "run.set_command_go";
+pub const RUN_FORGET: &str = "run.forget_command";
+pub const SHOW_RUN: &str = "view.run";
 /// `open:<path>`: a file from the palette's quick open.
 pub const OPEN_PREFIX: &str = "open:";
 
 /// The palette's commands: (action id, label).
-pub const PALETTE: [(&str, &str); 60] = [
+pub const PALETTE: [(&str, &str); 64] = [
+    (RUN, "Run"),
+    (RUN_STOP, "Stop the Running Program"),
+    (RUN_SET, "Set Run Command…"),
+    (SHOW_RUN, "Show Run Panel"),
     (GOTO_DEF, "Go to Definition"),
     (MOVE_LINE_UP, "Move Line Up"),
     (MOVE_LINE_DOWN, "Move Line Down"),
@@ -246,6 +258,8 @@ pub fn keymap() -> KeyConfig {
     bind(Char('-'), ctrl, ZOOM_OUT);
     bind(Char('0'), ctrl, ZOOM_RESET);
     bind(Space, ctrl | shift, SIGNATURE);
+    bind(F(5), none, RUN);
+    bind(F(5), shift, RUN_STOP);
     let alt = Modifiers::ALT;
     bind(Char('k'), ctrl | alt, IDE_SEND);
     bind(Char('a'), alt, IDE_ACCEPT);
@@ -254,7 +268,7 @@ pub fn keymap() -> KeyConfig {
 }
 
 pub fn title_menus() -> &'static [(&'static str, &'static str)] {
-    &[("File", "file"), ("Edit", "edit"), ("View", "view"), ("Help", "help")]
+    &[("File", "file"), ("Edit", "edit"), ("View", "view"), ("Run", "run"), ("Help", "help")]
 }
 
 /// The last part of a path, or the whole of it for `/`.
@@ -453,6 +467,7 @@ pub fn menu(app: &App, name: &str) -> Option<Menu> {
         "files-context" => files_menu(app, true),
         "editor-context" => editor_context_menu(app),
         "terminal" => terminal_menu(app),
+        "run" => crate::run::menu(app),
         "file" => Menu::new(
             "File",
             vec![
@@ -522,6 +537,7 @@ pub fn menu(app: &App, name: &str) -> Option<Menu> {
                     item("Git", SHOW_GIT),
                     item("Terminal", SHOW_TERMINAL),
                     item("New Terminal", NEW_TERMINAL),
+                    item("Run Panel", SHOW_RUN),
                     item("Problems", SHOW_PROBLEMS),
                     item("Markdown Preview", SHOW_PREVIEW),
                     MenuItem::separator(),

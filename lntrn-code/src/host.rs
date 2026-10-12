@@ -4,6 +4,7 @@
 
 use std::path::PathBuf;
 
+use lntrn_math::Rect;
 use lntrn_props::Value;
 use lntrn_ui::keymap::CTX_WINDOW;
 use lntrn_ui::{Action, AreaCx, AreaId, Dialog, Host, HostCx, KeyItem, KeyPress, Menu, ShellRequest, Ui, actions};
@@ -41,12 +42,18 @@ impl Host for App {
             Editor::Problems => "Problems",
             Editor::Search => "Search",
             Editor::Git => "Git",
+            Editor::Run => "Run",
         }
     }
 
-    /// A terminal tab wears the dot while its bell waits to be seen.
+    /// A terminal tab wears the dot while its bell waits to be seen; the
+    /// Run tab for the run's.
     fn tab_attention(&self, editor: Editor, state: &TabState) -> bool {
-        editor == Editor::Terminal && state.term.is_some_and(|id| self.terminals.iter().any(|t| t.id == id && t.attention))
+        match editor {
+            Editor::Terminal => state.term.is_some_and(|id| self.terminals.iter().any(|t| t.id == id && t.attention)),
+            Editor::Run => self.run_terminal().is_some_and(|t| t.attention),
+            _ => false,
+        }
     }
 
     /// The project name alone: the open file already shows in its tab.
@@ -98,6 +105,11 @@ impl Host for App {
         true
     }
 
+    /// The Run button sits at the status bar's right end.
+    fn draw_status_bar(&mut self, ui: &mut Ui, space: Rect) -> f64 {
+        self.draw_run_button(ui, space)
+    }
+
     fn opaque_bars(&self) -> bool {
         self.settings.opaque_bars
     }
@@ -132,7 +144,12 @@ impl Host for App {
     /// The code view and the terminal paint their bodies edge to edge
     /// themselves, one layer, so translucency does not stack (U037).
     fn paints_body(&self, editor: Editor) -> bool {
-        matches!(editor, Editor::Code | Editor::Terminal)
+        match editor {
+            Editor::Code | Editor::Terminal => true,
+            // A run's terminal does too; with nothing run, there are words.
+            Editor::Run => self.run_terminal().is_some(),
+            _ => false,
+        }
     }
 
     fn editor_scale(&self, editor: Editor) -> f64 {
@@ -156,8 +173,12 @@ impl Host for App {
 
     fn draw_item(&mut self, key: &str, ui: &mut Ui, cx: &mut HostCx) -> bool {
         match key {
-            "text" | "line" => {
-                let label = if key == "line" { "Line" } else { "Name" };
+            "text" | "line" | "command" => {
+                let label = match key {
+                    "line" => "Line",
+                    "command" => "Command",
+                    _ => "Name",
+                };
                 ui.labelled(label, |ui| {
                     if ui.state.focus.is_none() {
                         let id = ui.id("field");

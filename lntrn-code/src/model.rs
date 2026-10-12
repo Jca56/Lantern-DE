@@ -21,9 +21,11 @@ pub enum Editor {
     Search,
     /// The repository: branch, changed files, staging and commits.
     Git,
+    /// The program Run started, in a terminal of its own.
+    Run,
 }
 
-pub const EDITORS: [Editor; 10] = [Editor::Code, Editor::Files, Editor::Search, Editor::Git, Editor::Terminal, Editor::Problems, Editor::Preview, Editor::Diff, Editor::Preferences, Editor::Keys];
+pub const EDITORS: [Editor; 11] = [Editor::Code, Editor::Files, Editor::Search, Editor::Git, Editor::Terminal, Editor::Run, Editor::Problems, Editor::Preview, Editor::Diff, Editor::Preferences, Editor::Keys];
 
 /// Where to put the caret once a file is open.
 #[derive(Clone, Debug, PartialEq, Eq)]

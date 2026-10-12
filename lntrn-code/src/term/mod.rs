@@ -4,6 +4,7 @@
 
 pub mod diag;
 
+use std::ffi::OsString;
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -43,8 +44,17 @@ impl Terminal {
     /// The user's shell in `cwd`, with `env` added to its environment
     /// (how `claude` finds the editor).
     pub fn new(id: TermId, cwd: Option<PathBuf>, cols: usize, rows: usize, scrollback: usize, waker: Option<Waker>, env: Vec<(String, String)>) -> Self {
+        Self::launch(id, Launch { cwd, command: None, env, program: "lntrn-code".to_owned() }, cols, rows, scrollback, waker)
+    }
+
+    /// `command` (a program and its arguments, run as they are) in `cwd`
+    /// in place of a shell: what Run starts.
+    pub fn with_command(id: TermId, cwd: PathBuf, command: Vec<OsString>, cols: usize, rows: usize, scrollback: usize, waker: Option<Waker>) -> Self {
+        Self::launch(id, Launch { cwd: Some(cwd), command: Some(command), env: Vec::new(), program: "lntrn-code".to_owned() }, cols, rows, scrollback, waker)
+    }
+
+    fn launch(id: TermId, launch: Launch, cols: usize, rows: usize, scrollback: usize, waker: Option<Waker>) -> Self {
         let wake = waker.map(|w| Arc::new(move || w.wake()) as lntrn_term::Wake);
-        let launch = Launch { cwd, command: None, env, program: "lntrn-code".to_owned() };
         Self { term: lntrn_term::Terminal::new(id, launch, cols, rows, scrollback, wake), diags: Diagnostics::default() }
     }
 
