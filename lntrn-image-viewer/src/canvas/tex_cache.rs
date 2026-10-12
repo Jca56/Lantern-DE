@@ -69,16 +69,13 @@ fn load_capped(path: &Path, gpu: &GpuContext, tex_pass: &TexturePass) -> Option<
     let (rgba, w, h) = if is_svg {
         rasterize_svg_capped(path)?
     } else {
-        let mut reader = image::ImageReader::open(path)
-            .ok()?
-            .with_guessed_format()
-            .ok()?;
         let mut limits = image::Limits::default();
         limits.max_image_width = Some(16_384);
         limits.max_image_height = Some(16_384);
         limits.max_alloc = Some(512 * 1024 * 1024);
-        reader.limits(limits);
-        let img = reader.decode().ok()?;
+        // Upright like the viewer shows it; the item's size came from the
+        // same orientation-aware header peek, so the two agree.
+        let img = crate::loaders::decode_oriented(path, Some(limits))?.image;
         let img = if img.width() > IMPORT_MAX_DIM || img.height() > IMPORT_MAX_DIM {
             img.thumbnail(IMPORT_MAX_DIM, IMPORT_MAX_DIM)
         } else {

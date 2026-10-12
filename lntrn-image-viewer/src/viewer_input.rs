@@ -15,6 +15,7 @@ use lntrn_ui::gpu::{InteractionContext, Scrollbar};
 
 use crate::app::{App, ViewerDialog};
 use crate::canvas::sidebar::SidebarState;
+use crate::keyboard::KeyPress;
 use crate::canvas::sidebar_layout::SidebarLayout;
 use crate::render::{sidebar_band, sidebar_reserved_w, viewer_canvas};
 use crate::{
@@ -29,12 +30,6 @@ pub enum ViewerAction {
     /// Put the open image on the clipboard — needs the Wayland objects the
     /// event loop owns, so it's carried out there.
     Copy,
-}
-
-#[derive(Clone, Copy, Default)]
-pub struct Mods {
-    pub ctrl: bool,
-    pub logo: bool,
 }
 
 // evdev keycodes
@@ -58,7 +53,19 @@ const KEY_DELETE: u32 = 111;
 
 // ── Keyboard ────────────────────────────────────────────────────────────────
 
-pub fn on_key(app: &mut App, sb: &mut SidebarState, gpu: &Gpu, key: u32, m: Mods) -> ViewerAction {
+/// Held keys repeat for stepping through images, zooming and nudging the
+/// slideshow interval; everything else (toggles, Delete, dialogs) acts once
+/// per press.
+pub fn on_key(app: &mut App, sb: &mut SidebarState, gpu: &Gpu, press: KeyPress) -> ViewerAction {
+    let key = press.key;
+    if press.repeat {
+        let steps = matches!(key, KEY_LEFT | KEY_RIGHT | KEY_COMMA | KEY_DOT);
+        let zoom = press.ctrl && matches!(key, KEY_EQUAL | KEY_MINUS);
+        let plain = !press.ctrl && !press.logo;
+        if app.dialog.is_some() || !(zoom || (plain && steps)) {
+            return ViewerAction::None;
+        }
+    }
     if app.dialog.is_some() {
         match key {
             KEY_ENTER => confirm_dialog(app, sb, gpu),
@@ -67,7 +74,7 @@ pub fn on_key(app: &mut App, sb: &mut SidebarState, gpu: &Gpu, key: u32, m: Mods
         }
         return ViewerAction::None;
     }
-    if m.logo {
+    if press.logo {
         // Super+F11: rice mode — the compositor deliberately lets this combo
         // through (plain F11 is its fullscreen toggle) so apps can own it.
         if key == KEY_F11 {
@@ -75,7 +82,7 @@ pub fn on_key(app: &mut App, sb: &mut SidebarState, gpu: &Gpu, key: u32, m: Mods
         }
         return ViewerAction::None;
     }
-    if m.ctrl {
+    if press.ctrl {
         match key {
             KEY_Q => return ViewerAction::Quit,
             KEY_C => return ViewerAction::Copy,
@@ -231,7 +238,7 @@ pub fn on_release(
     if is_dir {
         sb.navigate(path);
     } else {
-        app.open_image(&gpu.ctx, &gpu.tex_pass, &path.to_string_lossy());
+        app.open_image(&gpu.ctx, &gpu.tex_pass, &path);
     }
 }
 

@@ -37,7 +37,6 @@ pub fn render_frame(
     let hidden = app.chrome_hidden;
 
     // ── Phase A: browser bookkeeping (mutable) ──────────────────────
-    sb.poll_thumbs(ctx, tex_pass);
     sb.scroll.tick(dt);
     // Re-clamp the panel width in case the window shrank under it.
     sb.set_width(sb.width, wf / s);
@@ -73,7 +72,15 @@ pub fn render_frame(
         draw_title_bar(painter, input, app, palette, wf, s);
     }
 
+    // The picture goes into the texture pass first: the pass drops whatever
+    // is past its cap, and that must be a sidebar thumbnail, never this.
+    let canvas = viewer_canvas(app, sb, wf, hf, s);
     let mut tex_draws: Vec<TextureDraw> = Vec::new();
+    if let (Some(img), Some(r)) = (&app.image, app.display_rect(canvas)) {
+        let mut draw = TextureDraw::new(&img.texture, r.x, r.y, r.w, r.h);
+        draw.clip = Some([canvas.x, canvas.y, canvas.w, canvas.h]);
+        tex_draws.push(draw);
+    }
     if show_sidebar {
         draw_sidebar(
             painter,
@@ -95,25 +102,11 @@ pub fn render_frame(
     }
 
     // ── Canvas area (image display) ─────────────────────────────────
-    let canvas = viewer_canvas(app, sb, wf, hf, s);
     // With the chrome hidden the image area IS the window, so it has to
     // supply the rounded corners the title/status bars normally provide.
     let radius = if hidden { 10.0 * s } else { 0.0 };
     painter.rect_filled(canvas, radius, Color::from_rgb8(18, 18, 18));
     let _canvas_state = input.add_zone(ZONE_CANVAS, canvas);
-
-    if let Some(img) = &app.image {
-        let fit_zoom = (canvas.w / img.width as f32).min(canvas.h / img.height as f32);
-        let display_zoom = fit_zoom * app.zoom;
-        let draw_w = img.width as f32 * display_zoom;
-        let draw_h = img.height as f32 * display_zoom;
-        let draw_x = canvas.x + (canvas.w - draw_w) * 0.5 + app.pan_x;
-        let draw_y = canvas.y + (canvas.h - draw_h) * 0.5 + app.pan_y;
-
-        let mut draw = TextureDraw::new(&img.texture, draw_x, draw_y, draw_w, draw_h);
-        draw.clip = Some([canvas.x, canvas.y, canvas.w, canvas.h]);
-        tex_draws.push(draw);
-    }
 
     if !hidden {
         draw_status_bar(painter, text, app, palette, canvas, wf, hf, s, sw, sh);
@@ -122,6 +115,19 @@ pub fn render_frame(
     // ── Overlay layer: everything that floats above the picture ─────
     painter.set_layer(1);
     text.set_layer(1);
+
+    // Nothing to show (unreadable file, emptied folder): say so in the
+    // picture's place, where it's seen even with the status bar hidden.
+    if app.image.is_none() {
+        let fpx = FontSize::Body.px() * s;
+        let msg = middle_ellipsize(text, &app.status_text, fpx, canvas.w - 48.0 * s);
+        let w = text.measure_width(&msg, fpx);
+        TextLabel::new(&msg, canvas.x + (canvas.w - w) * 0.5, canvas.y + (canvas.h - fpx) * 0.5)
+            .size(FontSize::Custom(fpx))
+            .color(palette.text_secondary)
+            .max_width(w + 24.0 * s)
+            .draw(text, sw, sh);
+    }
 
     // ── Navigation arrows ─────────────────────────────────────────
     if app.dir_files.len() > 1 {
@@ -397,12 +403,10 @@ fn draw_status_bar(
         if app.slideshow.is_some() {
             parts.push(format!("▶ {}s", app.slideshow_interval.as_secs()));
         }
-        if app.dir_files.len() > 1 {
+        if app.listed && app.dir_files.len() > 1 {
             parts.push(format!("{} / {}", app.dir_index + 1, app.dir_files.len()));
         }
-        if let Some(img) = &app.image {
-            let fit_zoom = (canvas.w / img.width as f32).min(canvas.h / img.height as f32);
-            let pct = (fit_zoom * app.zoom * 100.0).round() as u32;
+        if let Some(pct) = app.zoom_percent(canvas) {
             parts.push(format!("{} — {}%", app.dimensions_text, pct));
         }
         if parts.is_empty() {

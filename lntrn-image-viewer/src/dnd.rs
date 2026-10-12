@@ -4,7 +4,13 @@
 //! The Dispatch impls extend `wayland::State` from here so wayland.rs stays
 //! lean. On Drop the offer pipe is read on a short-lived thread (the main
 //! thread is busy running the event loop) and the parsed paths come back
-//! through `State::dnd_tx`; the main loop polls the receiver each frame.
+//! through `State::dnd_tx`; the main loop polls the receiver each wake-up.
+//!
+//! Every offer arrives as a `data_offer` event first, its mime types after;
+//! only then does `enter` (a drag) or `selection` (the clipboard) say what
+//! it's for. Each is tracked with its own mime list until used, so a
+//! clipboard change mid-drag can't clobber the drag's offer, and clipboard
+//! offers — never pasted here — are destroyed instead of leaking.
 
 use std::io::Read;
 use std::os::fd::AsFd;
@@ -16,6 +22,23 @@ use wayland_client::{event_created_child, Connection, Dispatch, Proxy, QueueHand
 use crate::wayland::State;
 
 const MIME_URI_LIST: &str = "text/uri-list";
+
+impl State {
+    /// Forget a tracked offer, returning its mime types.
+    fn take_offer(&mut self, offer: &wl_data_offer::WlDataOffer) -> Vec<String> {
+        match self.dnd_offers.iter().position(|(o, _)| o == offer) {
+            Some(i) => self.dnd_offers.remove(i).1,
+            None => Vec::new(),
+        }
+    }
+
+    fn offers_uri_list(&self, offer: &wl_data_offer::WlDataOffer) -> bool {
+        self.dnd_offers
+            .iter()
+            .find(|(o, _)| o == offer)
+            .is_some_and(|(_, mimes)| mimes.iter().any(|m| m == MIME_URI_LIST))
+    }
+}
 
 impl Dispatch<wl_data_device_manager::WlDataDeviceManager, ()> for State {
     fn event(
@@ -40,18 +63,14 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for State {
     ) {
         use wl_data_device::Event;
         match event {
-            Event::DataOffer { id } => {
-                // New offer — its mime types arrive as Offer events before Enter.
-                state.dnd_offer = Some(id);
-                state.dnd_mimes.clear();
-            }
+            Event::DataOffer { id } => state.dnd_offers.push((id, Vec::new())),
             Event::Enter {
                 serial, x, y, id, ..
             } => {
                 state.dnd_x = x;
                 state.dnd_y = y;
                 if let Some(offer) = id {
-                    if state.dnd_mimes.iter().any(|m| m == MIME_URI_LIST) {
+                    if state.offers_uri_list(&offer) {
                         offer.accept(serial, Some(MIME_URI_LIST.to_string()));
                         // v3 sources need an action preference or the
                         // compositor cancels the drag before Drop fires.
@@ -74,15 +93,16 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for State {
             }
             Event::Leave => {
                 if let Some(offer) = state.dnd_offer.take() {
+                    state.take_offer(&offer);
                     offer.destroy();
                 }
-                state.dnd_mimes.clear();
             }
             Event::Drop => {
                 if let Some(offer) = state.dnd_offer.take() {
-                    if state.dnd_mimes.iter().any(|m| m == MIME_URI_LIST) {
+                    let mimes = state.take_offer(&offer);
+                    if mimes.iter().any(|m| m == MIME_URI_LIST) {
                         state.dnd_reading = true;
-                        state.frame_done = true;
+                        state.needs_redraw = true;
                         let tx = state.dnd_tx.clone();
                         std::thread::spawn(move || {
                             // Empty vec on failure still clears dnd_reading.
@@ -92,7 +112,11 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for State {
                         offer.destroy();
                     }
                 }
-                state.dnd_mimes.clear();
+            }
+            // The clipboard changed. We never paste, so its offer is of no use.
+            Event::Selection { id: Some(offer) } => {
+                state.take_offer(&offer);
+                offer.destroy();
             }
             _ => {}
         }
@@ -106,14 +130,16 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for State {
 impl Dispatch<wl_data_offer::WlDataOffer, ()> for State {
     fn event(
         state: &mut Self,
-        _: &wl_data_offer::WlDataOffer,
+        offer: &wl_data_offer::WlDataOffer,
         event: wl_data_offer::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
         if let wl_data_offer::Event::Offer { mime_type } = event {
-            state.dnd_mimes.push(mime_type);
+            if let Some((_, mimes)) = state.dnd_offers.iter_mut().find(|(o, _)| o == offer) {
+                mimes.push(mime_type);
+            }
         }
     }
 }
@@ -153,7 +179,7 @@ fn parse_uri_list(buf: &[u8]) -> Vec<PathBuf> {
         if let Some(rest) = line.strip_prefix("file://") {
             // Strip any host component: file://host/path or file:///path.
             let Some(i) = rest.find('/') else { continue };
-            out.push(PathBuf::from(crate::percent_decode(&rest[i..])));
+            out.push(crate::percent_decode_path(&rest[i..]));
         }
     }
     out

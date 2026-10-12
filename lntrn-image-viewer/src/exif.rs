@@ -222,9 +222,12 @@ pub fn parse(blob: &[u8]) -> Option<ExifInfo> {
 }
 
 /// "2026:08:30 19:48:34" → "2026-08-30 19:48". Anything else passes through.
+/// The slices below are byte offsets, so the reformat only runs on ASCII:
+/// a corrupt date (bad bytes turned into U+FFFD) would otherwise slice
+/// through a multi-byte character and panic.
 fn format_exif_date(raw: String) -> String {
     let b = raw.as_bytes();
-    if b.len() >= 16 && b[4] == b':' && b[7] == b':' && b[10] == b' ' {
+    if b.len() >= 16 && b[..16].is_ascii() && b[4] == b':' && b[7] == b':' && b[10] == b' ' {
         format!(
             "{}-{}-{} {}",
             &raw[0..4],
@@ -297,7 +300,7 @@ mod tests {
         let model_off = make_off + make.len() as u32;
         let exif_off = model_off + model.len() as u32;
 
-        let mut entry = |b: &mut Vec<u8>, tag: u16, ty: u16, count: u32, field: [u8; 4]| {
+        let entry = |b: &mut Vec<u8>, tag: u16, ty: u16, count: u32, field: [u8; 4]| {
             b.extend_from_slice(&tag.to_le_bytes());
             b.extend_from_slice(&ty.to_le_bytes());
             b.extend_from_slice(&count.to_le_bytes());
@@ -395,6 +398,17 @@ mod tests {
         // Truncated blob: header ok, entries fall off the end → empty info.
         let short = &blob()[..12];
         assert!(parse(short).unwrap().is_empty());
+    }
+
+    #[test]
+    fn corrupt_date_passes_through_instead_of_panicking() {
+        // What `ascii()` hands over when the date's last bytes are garbage.
+        let raw = String::from_utf8_lossy(b"2026:08:30 19:4\xff\xff").into_owned();
+        assert_eq!(format_exif_date(raw.clone()), raw);
+        assert_eq!(
+            format_exif_date("2026:08:30 19:48:34".into()),
+            "2026-08-30 19:48"
+        );
     }
 
     #[test]

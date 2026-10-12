@@ -48,7 +48,6 @@ pub fn render_canvas_frame(
 
     // ── Phase A: mutations (caches, scroll animation) ───────────────
     sb.ensure_loaded();
-    sb.poll_thumbs(ctx, tex_pass);
     sb.scroll.tick(dt);
     // Re-clamp the panel width in case the window shrank under it.
     sb.set_width(sb.width, wf / s);

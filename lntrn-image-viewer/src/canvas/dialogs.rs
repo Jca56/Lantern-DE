@@ -20,6 +20,12 @@ pub fn on_dialog_button(ed: &mut CanvasEditor, zone: u32) -> CanvasAction {
             ZONE_DIALOG_BTN1 => ed.dialog = None,
             _ => {}
         },
+        Some(DialogKind::ConfirmOverwrite { quit_after }) => match zone {
+            ZONE_DIALOG_BTN0 => return save_as_name(ed, quit_after),
+            // Back to the name prompt to pick another name.
+            ZONE_DIALOG_BTN1 => ed.dialog = Some(DialogKind::SaveName { quit_after }),
+            _ => {}
+        },
         Some(DialogKind::ConfirmQuit) => match zone {
             ZONE_DIALOG_BTN0 => return request_save(ed, true),
             ZONE_DIALOG_BTN1 => return CanvasAction::Quit,
@@ -41,12 +47,23 @@ pub fn on_dialog_button(ed: &mut CanvasEditor, zone: u32) -> CanvasAction {
     CanvasAction::None
 }
 
-pub fn on_dialog_key(ed: &mut CanvasEditor, key: u32, shift: bool) -> CanvasAction {
+/// `repeat`: the key is being held. Only editing the name repeats — a held
+/// Enter or Esc must never run through a dialog and the one after it.
+pub fn on_dialog_key(ed: &mut CanvasEditor, key: u32, shift: bool, repeat: bool) -> CanvasAction {
     let editing_name = matches!(ed.dialog, Some(DialogKind::SaveName { .. }));
+    if repeat && (!editing_name || matches!(key, KEY_ESC | KEY_ENTER)) {
+        return CanvasAction::None;
+    }
     match key {
-        KEY_ESC => ed.dialog = None,
+        KEY_ESC => match ed.dialog {
+            Some(DialogKind::ConfirmOverwrite { quit_after }) => {
+                ed.dialog = Some(DialogKind::SaveName { quit_after })
+            }
+            _ => ed.dialog = None,
+        },
         KEY_ENTER => match ed.dialog {
             Some(DialogKind::SaveName { quit_after }) => return confirm_save_name(ed, quit_after),
+            Some(DialogKind::ConfirmOverwrite { quit_after }) => return save_as_name(ed, quit_after),
             // Enter triggers the primary button: Save, then quit.
             Some(DialogKind::ConfirmQuit) => return request_save(ed, true),
             Some(DialogKind::ConfirmNew) => reset_to_new(ed),
@@ -108,9 +125,27 @@ pub fn request_save(ed: &mut CanvasEditor, quit_after: bool) -> CanvasAction {
     CanvasAction::None
 }
 
-fn confirm_save_name(ed: &mut CanvasEditor, quit_after: bool) -> CanvasAction {
-    let name = persist::sanitize_name(&ed.name_buf);
+/// The canvas file a name saves to.
+fn path_for_name(name_buf: &str) -> (String, std::path::PathBuf) {
+    let name = persist::sanitize_name(name_buf);
     let path = persist::canvases_dir().join(format!("{name}.lcanvas"));
+    (name, path)
+}
+
+/// Name prompt confirmed: save, unless that name belongs to another canvas
+/// already — then ask before replacing it.
+fn confirm_save_name(ed: &mut CanvasEditor, quit_after: bool) -> CanvasAction {
+    let (_, path) = path_for_name(&ed.name_buf);
+    if path.exists() && ed.save_path.as_deref() != Some(path.as_path()) {
+        ed.dialog = Some(DialogKind::ConfirmOverwrite { quit_after });
+        return CanvasAction::None;
+    }
+    save_as_name(ed, quit_after)
+}
+
+/// Save under the name in the prompt, replacing any canvas of that name.
+fn save_as_name(ed: &mut CanvasEditor, quit_after: bool) -> CanvasAction {
+    let (name, path) = path_for_name(&ed.name_buf);
     ed.doc.name = name;
     match persist::save_canvas(&ed.doc, &path) {
         Ok(()) => {

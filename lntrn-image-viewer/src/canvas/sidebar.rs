@@ -137,6 +137,9 @@ impl SidebarState {
     }
 
     pub fn navigate(&mut self, dir: PathBuf) {
+        // Listed now: without this the viewer's sync saw "not loaded" and
+        // re-listed the folder on every single frame.
+        self.loaded = true;
         self.current_dir = dir;
         self.entries = list_dir(&self.current_dir);
         self.scroll.set(0.0);

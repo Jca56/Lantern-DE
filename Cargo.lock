@@ -2604,6 +2604,7 @@ dependencies = [
  "anyhow",
  "image",
  "lntrn-render 0.1.0",
+ "lntrn-theme",
  "lntrn-ui 0.1.0",
  "raw-window-handle",
  "resvg 0.47.0",

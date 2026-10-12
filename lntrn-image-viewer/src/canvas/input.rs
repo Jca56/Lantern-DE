@@ -12,6 +12,7 @@ use super::editor::{canvas_viewport, CanvasEditor, DialogKind, DragMode, ResizeH
 use super::sidebar::{SidebarEntry, SidebarState};
 use super::sidebar_layout::SidebarLayout;
 use super::snap::{snap_move, SnapTargets, SNAP_PX};
+use crate::keyboard::KeyPress;
 use crate::{
     ZONE_CANVAS_AREA, ZONE_CANVAS_REDO, ZONE_CANVAS_SAVE, ZONE_CANVAS_UNDO, ZONE_SEL_DELETE,
     ZONE_SIDEBAR_ITEM_BASE, ZONE_SIDEBAR_NAMES, ZONE_SIDEBAR_RESIZE, ZONE_SIDEBAR_SCROLLBAR,
@@ -376,19 +377,29 @@ const KEY_0: u32 = 11;
 const KEY_EQUAL: u32 = 13;
 const KEY_MINUS: u32 = 12;
 
-#[allow(clippy::too_many_arguments)]
+/// Held keys repeat for undo/redo, zoom and z-order steps (and typing in the
+/// save dialog); save, new, quit, delete and the like act once per press.
 pub fn on_key(
     ed: &mut CanvasEditor,
     sb: &mut SidebarState,
-    key: u32,
-    ctrl: bool,
-    shift: bool,
+    press: KeyPress,
     wf: f32,
     hf: f32,
     s: f32,
 ) -> CanvasAction {
+    let (key, ctrl, shift) = (press.key, press.ctrl, press.shift);
     if ed.dialog.is_some() {
-        return dialogs::on_dialog_key(ed, key, shift);
+        return dialogs::on_dialog_key(ed, key, shift, press.repeat);
+    }
+    if press.repeat {
+        let steps = if ctrl {
+            matches!(key, KEY_Z | KEY_Y | KEY_EQUAL | KEY_MINUS)
+        } else {
+            matches!(key, KEY_LBRACKET | KEY_RBRACKET)
+        };
+        if !steps {
+            return CanvasAction::None;
+        }
     }
 
     if ctrl {

@@ -298,7 +298,10 @@ fn draw_tile<'a>(
         tb.w - inset * 2.0,
         tb.h - inset * 2.0,
     );
-    if let Some(tex) = sb.thumb(&entry.path) {
+    // One texture-pass slot stays free for the drag ghost; tiles past the
+    // budget (tiny tiles in a very wide browser) keep their placeholder.
+    let budget_left = tex_draws.len() + 1 < crate::TEX_DRAW_CAP;
+    if let Some(tex) = sb.thumb(&entry.path).filter(|_| budget_left) {
         let (tw, th) = (tex.width as f32, tex.height as f32);
         let k = (inner.w / tw).min(inner.h / th);
         let (dw, dh) = (tw * k, th * k);

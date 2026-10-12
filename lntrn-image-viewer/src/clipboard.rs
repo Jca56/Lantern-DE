@@ -17,6 +17,35 @@ use crate::wayland::State;
 
 type PngSlot = Arc<(Mutex<Option<Arc<Vec<u8>>>>, Condvar)>;
 
+/// Longest side an SVG is rasterized at for pasting (its native size, unless
+/// that's enormous).
+const MAX_SVG_PASTE: u32 = 8192;
+
+/// Ctrl+C: hand the open image to the clipboard and report the outcome in
+/// the status bar.
+pub fn copy_current(
+    state: &State,
+    data_device: Option<&wl_data_device::WlDataDevice>,
+    qh: &QueueHandle<State>,
+    app: &mut crate::app::App,
+) {
+    // Nothing loaded (or it failed to): no pixels to offer.
+    if app.image.is_none() {
+        return;
+    }
+    let Some(path) = app.path.clone() else {
+        return;
+    };
+    let result = match data_device {
+        Some(dev) => copy_image(state, dev, qh, state.key_serial, &path),
+        None => Err("Clipboard unavailable (no data device)".to_string()),
+    };
+    match result {
+        Ok(()) => app.flash("Copied to clipboard"),
+        Err(e) => app.flash(e),
+    }
+}
+
 pub struct ClipPayload {
     uri_list: Vec<u8>,
     png: PngSlot,
@@ -48,8 +77,12 @@ pub fn copy_image(
 
     let path = path.to_path_buf();
     std::thread::spawn(move || {
-        // Empty on failure so a waiting paste gets EOF instead of hanging.
-        let bytes = encode_png(&path).unwrap_or_default();
+        // Empty on failure — or on a decoder panic, which would otherwise
+        // leave the slot unfilled — so a waiting paste gets EOF, not a hang.
+        let bytes = std::panic::catch_unwind(|| encode_png(&path))
+            .ok()
+            .flatten()
+            .unwrap_or_default();
         let (lock, cv) = &*png;
         *lock.lock().unwrap() = Some(Arc::new(bytes));
         cv.notify_all();
@@ -63,8 +96,10 @@ pub fn copy_image(
 fn encode_png(path: &Path) -> Option<Vec<u8>> {
     if crate::app::is_svg(path) {
         let source = std::fs::read_to_string(path).ok()?;
-        let (w, h) = crate::loaders::peek_image_dimensions(path)?;
-        let (rgba, w, h) = crate::loaders::rasterize_svg_rgba(&source, w as f32, h as f32, w, h)?;
+        let (nw, nh) = crate::loaders::peek_image_dimensions(path)?;
+        let (nw, nh) = (nw as f32, nh as f32);
+        let (w, h) = crate::loaders::svg_raster_size(nw, nh, 1.0, MAX_SVG_PASTE);
+        let (rgba, w, h) = crate::loaders::rasterize_svg_rgba(&source, nw, nh, w, h)?;
         let img = image::RgbaImage::from_raw(w, h, rgba)?;
         let mut out = std::io::Cursor::new(Vec::new());
         img.write_to(&mut out, image::ImageFormat::Png).ok()?;

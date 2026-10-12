@@ -45,6 +45,18 @@ pub fn draw_dialog(
             ],
             name_input: Some((&editor.name_buf, editor.name_cursor)),
         },
+        DialogKind::ConfirmOverwrite { .. } => DialogSpec {
+            title: "Replace canvas?",
+            body: format!(
+                "A canvas named \"{}\" already exists.",
+                crate::canvas::persist::sanitize_name(&editor.name_buf)
+            ),
+            buttons: vec![
+                (ZONE_DIALOG_BTN0, "Replace", true),
+                (ZONE_DIALOG_BTN1, "Cancel", false),
+            ],
+            name_input: None,
+        },
         DialogKind::ConfirmQuit => DialogSpec {
             title: "Unsaved changes",
             body: "Save your canvas before quitting?".into(),

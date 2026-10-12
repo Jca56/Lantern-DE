@@ -107,6 +107,10 @@ pub enum DialogKind {
     SaveName {
         quit_after: bool,
     },
+    /// The name in the prompt is taken by another saved canvas: replace it?
+    ConfirmOverwrite {
+        quit_after: bool,
+    },
     ConfirmQuit,
     ConfirmNew,
     Error(String),

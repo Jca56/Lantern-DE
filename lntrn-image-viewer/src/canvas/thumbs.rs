@@ -12,6 +12,9 @@ use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 
 pub const THUMB_SIZE: u32 = 320;
+/// Part of the disk-cache key: bump when the way thumbnails are made changes
+/// so old ones regenerate (2: EXIF orientation applied).
+const CACHE_VERSION: u32 = 2;
 
 /// Decode guards: oversized sources fail cleanly instead of ballooning RAM.
 const MAX_DECODE_DIM: u32 = 16_384;
@@ -80,7 +83,12 @@ fn worker_loop(queue: Arc<(Mutex<VecDeque<ThumbJob>>, Condvar)>, tx: mpsc::Sende
                 q = cv.wait(q).unwrap();
             }
         };
-        let rgba = generate(&job.path);
+        // A decoder panic counts as a failure: the key must still come back,
+        // or it would sit in the caller's pending set (and keep the event
+        // loop polling) forever.
+        let rgba = std::panic::catch_unwind(|| generate(&job.path))
+            .ok()
+            .flatten();
         if tx.send(ThumbResult { key: job.key, rgba }).is_err() {
             return; // pool dropped — shutting down
         }
@@ -98,8 +106,10 @@ fn cache_file(path: &Path) -> PathBuf {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     path.hash(&mut h);
-    // Size is part of the key so bumping THUMB_SIZE regenerates old caches.
+    // Size and version are part of the key so changing either regenerates
+    // old caches.
     THUMB_SIZE.hash(&mut h);
+    CACHE_VERSION.hash(&mut h);
     if let Ok(md) = std::fs::metadata(path) {
         md.len().hash(&mut h);
         if let Ok(m) = md.modified() {
@@ -139,23 +149,22 @@ fn generate(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     Some((thumb.into_raw(), w, h))
 }
 
+/// Upright (EXIF orientation applied), like the viewer shows it.
 fn decode_image_limited(path: &Path) -> Option<image::RgbaImage> {
-    let mut reader = image::ImageReader::open(path)
-        .ok()?
-        .with_guessed_format()
-        .ok()?;
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_DECODE_DIM);
     limits.max_image_height = Some(MAX_DECODE_DIM);
     limits.max_alloc = Some(MAX_DECODE_BYTES);
-    reader.limits(limits);
-    let img = reader.decode().ok()?;
-    Some(img.thumbnail(THUMB_SIZE, THUMB_SIZE).to_rgba8())
+    let decoded = crate::loaders::decode_oriented(path, Some(limits))?;
+    Some(decoded.image.thumbnail(THUMB_SIZE, THUMB_SIZE).to_rgba8())
 }
 
 fn rasterize_svg_file(path: &Path) -> Option<image::RgbaImage> {
     let data = std::fs::read(path).ok()?;
-    let tree = resvg::usvg::Tree::from_data(&data, &resvg::usvg::Options::default()).ok()?;
+    // System fonts, like the viewer, so SVG text shows in the thumbnail too.
+    let mut opt = resvg::usvg::Options::default();
+    opt.fontdb = crate::loaders::svg_font_database();
+    let tree = resvg::usvg::Tree::from_data(&data, &opt).ok()?;
     let size = tree.size();
     let scale = (THUMB_SIZE as f32 / size.width()).min(THUMB_SIZE as f32 / size.height());
     let w = (size.width() * scale).ceil() as u32;

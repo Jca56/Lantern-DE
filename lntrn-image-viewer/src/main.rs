@@ -1,11 +1,15 @@
 mod app;
 mod canvas;
 mod clipboard;
+mod cursor;
 mod dir_sort;
 mod dnd;
+mod event_pump;
 mod exif;
 mod file_actions;
+mod gif;
 mod info;
+mod keyboard;
 mod loaders;
 mod render;
 mod render_canvas;
@@ -13,9 +17,15 @@ mod render_dialog;
 mod render_info;
 mod render_launcher;
 mod render_sidebar;
+mod session;
+mod shuffle;
 mod viewer_input;
 mod wayland;
 mod wayland_dispatch;
+
+use std::ffi::OsString;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
+use std::path::PathBuf;
 
 use lntrn_render::{GpuContext, Painter, TextRenderer, TexturePass};
 
@@ -68,6 +78,12 @@ pub const STATUS_H: f32 = 40.0;
 /// Width of the window edge band that triggers a resize.
 pub const RESIZE_BORDER: f32 = 10.0;
 
+/// lntrn-render's TexturePass draws at most this many textures per pass and
+/// silently drops the rest, so callers budget against it (the picture and
+/// the drag ghost go in before sidebar thumbnails, which fall back to
+/// placeholders when the budget runs out).
+pub const TEX_DRAW_CAP: usize = 256;
+
 // ── Shared types ────────────────────────────────────────────────────────────
 
 pub struct Gpu {
@@ -80,12 +96,12 @@ pub struct Gpu {
 // ── Main ────────────────────────────────────────────────────────────────────
 
 fn main() {
-    let path = std::env::args().nth(1).map(|arg| {
+    // args_os: a file name needn't be UTF-8, and `args()` panics on one.
+    let path = std::env::args_os().nth(1).map(|arg| {
         // Handle file:// URIs from xdg-open
-        if let Some(stripped) = arg.strip_prefix("file://") {
-            percent_decode(stripped)
-        } else {
-            arg
+        match arg.as_bytes().strip_prefix(b"file://") {
+            Some(rest) => percent_decode(rest),
+            None => PathBuf::from(arg),
         }
     });
     if let Err(e) = wayland::run(path) {
@@ -94,20 +110,54 @@ fn main() {
     }
 }
 
-pub(crate) fn percent_decode(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
+/// Decode `%XX` escapes from a file URI's path, byte-wise: the result is a
+/// path whatever bytes it holds, and a malformed escape stays as written.
+pub(crate) fn percent_decode(input: &[u8]) -> PathBuf {
+    fn hex(b: u8) -> Option<u8> {
+        match b {
+            b'0'..=b'9' => Some(b - b'0'),
+            b'a'..=b'f' => Some(b - b'a' + 10),
+            b'A'..=b'F' => Some(b - b'A' + 10),
+            _ => None,
+        }
+    }
+    let mut out = Vec::with_capacity(input.len());
     let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(val) = u8::from_str_radix(&input[i + 1..i + 3], 16) {
-                out.push(val);
+    while i < input.len() {
+        if input[i] == b'%' {
+            let hi = input.get(i + 1).copied().and_then(hex);
+            let lo = input.get(i + 2).copied().and_then(hex);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                out.push(hi << 4 | lo);
                 i += 3;
                 continue;
             }
         }
-        out.push(bytes[i]);
+        out.push(input[i]);
         i += 1;
     }
-    String::from_utf8(out).unwrap_or_else(|_| input.to_string())
+    PathBuf::from(OsString::from_vec(out))
+}
+
+/// `percent_decode` for a URI path held as text.
+pub(crate) fn percent_decode_path(input: &str) -> PathBuf {
+    percent_decode(input.as_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn percent_decode_escapes_and_tolerates_junk() {
+        assert_eq!(
+            percent_decode(b"/home/alva/My%20Pics/%C3%B1.png"),
+            PathBuf::from("/home/alva/My Pics/ñ.png")
+        );
+        // A stray % before multi-byte text used to slice mid-character and panic.
+        assert_eq!(percent_decode_path("/tmp/100%aé.png"), PathBuf::from("/tmp/100%aé.png"));
+        assert_eq!(percent_decode(b"/tmp/50%"), PathBuf::from("/tmp/50%"));
+        // Non-UTF-8 bytes survive instead of the whole path falling back.
+        assert_eq!(percent_decode(b"/tmp/%FF.png").as_os_str().as_bytes(), b"/tmp/\xFF.png");
+    }
 }

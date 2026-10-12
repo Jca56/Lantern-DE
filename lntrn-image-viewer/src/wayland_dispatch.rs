@@ -1,5 +1,8 @@
 //! Wayland Dispatch impls for `wayland::State` — protocol plumbing only, so
-//! the event loop in wayland.rs stays readable. DnD impls live in dnd.rs.
+//! the event loop in wayland.rs stays readable. DnD impls live in dnd.rs,
+//! the clipboard source in clipboard.rs.
+
+use std::time::Instant;
 
 use wayland_client::{
     protocol::{
@@ -11,10 +14,14 @@ use wayland_client::{
 use wayland_protocols::wp::cursor_shape::v1::client::{
     wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
 };
+use wayland_protocols::wp::fractional_scale::v1::client::{
+    wp_fractional_scale_manager_v1, wp_fractional_scale_v1,
+};
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
+use wayland_protocols::xdg::xdg_output::zv1::client::{zxdg_output_manager_v1, zxdg_output_v1};
 
-use crate::wayland::State;
+use crate::wayland::{OutputInfo, State};
 
 const BTN_LEFT: u32 = 0x110;
 const BTN_MIDDLE: u32 = 0x112;
@@ -44,8 +51,19 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 "wp_viewporter" => {
                     state.viewporter = Some(registry.bind(name, version.min(1), qh, ()));
                 }
+                "wp_fractional_scale_manager_v1" => {
+                    state.frac_scale_mgr = Some(registry.bind(name, version.min(1), qh, ()));
+                }
+                "zxdg_output_manager_v1" => {
+                    state.xdg_output_mgr = Some(registry.bind(name, version.min(3), qh, ()));
+                }
                 "wl_output" => {
-                    let _: wl_output::WlOutput = registry.bind(name, version.min(4), qh, ());
+                    let output: wl_output::WlOutput = registry.bind(name, version.min(4), qh, ());
+                    state.outputs.push(OutputInfo {
+                        output,
+                        phys: (0, 0),
+                        logical: None,
+                    });
                 }
                 "wl_seat" => {
                     state.seat = Some(registry.bind(name, version.min(9), qh, ()));
@@ -129,6 +147,66 @@ impl Dispatch<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1, ()> for State {
     }
 }
 
+impl Dispatch<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1, ()> for State {
+    fn event(
+        _: &mut Self,
+        _: &wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,
+        _: wp_fractional_scale_manager_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ()> for State {
+    fn event(
+        state: &mut Self,
+        _: &wp_fractional_scale_v1::WpFractionalScaleV1,
+        event: wp_fractional_scale_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        // Sent at creation (the monitor the window opens on), when the window
+        // moves to another monitor, and on live scale changes.
+        if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event {
+            state.preferred_scale_120 = scale;
+            state.needs_redraw = true;
+        }
+    }
+}
+
+impl Dispatch<zxdg_output_manager_v1::ZxdgOutputManagerV1, ()> for State {
+    fn event(
+        _: &mut Self,
+        _: &zxdg_output_manager_v1::ZxdgOutputManagerV1,
+        _: zxdg_output_manager_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+/// User data: the index of the output in `State::outputs`.
+impl Dispatch<zxdg_output_v1::ZxdgOutputV1, usize> for State {
+    fn event(
+        state: &mut Self,
+        _: &zxdg_output_v1::ZxdgOutputV1,
+        event: zxdg_output_v1::Event,
+        idx: &usize,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let zxdg_output_v1::Event::LogicalSize { width, height } = event {
+            if let Some(o) = state.outputs.get_mut(*idx) {
+                o.logical = Some((width, height));
+            }
+        }
+    }
+}
+
 impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {
     fn event(
         _: &mut Self,
@@ -156,7 +234,7 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for State {
         if let xdg_surface::Event::Configure { serial } = event {
             xdg_surface.ack_configure(serial);
             state.configured = true;
-            state.frame_done = true;
+            state.needs_redraw = true;
         }
     }
 }
@@ -189,7 +267,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
             }
             xdg_toplevel::Event::Close => {
                 state.close_requested = true;
-                state.frame_done = true;
+                state.needs_redraw = true;
             }
             _ => {}
         }
@@ -199,7 +277,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
 impl Dispatch<wl_output::WlOutput, ()> for State {
     fn event(
         state: &mut Self,
-        _: &wl_output::WlOutput,
+        output: &wl_output::WlOutput,
         event: wl_output::Event,
         _: &(),
         _: &Connection,
@@ -209,9 +287,16 @@ impl Dispatch<wl_output::WlOutput, ()> for State {
             wl_output::Event::Scale { factor } => {
                 state.scale = factor;
             }
-            wl_output::Event::Mode { width, height, .. } => {
-                state.output_phys_width = width as u32;
-                state.output_phys_height = height as u32;
+            // Older compositors list every mode; only the current one counts.
+            wl_output::Event::Mode {
+                flags: WEnum::Value(flags),
+                width,
+                height,
+                ..
+            } if flags.contains(wl_output::Mode::Current) => {
+                if let Some(o) = state.outputs.iter_mut().find(|o| &o.output == output) {
+                    o.phys = (width, height);
+                }
             }
             _ => {}
         }
@@ -227,7 +312,10 @@ impl Dispatch<wl_callback::WlCallback, ()> for State {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        state.frame_done = true;
+        // The compositor showed our last frame. This only lifts the throttle:
+        // a redraw happens when something changed, never just because a
+        // frame went by (that kept an idle window drawing at refresh rate).
+        state.frame_pending = false;
     }
 }
 
@@ -281,11 +369,11 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 // set_shape must reference the enter serial; force a re-apply.
                 state.enter_serial = serial;
                 state.current_cursor_shape = None;
-                state.frame_done = true;
+                state.needs_redraw = true;
             }
             wl_pointer::Event::Leave { .. } => {
                 state.pointer_in_surface = false;
-                state.frame_done = true;
+                state.needs_redraw = true;
             }
             wl_pointer::Event::Motion {
                 surface_x,
@@ -294,7 +382,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
             } => {
                 state.cursor_x = surface_x;
                 state.cursor_y = surface_y;
-                state.frame_done = true;
+                state.needs_redraw = true;
             }
             wl_pointer::Event::Button {
                 button,
@@ -317,13 +405,13 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 if button == BTN_MIDDLE && released {
                     state.middle_released = true;
                 }
-                state.frame_done = true;
+                state.needs_redraw = true;
             }
             wl_pointer::Event::Axis { axis, value, .. } => {
                 if axis == WEnum::Value(wl_pointer::Axis::VerticalScroll) {
                     state.scroll_delta += value as f32;
                 }
-                state.frame_done = true;
+                state.needs_redraw = true;
             }
             _ => {}
         }
@@ -345,19 +433,22 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                 key,
                 state: key_state,
                 ..
-            } => {
-                if key_state == WEnum::Value(wl_keyboard::KeyState::Pressed) {
-                    state.key_pressed = Some(key);
+            } => match key_state {
+                WEnum::Value(wl_keyboard::KeyState::Pressed) => {
+                    state.keyboard.press(key, Instant::now());
                     state.key_serial = serial;
+                    state.needs_redraw = true;
                 }
-                state.frame_done = true;
-            }
+                WEnum::Value(wl_keyboard::KeyState::Released) => state.keyboard.release(key),
+                _ => {}
+            },
             wl_keyboard::Event::Modifiers { mods_depressed, .. } => {
-                state.ctrl = mods_depressed & 4 != 0;
-                state.shift = mods_depressed & 1 != 0;
-                state.alt = mods_depressed & 8 != 0;
-                state.logo = mods_depressed & 64 != 0; // Mod4 = Super/Logo
+                state.keyboard.set_modifiers(mods_depressed);
             }
+            wl_keyboard::Event::RepeatInfo { rate, delay } => {
+                state.keyboard.set_repeat_info(rate, delay);
+            }
+            wl_keyboard::Event::Leave { .. } => state.keyboard.leave(),
             _ => {}
         }
     }

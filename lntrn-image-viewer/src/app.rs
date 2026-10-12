@@ -1,10 +1,12 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use lntrn_render::{GpuContext, GpuTexture, TexturePass};
+use lntrn_render::{GpuContext, GpuTexture, Rect, TexturePass};
 
+use crate::gif::GifPlayer;
 use crate::info::ImageInfo;
 use crate::loaders;
+use crate::shuffle::Shuffle;
 
 // ── Supported formats ───────────────────────────────────────────────────────
 
@@ -36,97 +38,29 @@ fn is_gif(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Absolute path with the folder canonicalized but the file itself left
+/// alone, so a symlinked image stays the link: Left/Right keep walking this
+/// folder, and Delete trashes the link rather than whatever it points at.
+/// None when the file isn't there (a dangling link counts as missing).
+fn resolve(path: &Path) -> Option<PathBuf> {
+    let abs = std::path::absolute(path).ok()?;
+    let name = abs.file_name()?.to_os_string();
+    let dir = abs.parent()?.canonicalize().ok()?;
+    let resolved = dir.join(name);
+    resolved.exists().then_some(resolved)
+}
+
 // ── Loaded image ────────────────────────────────────────────────────────────
 
 pub struct LoadedImage {
     pub texture: GpuTexture,
-    pub width: u32,
-    pub height: u32,
-    /// For vector images: the parsed SVG and its native aspect, so we can
-    /// re-rasterize crisply at whatever pixel size it's displayed at.
-    pub svg: Option<SvgImage>,
-}
-
-/// A loaded SVG kept around for on-demand re-rasterization at the display size.
-pub struct SvgImage {
-    pub source: String,
-    /// Native (intrinsic) dimensions in SVG user units.
-    pub native_w: f32,
-    pub native_h: f32,
-    /// Pixel size the current `texture` was rasterized at.
-    pub rendered_w: u32,
-    pub rendered_h: u32,
-}
-
-// ── GIF animation ───────────────────────────────────────────────────────────
-
-pub struct GifFrame {
-    pub rgba: Vec<u8>,
-    pub width: u32,
-    pub height: u32,
-    pub delay: Duration,
-}
-
-pub struct GifAnimation {
-    pub frames: Vec<GifFrame>,
-    pub current: usize,
-    pub last_swap: Instant,
-}
-
-impl GifAnimation {
-    pub fn current_delay(&self) -> Duration {
-        self.frames[self.current].delay
-    }
-
-    /// Advance frame if enough time passed. Returns true if frame changed.
-    pub fn tick(&mut self) -> bool {
-        if self.frames.len() <= 1 {
-            return false;
-        }
-        let elapsed = self.last_swap.elapsed();
-        if elapsed >= self.current_delay() {
-            self.current = (self.current + 1) % self.frames.len();
-            self.last_swap = Instant::now();
-            true
-        } else {
-            false
-        }
-    }
-}
-
-// ── Tiny PRNG (xorshift64) ──────────────────────────────────────────────────
-
-struct XorShift64 {
-    state: u64,
-}
-
-impl XorShift64 {
-    fn from_time() -> Self {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0xa5a5_5a5a_a5a5_5a5a);
-        Self {
-            state: if nanos == 0 {
-                0xdead_beef_cafe_babe
-            } else {
-                nanos
-            },
-        }
-    }
-
-    fn next_u64(&mut self) -> u64 {
-        let mut x = self.state;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        self.state = x;
-        x
-    }
-
-    fn below(&mut self, n: usize) -> usize {
-        (self.next_u64() as usize) % n
-    }
+    /// The picture's own size: pixels for rasters, user units for SVG.
+    /// Layout and the zoom readout go by this, never by the texture, which
+    /// can be smaller (past the GPU's limit) or a fresh SVG rasterization.
+    pub natural_w: f32,
+    pub natural_h: f32,
+    /// SVG source, kept to re-rasterize crisply at the displayed size.
+    pub svg_source: Option<String>,
 }
 
 // ── App state ───────────────────────────────────────────────────────────────
@@ -153,7 +87,8 @@ pub struct App {
     pub dimensions_text: String,
     /// Super+F11 "rice mode": no title bar, no status bar, just the picture.
     pub chrome_hidden: bool,
-    /// Absolute path of the open image (None until something loads).
+    /// Absolute path of the open file — also set when it failed to load, so
+    /// Left/Right carry on from it and Delete can trash a broken file.
     pub path: Option<PathBuf>,
     /// File facts + EXIF for the info overlay.
     pub info: Option<ImageInfo>,
@@ -169,13 +104,12 @@ pub struct App {
     // Directory navigation
     pub dir_files: Vec<PathBuf>,
     pub dir_index: usize,
-    // Shuffle playback
+    /// The open file is in `dir_files` (a hidden file opened directly isn't),
+    /// so `dir_index` really is its position.
+    pub listed: bool,
     pub shuffle: bool,
-    shuffle_order: Vec<usize>,
-    shuffle_pos: usize,
-    rng: XorShift64,
-    // GIF animation
-    pub gif: Option<GifAnimation>,
+    shuffler: Shuffle,
+    pub gif: Option<GifPlayer>,
 }
 
 impl App {
@@ -201,85 +135,76 @@ impl App {
             flash: None,
             dir_files: Vec::new(),
             dir_index: 0,
+            listed: false,
             shuffle: false,
-            shuffle_order: Vec::new(),
-            shuffle_pos: 0,
-            rng: XorShift64::from_time(),
+            shuffler: Shuffle::new(),
             gif: None,
         }
     }
 
-    pub fn open_image(&mut self, gpu: &GpuContext, tex_pass: &TexturePass, path: &str) {
-        let path = Path::new(path);
-        let abs = match path.canonicalize() {
-            Ok(p) => p,
-            Err(e) => {
-                self.status_text = format!("File not found: {} ({e})", path.display());
-                return;
-            }
+    pub fn open_image(&mut self, gpu: &GpuContext, tex_pass: &TexturePass, path: &Path) {
+        let Some(abs) = resolve(path) else {
+            self.fail(path.to_path_buf(), format!("File not found: {}", path.display()));
+            return;
         };
-
-        // Scan directory for sibling images (only on first load or dir change)
-        if let Some(parent) = abs.parent() {
-            let should_rescan = self.dir_files.is_empty()
-                || self
-                    .dir_files
-                    .first()
-                    .and_then(|f| f.parent())
-                    .map(|p| p != parent)
-                    .unwrap_or(true);
-            if should_rescan {
-                self.scan_directory(parent);
-            }
-            // Find current file in the list
-            if let Some(idx) = self.dir_files.iter().position(|f| f == &abs) {
-                self.dir_index = idx;
-            }
-            // Keep shuffle ordering in sync
-            if self.shuffle {
-                if should_rescan || self.shuffle_order.len() != self.dir_files.len() {
-                    self.regenerate_shuffle();
-                } else if let Some(p) = self.shuffle_order.iter().position(|&i| i == self.dir_index)
-                {
-                    self.shuffle_pos = p;
-                }
-            }
-        }
-
-        // Check for animated GIF
+        self.sync_dir_list(&abs);
         self.gif = None;
+        let max_dim = loaders::max_texture_dim(gpu);
+
         if is_gif(&abs) {
-            if let Some(anim) = loaders::load_gif_frames(&abs) {
-                if anim.frames.len() > 1 {
-                    // Upload first frame as texture
-                    let f = &anim.frames[0];
-                    let tex = tex_pass.upload(gpu, &f.rgba, f.width, f.height);
-                    let (w, h) = (f.width, f.height);
-                    let info = ImageInfo::gather(&abs, "GIF (animated)", None);
-                    self.set_loaded(abs.clone(), tex, w, h, None, info);
-                    self.gif = Some(anim);
-                    return;
-                }
+            // Streams from a worker. A still GIF just never gets a second
+            // frame; one too big for a texture comes back None and takes
+            // the raster path below, which downscales.
+            if let Some((player, first)) = GifPlayer::open(&abs, max_dim) {
+                let tex = tex_pass.upload(gpu, &first.rgba, first.width, first.height);
+                let natural = (first.width as f32, first.height as f32);
+                let info = ImageInfo::gather(&abs, "GIF", None);
+                self.set_loaded(abs, tex, natural, None, info);
+                self.gif = Some(player);
+                return;
             }
         }
 
         if is_svg(&abs) {
             match loaders::load_svg_texture(gpu, tex_pass, &abs) {
-                Some((tex, w, h, svg)) => {
+                Some((tex, svg)) => {
                     let info = ImageInfo::gather(&abs, "SVG", None);
-                    self.set_loaded(abs, tex, w, h, Some(svg), info);
+                    let natural = (svg.native_w, svg.native_h);
+                    self.set_loaded(abs, tex, natural, Some(svg.source), info);
                 }
-                None => self.status_text = format!("Cannot load: {}", abs.display()),
+                None => self.fail_unreadable(abs),
             }
         } else {
             match loaders::load_raster_texture(gpu, tex_pass, &abs) {
                 Some(r) => {
                     let format = crate::info::format_name(r.format);
                     let info = ImageInfo::gather(&abs, &format, r.exif.as_deref());
-                    self.set_loaded(abs, r.tex, r.width, r.height, None, info);
+                    let natural = (r.width as f32, r.height as f32);
+                    self.set_loaded(abs, r.tex, natural, None, info);
                 }
-                None => self.status_text = format!("Cannot load: {}", abs.display()),
+                None => self.fail_unreadable(abs),
             }
+        }
+    }
+
+    /// Rescan the sibling list when the folder changed, and find the open
+    /// file in it.
+    fn sync_dir_list(&mut self, abs: &Path) {
+        let Some(parent) = abs.parent() else { return };
+        let rescan = self.dir_files.first().and_then(|f| f.parent()) != Some(parent);
+        if rescan {
+            self.scan_directory(parent);
+        }
+        match self.dir_files.iter().position(|f| f == abs) {
+            Some(i) => {
+                self.dir_index = i;
+                self.listed = true;
+            }
+            None => self.listed = false,
+        }
+        if self.shuffle {
+            self.shuffler
+                .follow(self.dir_files.len(), self.dir_index, rescan);
         }
     }
 
@@ -287,91 +212,107 @@ impl App {
         &mut self,
         abs: PathBuf,
         tex: GpuTexture,
-        w: u32,
-        h: u32,
-        svg: Option<SvgImage>,
+        natural: (f32, f32),
+        svg_source: Option<String>,
         info: ImageInfo,
     ) {
         self.info = Some(info);
-        self.path = Some(abs.clone());
         self.file_name = abs
             .file_name()
             .map(|n| n.to_string_lossy().into())
             .unwrap_or_default();
         self.status_text = abs.to_string_lossy().into();
-        // For SVG, report native (intrinsic) size rather than the rasterized size.
-        match &svg {
-            Some(s) => {
-                self.dimensions_text = format!(
-                    "{} × {}",
-                    s.native_w.ceil() as u32,
-                    s.native_h.ceil() as u32
-                )
-            }
-            None => self.dimensions_text = format!("{w} × {h}"),
-        }
-        self.zoom = 1.0;
-        self.pan_x = 0.0;
-        self.pan_y = 0.0;
+        self.path = Some(abs);
+        self.dimensions_text = format!(
+            "{} × {}",
+            natural.0.ceil() as u32,
+            natural.1.ceil() as u32
+        );
+        self.fit_to_view();
         self.image = Some(LoadedImage {
             texture: tex,
-            width: w,
-            height: h,
-            svg,
+            natural_w: natural.0.max(1e-3),
+            natural_h: natural.1.max(1e-3),
+            svg_source,
         });
     }
 
-    /// Re-rasterize the loaded SVG to match the on-screen pixel size, so it
-    /// stays sharp when the window/zoom grows. `disp_w`/`disp_h` are the pixel
-    /// dimensions the image is currently drawn at. No-op for raster images, and
-    /// only re-renders when the target meaningfully exceeds the current texture
-    /// (hysteresis avoids churning a texture every frame during a drag-resize).
-    pub fn maybe_rerender_svg(
-        &mut self,
-        gpu: &GpuContext,
-        tex_pass: &TexturePass,
-        disp_w: f32,
-        disp_h: f32,
-    ) {
+    fn fail_unreadable(&mut self, abs: PathBuf) {
+        let name = abs
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.fail(abs, format!("Can't open {name}: unsupported or damaged file"));
+    }
+
+    /// The file couldn't be shown: drop the old picture so nothing stale
+    /// stays up under the new file's name, and say why.
+    fn fail(&mut self, path: PathBuf, msg: String) {
+        self.image = None;
+        self.gif = None;
+        self.info = None;
+        self.file_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into())
+            .unwrap_or_default();
+        self.dimensions_text.clear();
+        self.status_text = msg;
+        self.path = Some(path);
+        self.fit_to_view();
+    }
+
+    /// Where the picture sits inside `canvas`: fitted, then zoomed and
+    /// panned. Render, the zoom readout and SVG re-rasterizing all use this.
+    pub fn display_rect(&self, canvas: Rect) -> Option<Rect> {
+        let img = self.image.as_ref()?;
+        let fit = (canvas.w / img.natural_w).min(canvas.h / img.natural_h);
+        let k = fit * self.zoom;
+        let (w, h) = (img.natural_w * k, img.natural_h * k);
+        Some(Rect::new(
+            canvas.x + (canvas.w - w) * 0.5 + self.pan_x,
+            canvas.y + (canvas.h - h) * 0.5 + self.pan_y,
+            w,
+            h,
+        ))
+    }
+
+    /// On-screen size as a percentage of the picture's real size.
+    pub fn zoom_percent(&self, canvas: Rect) -> Option<u32> {
+        let img = self.image.as_ref()?;
+        let r = self.display_rect(canvas)?;
+        Some((r.w / img.natural_w * 100.0).round() as u32)
+    }
+
+    /// Re-rasterize the loaded SVG to match its on-screen size inside
+    /// `canvas`, so it stays sharp when the window/zoom grows. Never below
+    /// native size, never past the GPU's limit, aspect always kept; only
+    /// re-renders on a ≥25% change (hysteresis avoids churning a texture
+    /// every frame during a drag-resize). No-op for raster images.
+    pub fn maybe_rerender_svg(&mut self, gpu: &GpuContext, tex_pass: &TexturePass, canvas: Rect) {
+        let Some(shown) = self.display_rect(canvas) else { return };
         let Some(img) = &self.image else { return };
-        let Some(svg) = &img.svg else { return };
+        let Some(source) = &img.svg_source else { return };
 
-        // Target raster size: cover the displayed size, capped, never below native.
-        let want_w = (disp_w.ceil() as u32)
-            .clamp(svg.native_w.ceil() as u32, 8192)
-            .max(1);
-        let want_h = (disp_h.ceil() as u32)
-            .clamp(svg.native_h.ceil() as u32, 8192)
-            .max(1);
-
-        // Re-render only on a ≥25% jump in either axis (up or down) to avoid
-        // per-frame churn while still tracking large zoom changes.
-        let grew = want_w as f32 > svg.rendered_w as f32 * 1.25
-            || want_h as f32 > svg.rendered_h as f32 * 1.25;
-        let shrank = (want_w as f32) < svg.rendered_w as f32 * 0.75
-            && (want_h as f32) < svg.rendered_h as f32 * 0.75;
+        let scale = (shown.w / img.natural_w).max(1.0);
+        let max_dim = loaders::max_texture_dim(gpu);
+        let (want_w, want_h) = loaders::svg_raster_size(img.natural_w, img.natural_h, scale, max_dim);
+        let (cur_w, cur_h) = (img.texture.width as f32, img.texture.height as f32);
+        let grew = want_w as f32 > cur_w * 1.25 || want_h as f32 > cur_h * 1.25;
+        let shrank = (want_w as f32) < cur_w * 0.75 && (want_h as f32) < cur_h * 0.75;
         if !grew && !shrank {
             return;
         }
-
-        if let Some((tex, rw, rh)) = loaders::rasterize_svg(
+        let tex = loaders::rasterize_svg(
             gpu,
             tex_pass,
-            &svg.source,
-            svg.native_w,
-            svg.native_h,
+            source,
+            img.natural_w,
+            img.natural_h,
             want_w,
             want_h,
-        ) {
-            if let Some(img) = &mut self.image {
-                img.texture = tex;
-                img.width = rw;
-                img.height = rh;
-                if let Some(svg) = &mut img.svg {
-                    svg.rendered_w = rw;
-                    svg.rendered_h = rh;
-                }
-            }
+        );
+        if let (Some(tex), Some(img)) = (tex, &mut self.image) {
+            img.texture = tex;
         }
     }
 
@@ -399,47 +340,29 @@ impl App {
     }
 
     pub fn next_image(&mut self, gpu: &GpuContext, tex_pass: &TexturePass) {
-        if self.dir_files.is_empty() {
+        let n = self.dir_files.len();
+        if n == 0 {
             return;
         }
-        if self.shuffle && !self.shuffle_order.is_empty() {
-            self.shuffle_pos += 1;
-            if self.shuffle_pos >= self.shuffle_order.len() {
-                // Reached end of shuffled playlist — reshuffle for the next pass
-                self.regenerate_shuffle();
-                self.shuffle_pos = 0;
-            }
-            self.dir_index = self.shuffle_order[self.shuffle_pos];
-        } else {
-            self.dir_index = (self.dir_index + 1) % self.dir_files.len();
-        }
-        let path = self.dir_files[self.dir_index].to_string_lossy().to_string();
+        let shuffled = self.shuffle.then(|| self.shuffler.next(n, self.dir_index)).flatten();
+        self.dir_index = shuffled.unwrap_or((self.dir_index + 1) % n);
+        let path = self.dir_files[self.dir_index].clone();
         self.open_image(gpu, tex_pass, &path);
     }
 
     pub fn prev_image(&mut self, gpu: &GpuContext, tex_pass: &TexturePass) {
-        if self.dir_files.is_empty() {
+        let n = self.dir_files.len();
+        if n == 0 {
             return;
         }
-        if self.shuffle && !self.shuffle_order.is_empty() {
-            self.shuffle_pos = if self.shuffle_pos == 0 {
-                self.shuffle_order.len() - 1
-            } else {
-                self.shuffle_pos - 1
-            };
-            self.dir_index = self.shuffle_order[self.shuffle_pos];
-        } else {
-            self.dir_index = if self.dir_index == 0 {
-                self.dir_files.len() - 1
-            } else {
-                self.dir_index - 1
-            };
-        }
-        let path = self.dir_files[self.dir_index].to_string_lossy().to_string();
+        let shuffled = self.shuffle.then(|| self.shuffler.prev()).flatten();
+        let back = self.dir_index.min(n).checked_sub(1).unwrap_or(n - 1);
+        self.dir_index = shuffled.unwrap_or(back);
+        let path = self.dir_files[self.dir_index].clone();
         self.open_image(gpu, tex_pass, &path);
     }
 
-    // ── Slideshow / flash / trash ───────────────────────────────────────
+    // ── Timers: GIF frames, slideshow, flash ────────────────────────────
 
     pub fn flash(&mut self, msg: impl Into<String>) {
         self.flash = Some((msg.into(), Instant::now()));
@@ -451,12 +374,6 @@ impl App {
             .as_ref()
             .filter(|(_, at)| at.elapsed() < FLASH_TTL)
             .map(|(m, _)| m.as_str())
-    }
-
-    pub fn flash_remaining(&self) -> Option<Duration> {
-        self.flash
-            .as_ref()
-            .map(|(_, at)| FLASH_TTL.saturating_sub(at.elapsed()))
     }
 
     pub fn toggle_slideshow(&mut self) {
@@ -473,37 +390,79 @@ impl App {
         self.flash(format!("Slideshow interval: {secs}s"));
     }
 
-    /// Time until the slideshow advances, if one is running.
-    pub fn slideshow_remaining(&self) -> Option<Duration> {
-        self.slideshow
-            .map(|at| self.slideshow_interval.saturating_sub(at.elapsed()))
+    /// The next moment a timer wants the loop awake. A GIF frame that's due
+    /// but not decoded yet isn't a deadline (`is_waiting` covers it) — a
+    /// deadline already in the past would spin the loop.
+    pub fn next_deadline(&self, now: Instant) -> Option<Instant> {
+        let gif = self
+            .gif
+            .as_ref()
+            .filter(|g| !g.is_waiting(now))
+            .and_then(|g| g.next_due());
+        let slide = self
+            .slideshow
+            .filter(|_| self.dir_files.len() > 1)
+            .map(|at| at + self.slideshow_interval);
+        let flash = self.flash.as_ref().map(|(_, at)| *at + FLASH_TTL);
+        [gif, slide, flash].into_iter().flatten().min()
     }
 
-    /// Advance the slideshow when its interval is up. Returns true on advance.
-    pub fn tick_slideshow(&mut self, gpu: &GpuContext, tex_pass: &TexturePass) -> bool {
-        let Some(at) = self.slideshow else {
+    /// A GIF frame is due but still decoding: the loop should poll for it.
+    pub fn is_waiting(&self, now: Instant) -> bool {
+        self.gif.as_ref().is_some_and(|g| g.is_waiting(now))
+    }
+
+    /// Run whatever timers are due. Returns true if the picture changed.
+    pub fn tick(&mut self, gpu: &GpuContext, tex_pass: &TexturePass, now: Instant) -> bool {
+        let mut changed = self.tick_gif(gpu, tex_pass, now);
+        if self.flash.as_ref().is_some_and(|(_, at)| now >= *at + FLASH_TTL) {
+            self.flash = None;
+            changed = true;
+        }
+        if let Some(at) = self.slideshow {
+            if now >= at + self.slideshow_interval && self.dir_files.len() > 1 {
+                self.next_image(gpu, tex_pass);
+                self.slideshow = Some(now);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Show the next GIF frame once it's due, rewriting the texture in place
+    /// (every frame is the full canvas size).
+    fn tick_gif(&mut self, gpu: &GpuContext, tex_pass: &TexturePass, now: Instant) -> bool {
+        let Some(player) = self.gif.as_mut() else {
             return false;
         };
-        if at.elapsed() < self.slideshow_interval || self.dir_files.len() < 2 {
+        let frame = player.tick(now);
+        if player.is_still() {
+            self.gif = None;
             return false;
         }
-        self.next_image(gpu, tex_pass);
-        self.slideshow = Some(Instant::now());
+        if player.is_animated() {
+            if let Some(info) = self.info.as_mut().filter(|i| i.format == "GIF") {
+                info.format = "GIF (animated)".into();
+            }
+        }
+        let Some(frame) = frame else { return false };
+        let Some(mut img) = self.image.take() else {
+            return false;
+        };
+        let mut slot = Some(img.texture);
+        tex_pass.upload_reuse(gpu, &mut slot, &frame.rgba, frame.width, frame.height);
+        if let Some(tex) = slot {
+            img.texture = tex;
+            self.image = Some(img);
+        }
         true
     }
 
-    /// Whether anything time-driven needs the loop to keep ticking.
-    pub fn is_animating(&self) -> bool {
-        self.gif.is_some() || self.slideshow.is_some() || self.flash.is_some()
-    }
+    // ── Trash ───────────────────────────────────────────────────────────
 
     /// Drop the open image from the sibling list (it's been trashed) and
     /// show the next one, or an empty view when the folder is now empty.
     pub fn remove_current(&mut self, gpu: &GpuContext, tex_pass: &TexturePass) {
-        if self.dir_files.is_empty() {
-            self.clear_image();
-            return;
-        }
         // Locate the trashed file by path (the open image may not be in the
         // list at all, e.g. a hidden file opened directly).
         let idx = match self
@@ -523,9 +482,9 @@ impl App {
         }
         self.dir_index = idx.min(self.dir_files.len() - 1);
         if self.shuffle {
-            self.regenerate_shuffle();
+            self.shuffler.deal(self.dir_files.len(), self.dir_index);
         }
-        let next = self.dir_files[self.dir_index].to_string_lossy().to_string();
+        let next = self.dir_files[self.dir_index].clone();
         self.open_image(gpu, tex_pass, &next);
     }
 
@@ -534,6 +493,7 @@ impl App {
         self.gif = None;
         self.path = None;
         self.info = None;
+        self.listed = false;
         self.file_name.clear();
         self.dimensions_text.clear();
         self.status_text = "No images left in this folder".into();
@@ -542,41 +502,11 @@ impl App {
     pub fn toggle_shuffle(&mut self) {
         self.shuffle = !self.shuffle;
         if self.shuffle {
-            self.regenerate_shuffle();
+            self.shuffler.deal(self.dir_files.len(), self.dir_index);
         }
     }
 
-    fn regenerate_shuffle(&mut self) {
-        let n = self.dir_files.len();
-        self.shuffle_order = (0..n).collect();
-        // Fisher-Yates
-        for i in (1..n).rev() {
-            let j = self.rng.below(i + 1);
-            self.shuffle_order.swap(i, j);
-        }
-        self.shuffle_pos = self
-            .shuffle_order
-            .iter()
-            .position(|&idx| idx == self.dir_index)
-            .unwrap_or(0);
-    }
-
-    /// Tick GIF animation — re-uploads texture if frame changed. Returns true if needs redraw.
-    pub fn tick_gif(&mut self, gpu: &GpuContext, tex_pass: &TexturePass) -> bool {
-        let gif = match &mut self.gif {
-            Some(g) => g,
-            None => return false,
-        };
-        if !gif.tick() {
-            return false;
-        }
-        let frame = &gif.frames[gif.current];
-        let tex = tex_pass.upload(gpu, &frame.rgba, frame.width, frame.height);
-        if let Some(img) = &mut self.image {
-            img.texture = tex;
-        }
-        true
-    }
+    // ── View ────────────────────────────────────────────────────────────
 
     /// Zoom toward a point (cursor position) in physical pixel coords.
     pub fn zoom_at(&mut self, factor: f32, cx: f32, cy: f32, canvas_cx: f32, canvas_cy: f32) {
@@ -594,5 +524,33 @@ impl App {
         self.zoom = 1.0;
         self.pan_x = 0.0;
         self.pan_y = 0.0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_keeps_a_symlinked_file_as_the_link() {
+        let dir = std::env::temp_dir().join(format!(
+            "lntrn-image-viewer-resolve-{}",
+            std::process::id()
+        ));
+        let (real, shown) = (dir.join("real"), dir.join("shown"));
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::create_dir_all(&shown).unwrap();
+        std::fs::write(real.join("photo.png"), b"x").unwrap();
+        std::os::unix::fs::symlink(real.join("photo.png"), shown.join("link.png")).unwrap();
+
+        // Stays in the folder it was opened from: trashing it removes the
+        // link, and Left/Right walk `shown`, not `real`.
+        let got = resolve(&shown.join("link.png")).unwrap();
+        assert_eq!(got, shown.canonicalize().unwrap().join("link.png"));
+        assert!(resolve(&shown.join("missing.png")).is_none());
+        // A dangling link has nothing to show.
+        std::fs::remove_file(real.join("photo.png")).unwrap();
+        assert!(resolve(&shown.join("link.png")).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
