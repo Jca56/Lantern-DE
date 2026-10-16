@@ -1,0 +1,19 @@
+[package]
+name = "lntrn-control-center"
+version = "0.1.0"
+description = "Lantern DE - Control Center, the bar along the bottom of the screen, on Lantern UI 2"
+authors = ["Alva"]
+edition = "2024"
+
+[[bin]]
+name = "lntrn-control-center"
+path = "src/main.rs"
+
+[dependencies]
+lntrn-app = { path = "../../lantern-ui-2/crates/lntrn-app" }
+lntrn-ui = { path = "../../lantern-ui-2/crates/lntrn-ui" }
+lntrn-core = { path = "../../lantern-ui-2/crates/lntrn-core" }
+lntrn-math = { path = "../../lantern-ui-2/crates/lntrn-math" }
+lntrn-data = { path = "../../lantern-ui-2/crates/lntrn-data" }
+lntrn-sys = { path = "../../lantern-ui-2/crates/lntrn-sys" }
+lntrn-kit = { path = "../lntrn-kit" }

@@ -30,6 +30,7 @@ members = [
     "lntrn-icon-theme",
     "lntrn-screencopy",
     "lntrn-command-center",
+    "lntrn-control-center",
     "lntrn-keychain",
     "lntrn-keys",
     "lntrn-kit",

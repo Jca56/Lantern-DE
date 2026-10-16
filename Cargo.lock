@@ -2480,6 +2480,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "lntrn-control-center"
+version = "0.1.0"
+dependencies = [
+ "lntrn-app",
+ "lntrn-core",
+ "lntrn-data",
+ "lntrn-kit",
+ "lntrn-math",
+ "lntrn-sys",
+ "lntrn-ui 0.2.0",
+]
+
+[[package]]
 name = "lntrn-core"
 version = "0.2.0"
 
