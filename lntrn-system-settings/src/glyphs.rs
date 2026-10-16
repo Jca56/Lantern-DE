@@ -121,3 +121,10 @@ pub fn screenshot(d: &mut DrawList, rect: Rect, color: Color, w: f64) {
     }
     d.circle(rect.center(), half(rect) * 0.2, color);
 }
+
+/// A screen with a bar floating along its bottom.
+pub fn control_center(d: &mut DrawList, rect: Rect, color: Color, w: f64) {
+    let s = half(rect);
+    d.stroke_rect(Rect::new(at(rect, -0.9, -0.72), at(rect, 0.9, 0.72)), w, s * 0.22, color);
+    d.rounded_rect(Rect::new(at(rect, -0.6, 0.22), at(rect, 0.6, 0.48)), s * 0.12, color);
+}

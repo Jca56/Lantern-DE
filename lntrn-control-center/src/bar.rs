@@ -1,7 +1,7 @@
 //! The bar: where it sits on the screen and what it is painted with. It
-//! floats, like Plasma 6's panel: a plate held `gap` away from the bottom
-//! edge of its monitor (the same gap snapped windows keep) and a little
-//! more from the left and right, with rounded corners. While a window
+//! floats, like Plasma 6's panel: a plate held off the bottom, left and
+//! right edges of its monitor, with rounded corners, its [`Shape`] what
+//! System Settings sets in `[control_center]`. While a window
 //! fills the monitor it docks, like a taskbar: the full width, flush with
 //! the bottom, square. The surface holds both places, so the plate glides
 //! between them inside it (`morph`); what the plate doesn't cover lets
@@ -15,23 +15,49 @@ use lntrn_ui::{Anchor, KeyboardMode, LayerConfig, Metrics, Theme, Ui};
 
 /// What the compositor knows the surface as.
 pub const NAMESPACE: &str = "lntrn-control-center";
-/// The plate's height, logical px: room for 18px text and big targets.
-pub const HEIGHT: u32 = 64;
-/// The floating plate's corner radius, logical px.
-const RADIUS: f64 = 16.0;
-/// How much further than `gap` the floating plate keeps from the sides.
-const SIDE_EXTRA: i32 = 8;
 /// The Fox style's plate: the Command Center's panel (Fox Dark's `bg`).
 const FOX_PLATE: Color = Color::hex(0x181818);
 
-/// The layer surface: the bottom `HEIGHT + gap` of the monitor called
+/// The bar's size and where it floats, logical px: `[control_center]`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Shape {
+    /// The plate's height: room for 18px text and big targets.
+    pub height: u32,
+    /// The floating plate's corner radius; docked it is square.
+    pub radius: u32,
+    /// Between the floating plate and the bottom of the screen.
+    pub below: u32,
+    /// Between the floating plate and the left and right edges.
+    pub sides: u32,
+}
+
+impl Shape {
+    /// Each key's range, as System Settings' sliders offer it.
+    pub const HEIGHTS: (u32, u32) = (40, 120);
+    pub const RADII: (u32, u32) = (0, 32);
+    pub const BELOW: (u32, u32) = (0, 40);
+    pub const SIDES: (u32, u32) = (0, 120);
+
+    /// Held to the ranges above.
+    pub fn clamped(self) -> Shape {
+        let hold = |v: u32, (lo, hi): (u32, u32)| v.clamp(lo, hi);
+        Shape { height: hold(self.height, Shape::HEIGHTS), radius: hold(self.radius, Shape::RADII), below: hold(self.below, Shape::BELOW), sides: hold(self.sides, Shape::SIDES) }
+    }
+}
+
+impl Default for Shape {
+    fn default() -> Self {
+        Shape { height: 64, radius: 16, below: 8, sides: 16 }
+    }
+}
+
+/// The layer surface: the bottom `height + below` of the monitor called
 /// `output` (the compositor's pick when `None`), across its whole width,
 /// keeping windows above the plate whether it floats or is `docked`.
-pub fn layer(gap: i32, docked: bool, output: Option<&str>) -> LayerConfig {
-    let gap = gap.max(0) as u32;
+pub fn layer(shape: Shape, docked: bool, output: Option<&str>) -> LayerConfig {
     // Floating, the gap under the plate is kept from windows too.
-    let zone = if docked { HEIGHT } else { HEIGHT + gap };
-    let cfg = LayerConfig::bar(NAMESPACE, Anchor::BOTTOM, HEIGHT + gap)
+    let zone = if docked { shape.height } else { shape.height + shape.below };
+    let cfg = LayerConfig::bar(NAMESPACE, Anchor::BOTTOM, shape.height + shape.below)
         .exclusive(zone as i32)
         // A click on the bar leaves the keyboard with the window it was in.
         .keyboard(KeyboardMode::None);
@@ -97,13 +123,13 @@ pub struct Plate {
 
 /// The plate in a surface filling `surface`, at `t` of the way from
 /// floating to docked.
-pub fn plate(surface: Rect, m: Metrics, gap: i32, t: f64) -> Plate {
-    let gap = f64::from(gap.max(0));
-    let side = m.px(gap + f64::from(SIDE_EXTRA));
+pub fn plate(surface: Rect, m: Metrics, shape: Shape, t: f64) -> Plate {
+    let gap = f64::from(shape.below);
+    let side = m.px(f64::from(shape.sides));
     // The surface's own pixels per logical one: its buffer is rounded to
     // whole pixels (94 for 72 logical at 1.3x), so this, not the scale, is
     // what puts an edge where the compositor puts the window above it.
-    let logical = f64::from(HEIGHT) + gap;
+    let logical = f64::from(shape.height) + gap;
     let per = if surface.height() > 0.0 { surface.height() / logical } else { m.scale };
     let below = (gap * per).round();
     let floating = Rect::new(Vec2::new(surface.min.x + side, surface.min.y), Vec2::new(surface.max.x - side, surface.max.y - below));
@@ -113,7 +139,7 @@ pub fn plate(surface: Rect, m: Metrics, gap: i32, t: f64) -> Plate {
     let at = |a: f64, b: f64| a + (b - a) * t;
     let rect = Rect::new(Vec2::new(at(floating.min.x, docked.min.x), at(floating.min.y, docked.min.y)), Vec2::new(at(floating.max.x, docked.max.x), at(floating.max.y, docked.max.y))).round();
     // Sitting on the screen's bottom edge, round corners would look chipped.
-    let radius = if below > 0.0 { m.px(RADIUS) * (1.0 - t) } else { 0.0 };
+    let radius = if below > 0.0 { m.px(f64::from(shape.radius)) * (1.0 - t) } else { 0.0 };
     Plate { rect, radius, t }
 }
 
@@ -143,26 +169,35 @@ mod tests {
 
     #[test]
     fn the_surface_holds_both_places_and_keeps_windows_above_the_plate() {
-        let floating = layer(8, false, Some("DP-1"));
-        assert_eq!((floating.namespace.as_str(), floating.anchor, floating.size), (NAMESPACE, Anchor::BOTTOM, (0, HEIGHT + 8)));
+        let shape = Shape::default();
+        let floating = layer(shape, false, Some("DP-1"));
+        assert_eq!((floating.namespace.as_str(), floating.anchor, floating.size), (NAMESPACE, Anchor::BOTTOM, (0, 72)));
         assert_eq!(floating.margin, Margin::default());
-        assert_eq!(floating.exclusive_zone, (HEIGHT + 8) as i32, "the gap under the plate too");
+        assert_eq!(floating.exclusive_zone, 72, "the gap under the plate too");
         assert_eq!(floating.keyboard, KeyboardMode::None);
         assert_eq!(floating.output.as_deref(), Some("DP-1"));
         assert!(floating.check().is_ok());
-        let docked = layer(8, true, None);
-        assert_eq!((docked.size, docked.exclusive_zone, docked.output), ((0, HEIGHT + 8), HEIGHT as i32, None));
+        let docked = layer(Shape { height: 90, below: 20, ..shape }, true, None);
+        assert_eq!((docked.size, docked.exclusive_zone, docked.output), ((0, 110), 90, None));
     }
 
     #[test]
     fn the_plate_glides_from_inset_and_round_to_full_width_and_square() {
         let m = Theme::default().metrics(1.0);
+        let shape = Shape::default();
         let surface = r(0.0, 0.0, 1000.0, 72.0);
-        assert_eq!(plate(surface, m, 8, 0.0), Plate { rect: r(16.0, 0.0, 984.0, 64.0), radius: 16.0, t: 0.0 });
-        assert_eq!(plate(surface, m, 8, 1.0), Plate { rect: r(0.0, 8.0, 1000.0, 72.0), radius: 0.0, t: 1.0 });
-        assert_eq!(plate(surface, m, 8, 0.5).rect, r(8.0, 4.0, 992.0, 68.0));
-        // No gap: on the bottom edge from the start, so square.
-        assert_eq!(plate(r(0.0, 0.0, 1000.0, 64.0), m, 0, 0.0), Plate { rect: r(8.0, 0.0, 992.0, 64.0), radius: 0.0, t: 0.0 });
+        assert_eq!(plate(surface, m, shape, 0.0), Plate { rect: r(16.0, 0.0, 984.0, 64.0), radius: 16.0, t: 0.0 });
+        assert_eq!(plate(surface, m, shape, 1.0), Plate { rect: r(0.0, 8.0, 1000.0, 72.0), radius: 0.0, t: 1.0 });
+        assert_eq!(plate(surface, m, shape, 0.5).rect, r(8.0, 4.0, 992.0, 68.0));
+        // No gap below: on the bottom edge from the start, so square.
+        let flush = Shape { below: 0, sides: 8, ..shape };
+        assert_eq!(plate(r(0.0, 0.0, 1000.0, 64.0), m, flush, 0.0), Plate { rect: r(8.0, 0.0, 992.0, 64.0), radius: 0.0, t: 0.0 });
+    }
+
+    #[test]
+    fn a_shape_is_held_to_what_settings_offers() {
+        assert_eq!(Shape { height: 5, radius: 99, below: 1000, sides: 7 }.clamped(), Shape { height: 40, radius: 32, below: 40, sides: 7 });
+        assert_eq!(Shape::default().clamped(), Shape::default());
     }
 
     #[test]
@@ -171,8 +206,8 @@ mod tests {
         // lands 10.44 pixels down it.
         let m = Theme::default().metrics(1.3);
         let surface = r(0.0, 0.0, 3840.0, 94.0);
-        assert_eq!(plate(surface, m, 8, 1.0).rect, r(0.0, 10.0, 3840.0, 94.0));
-        assert_eq!(plate(surface, m, 8, 0.0).rect, r(21.0, 0.0, 3819.0, 84.0));
+        assert_eq!(plate(surface, m, Shape::default(), 1.0).rect, r(0.0, 10.0, 3840.0, 94.0));
+        assert_eq!(plate(surface, m, Shape::default(), 0.0).rect, r(21.0, 0.0, 3819.0, 84.0));
     }
 
     #[test]

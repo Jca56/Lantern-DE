@@ -1,7 +1,8 @@
 //! What the bar takes from `lantern.toml`: the desktop's look (through
-//! `lntrn-kit`), the window gap it floats by, the primary monitor it lives
-//! on, and how windows glide (which docking keeps step with). A thread watches the file and wakes the loop when it
-//! changes, so a bar sitting still draws nothing.
+//! `lntrn-kit`), its own shape (`[control_center]`), the primary monitor
+//! it lives on, and how windows glide (which docking keeps step with). A
+//! thread watches the file and wakes the loop when it changes, so a bar
+//! sitting still draws nothing.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -14,12 +15,8 @@ use lntrn_data::{Doc, toml};
 use lntrn_kit::desktop::{self, Desktop};
 use lntrn_sys::watch::{Event, EventKind, Watcher};
 
+use crate::bar::Shape;
 use crate::morph::Glide;
-
-/// The window gap when `lantern.toml` doesn't say: the compositor's own.
-const DEFAULT_GAP: i32 = 8;
-/// The most the gap may be: the compositor holds it to the same.
-const MAX_GAP: i32 = 32;
 /// How long a burst of writes to the file is let settle before it is read.
 const SETTLE: Duration = Duration::from_millis(100);
 
@@ -27,9 +24,9 @@ const SETTLE: Duration = Duration::from_millis(100);
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub desktop: Desktop,
-    /// `[window_manager] gap`: what snapped windows keep from the
-    /// screen's edges, and so what the bar floats by.
-    pub gap: i32,
+    /// `[control_center]`: how tall the bar is, how round, and how far it
+    /// floats from the edges.
+    pub shape: Shape,
     /// The monitor `[[monitors]]` marks `primary`, by its connector name
     /// (`DP-1`), unless it is switched off.
     pub primary: Option<String>,
@@ -57,9 +54,16 @@ impl Settings {
     }
 
     pub fn from_doc(doc: &Doc) -> Settings {
-        let gap = doc.path("window_manager.gap").and_then(Doc::as_i64).map_or(DEFAULT_GAP, |g| g.clamp(0, MAX_GAP as i64) as i32);
-        Settings { desktop: Desktop::from_doc(doc), gap, primary: primary(doc), dock_glide: dock_glide(doc) }
+        Settings { desktop: Desktop::from_doc(doc), shape: shape(doc), primary: primary(doc), dock_glide: dock_glide(doc) }
     }
+}
+
+/// `[control_center]`: each key that is there and a number, held to its
+/// range; the default for the rest.
+fn shape(doc: &Doc) -> Shape {
+    let d = Shape::default();
+    let key = |k: &str, or: u32| doc.path(&format!("control_center.{k}")).and_then(Doc::as_i64).map_or(or, |v| v.clamp(0, i64::from(u32::MAX)) as u32);
+    Shape { height: key("height", d.height), radius: key("corner_radius", d.radius), below: key("gap_below", d.below), sides: key("gap_sides", d.sides) }.clamped()
 }
 
 /// `[animations]` as the compositor reads it for a window-state change:
@@ -134,11 +138,15 @@ mod tests {
     }
 
     #[test]
-    fn the_gap_follows_the_window_manager_held_to_what_the_compositor_allows() {
-        assert_eq!(Settings::default().gap, 8);
-        assert_eq!(parse("[window_manager]\ngap = 12\n").gap, 12);
-        assert_eq!(parse("[window_manager]\ngap = 100\n").gap, 32);
-        assert_eq!(parse("[window_manager]\ngap = -3\n").gap, 0);
+    fn the_shape_is_what_system_settings_wrote_held_to_its_ranges() {
+        assert_eq!(Settings::default().shape, Shape::default());
+        let set = parse("[control_center]\nheight = 90\ncorner_radius = 0\ngap_below = 12\ngap_sides = 40\n").shape;
+        assert_eq!(set, Shape { height: 90, radius: 0, below: 12, sides: 40 });
+        // Out of range, below zero, or not a number.
+        let odd = parse("[control_center]\nheight = 500\ngap_below = -3\ngap_sides = \"wide\"\n").shape;
+        assert_eq!(odd, Shape { height: 120, radius: 16, below: 0, sides: 16 });
+        // The window gap no longer moves it.
+        assert_eq!(parse("[window_manager]\ngap = 20\n").shape, Shape::default());
     }
 
     #[test]

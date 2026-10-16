@@ -7,9 +7,11 @@
 //! compositor's. Of `[terminal]` we own the keys on its page; the tabs
 //! it has pinned are the terminal's. `[notepad]` is shared with Notepad,
 //! which writes the same keys, and `[screenshot]` with the screenshot
-//! tool. The one file beside it is the desktop's ring (`radial.rs`).
+//! tool. `[control_center]` is the bar's, which reads it live. The one
+//! file beside it is the desktop's ring (`radial.rs`).
 
 mod appearance;
+mod control_center;
 mod monitors;
 pub mod radial;
 mod system;
@@ -18,6 +20,7 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 
 pub use appearance::{Appearance, GRADIENT_STOPS, WindowManager, Windows};
+pub use control_center::{CC_GAPS_BELOW, CC_GAPS_SIDES, CC_HEIGHTS, CC_RADII, ControlCenter};
 use lntrn_data::{Doc, from_doc, to_doc, toml};
 use lntrn_props::Reflect;
 pub use monitors::Monitor;
@@ -34,6 +37,7 @@ pub struct Config {
     pub terminal: Terminal,
     pub notepad: Notepad,
     pub screenshot: Screenshot,
+    pub control_center: ControlCenter,
     /// The screens the file lists: their wallpapers and how each is set
     /// up.
     pub monitors: Vec<Monitor>,
@@ -99,12 +103,13 @@ impl Config {
             terminal: Terminal::default(),
             notepad: Notepad::default(),
             screenshot: Screenshot::default(),
+            control_center: ControlCenter::default(),
             monitors: Vec::new(),
             mtime: None,
         }
     }
 
-    fn sections(&self) -> [(&'static str, &dyn Reflect); 10] {
+    fn sections(&self) -> [(&'static str, &dyn Reflect); 11] {
         [
             ("appearance", &self.appearance),
             ("window_manager", &self.window_manager),
@@ -116,10 +121,11 @@ impl Config {
             ("terminal", &self.terminal),
             ("notepad", &self.notepad),
             ("screenshot", &self.screenshot),
+            ("control_center", &self.control_center),
         ]
     }
 
-    fn sections_mut(&mut self) -> [(&'static str, &mut dyn Reflect); 10] {
+    fn sections_mut(&mut self) -> [(&'static str, &mut dyn Reflect); 11] {
         [
             ("appearance", &mut self.appearance),
             ("window_manager", &mut self.window_manager),
@@ -131,6 +137,7 @@ impl Config {
             ("terminal", &mut self.terminal),
             ("notepad", &mut self.notepad),
             ("screenshot", &mut self.screenshot),
+            ("control_center", &mut self.control_center),
         ]
     }
 
@@ -183,6 +190,7 @@ impl Config {
         self.animations.clamp();
         self.terminal.clamp();
         self.notepad.clamp();
+        self.control_center.clamp();
     }
 
     /// Merge our sections into the file on disk and write it back
@@ -332,6 +340,24 @@ mod tests {
         std::fs::write(&path, "[screenshot]\nhide_mouse = false\n").unwrap();
         from_doc(&mut cfg.screenshot, read_existing(&path).unwrap().get("screenshot").unwrap());
         assert!(!cfg.screenshot.hide_mouse);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `[control_center]` is written with the keys the bar reads, and a
+    /// hand-edited value out of range is put right on the way.
+    #[test]
+    fn the_control_centers_section_is_what_the_bar_reads() {
+        let dir = std::env::temp_dir().join(format!("lntrn-settings-control-center-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("lantern.toml");
+        let mut cfg = Config::empty();
+        let cc = &cfg.control_center;
+        assert_eq!((cc.height, cc.corner_radius, cc.gap_below, cc.gap_sides), (64, 16, 8, 16), "as the bar starts");
+        (cfg.control_center.height, cfg.control_center.gap_sides) = (90, 500);
+        cfg.save_to(&path).unwrap();
+        let doc = read_existing(&path).unwrap();
+        let key = |k: &str| doc.path(&format!("control_center.{k}")).and_then(Doc::as_i64);
+        assert_eq!((key("height"), key("corner_radius"), key("gap_below"), key("gap_sides")), (Some(90), Some(16), Some(8), Some(120)));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

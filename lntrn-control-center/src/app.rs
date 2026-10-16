@@ -1,6 +1,6 @@
 //! The app as the shell sees it: one editor, the bar, filling a layer
 //! surface of its own. It follows `lantern.toml` as it changes: the look
-//! and the gap at once, a new primary monitor by starting over on it (a
+//! and the shape at once, a new primary monitor by starting over on it (a
 //! surface can't change monitors). It docks while the compositor says a
 //! window fills its monitor, and floats again when none does.
 
@@ -73,7 +73,7 @@ impl App {
             (false, false) => Glide::UNDOCK,
         };
         self.morph.aim(docked, now, glide);
-        cx.request(ShellRequest::SetLayer(bar::layer(self.settings.gap, docked, self.output.as_deref())));
+        cx.request(ShellRequest::SetLayer(bar::layer(self.settings.shape, docked, self.output.as_deref())));
     }
 
     /// Take in a change to `lantern.toml`. Returns `true` when the theme
@@ -92,8 +92,8 @@ impl App {
             cx.request(ShellRequest::Quit);
             return false;
         }
-        if new.gap != self.settings.gap {
-            cx.request(ShellRequest::SetLayer(bar::layer(new.gap, self.docked, self.output.as_deref())));
+        if new.shape != self.settings.shape {
+            cx.request(ShellRequest::SetLayer(bar::layer(new.shape, self.docked, self.output.as_deref())));
         }
         self.look = Look::of(&new.desktop);
         let theme = bar::theme(&new.desktop);
@@ -138,7 +138,7 @@ impl Host for App {
             // Every frame until it lands: the present waits for vsync.
             ui.state.request_redraw_after(0.0);
         }
-        let plate = bar::plate(ui.clip(), ui.m, self.settings.gap, self.morph.value(now));
+        let plate = bar::plate(ui.clip(), ui.m, self.settings.shape, self.morph.value(now));
         bar::draw(ui, self.look, plate);
         // Clicks off the plate go to whatever is under it.
         if self.region != Some(plate.rect) {

@@ -14,7 +14,7 @@ use crate::config::Config;
 use crate::kit;
 use crate::look;
 use crate::nav::Page;
-use crate::pages::{effects, notepad, notifications, terminal};
+use crate::pages::{control_center, effects, notepad, notifications, terminal};
 
 /// Point the desktop's folders at a scratch tree holding two wallpapers
 /// (and a film, which is not one), so nothing here reads or writes the
@@ -293,6 +293,39 @@ fn the_terminal_page_sets_its_size_cursor_and_bar() {
         terminal::draw(&mut cfg, ui);
     });
     assert!(cfg.terminal.open_bar_hidden);
+    assert!(clipped().is_empty());
+}
+
+#[test]
+fn the_control_center_page_sets_the_bars_shape() {
+    let mut cfg = Config::empty();
+    let mut h = kit_at(1000.0, 1000.0);
+    let cc = &cfg.control_center;
+    assert_eq!((cc.height, cc.corner_radius, cc.gap_below, cc.gap_sides), (64, 16, 8, 16), "where the bar starts");
+    clipped();
+    h.settle(4, |ui| {
+        control_center::draw(&mut cfg, ui);
+    });
+    // The height drags its whole range; the preview above keeps its
+    // size, so the slider stays under the pointer.
+    let track = h.rect_of(WidgetId::ROOT.with("shape").with("Height")).unwrap();
+    let y = track.center().y;
+    h.drag(Vec2::new(track.center().x, y), Vec2::new(track.max.x + 40.0, y), 4, |ui| {
+        control_center::draw(&mut cfg, ui);
+    });
+    assert_eq!(cfg.control_center.height, 120);
+    assert_eq!(h.rect_of(WidgetId::ROOT.with("shape").with("Height")), Some(track));
+    h.key(Key::ArrowLeft);
+    h.settle(4, |ui| {
+        control_center::draw(&mut cfg, ui);
+    });
+    assert_eq!(cfg.control_center.height, 119);
+    let track = h.rect_of(WidgetId::ROOT.with("shape").with("Gap at the sides")).unwrap();
+    let y = track.center().y;
+    h.drag(Vec2::new(track.center().x, y), Vec2::new(track.min.x - 40.0, y), 4, |ui| {
+        control_center::draw(&mut cfg, ui);
+    });
+    assert_eq!(cfg.control_center.gap_sides, 0);
     assert!(clipped().is_empty());
 }
 

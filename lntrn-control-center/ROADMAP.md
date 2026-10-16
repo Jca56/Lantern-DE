@@ -10,11 +10,11 @@ System Settings toggle picks which one the session uses.
 > - **Monitor:** primary only. Read from `[[monitors]] primary = true` in
 >   `lantern.toml` and named to the compositor (U086). A primary that isn't
 >   plugged in (sysfs `status`) falls back to the compositor's pick.
-> - **Style:** floating (Plasma 6): inset by `[window_manager] gap` on the
->   bottom and gap + 8 on the left/right, rounded corners, a hairline edge,
->   solid plate.
-> - **Height:** 64 logical px (bumped from 56). Exclusive zone = 64; the
->   compositor adds the bottom margin, so windows stop at the plate's top edge.
+> - **Style:** floating (Plasma 6): rounded corners, a hairline edge, solid
+>   plate. **Shape is user-set (2026-10-16)** in System Settings → Desktop →
+>   Control Center, stored as `[control_center]` `height` (64, 40–120),
+>   `corner_radius` (16, 0–32), `gap_below` (8, 0–40), `gap_sides` (16,
+>   0–120); the bar follows it live. (It used to follow the window gap.)
 > - **Keyboard:** none. Clicking the bar never steals focus. Switch to
 >   on-demand (`ShellRequest::SetLayer`) once something in it takes typing.
 > - **Docking (2026-10-16):** docks full-width, flush and square (Windows
@@ -43,6 +43,7 @@ System Settings toggle picks which one the session uses.
       background colour / style, gap; a new primary restarts the bar there
 - [x] Single instance (`flock` in `$XDG_RUNTIME_DIR`)
 - [x] Float normally, dock under a maximized/fullscreen window, with a glide
+- [x] System Settings page (Desktop group): height, radius, gaps, live preview
 
 ## Next (ideas, unordered)
 

@@ -47,7 +47,7 @@ fn main() {
     let config = AppConfig {
         title: "Control Center".into(),
         app_id: APP_ID.into(),
-        layer: Some(bar::layer(settings.gap, false, output.as_deref())),
+        layer: Some(bar::layer(settings.shape, false, output.as_deref())),
         title_bar: false,
         sans: settings.desktop.font.clone(),
         // See-through past the plate.

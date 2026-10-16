@@ -3,6 +3,7 @@
 
 pub mod animations;
 pub mod appearance;
+pub mod control_center;
 pub mod cursor_svg;
 pub mod effects;
 pub mod monitors;
@@ -41,6 +42,7 @@ pub fn draw(app: &mut App, ui: &mut Ui, cx: &mut AreaCx<()>) -> bool {
             Page::Monitors => monitors::draw(&mut app.config, &mut app.monitors, ui, cx),
             Page::Notifications => notifications::draw(&mut app.config, ui),
             Page::Power => power::draw(&mut app.config, ui),
+            Page::ControlCenter => control_center::draw(&mut app.config, ui),
             Page::Terminal => terminal::draw(&mut app.config, ui),
             Page::Notepad => notepad::draw(&mut app.config, ui),
             Page::Screenshot => screenshot::draw(&mut app.config, ui),
