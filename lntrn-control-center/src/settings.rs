@@ -16,6 +16,7 @@ use lntrn_kit::desktop::{self, Desktop};
 use lntrn_sys::watch::{Event, EventKind, Watcher};
 
 use crate::bar::Shape;
+use crate::clock::{ClockOptions, DateStyle};
 use crate::morph::Glide;
 /// How long a burst of writes to the file is let settle before it is read.
 const SETTLE: Duration = Duration::from_millis(100);
@@ -27,6 +28,8 @@ pub struct Settings {
     /// `[control_center]`: how tall the bar is, how round, and how far it
     /// floats from the edges.
     pub shape: Shape,
+    /// `[control_center]`'s `clock_*` keys: what the clock shows.
+    pub clock: ClockOptions,
     /// The monitor `[[monitors]]` marks `primary`, by its connector name
     /// (`DP-1`), unless it is switched off.
     pub primary: Option<String>,
@@ -54,7 +57,7 @@ impl Settings {
     }
 
     pub fn from_doc(doc: &Doc) -> Settings {
-        Settings { desktop: Desktop::from_doc(doc), shape: shape(doc), primary: primary(doc), dock_glide: dock_glide(doc) }
+        Settings { desktop: Desktop::from_doc(doc), shape: shape(doc), clock: clock(doc), primary: primary(doc), dock_glide: dock_glide(doc) }
     }
 }
 
@@ -64,6 +67,14 @@ fn shape(doc: &Doc) -> Shape {
     let d = Shape::default();
     let key = |k: &str, or: u32| doc.path(&format!("control_center.{k}")).and_then(Doc::as_i64).map_or(or, |v| v.clamp(0, i64::from(u32::MAX)) as u32);
     Shape { height: key("height", d.height), radius: key("corner_radius", d.radius), below: key("gap_below", d.below), sides: key("gap_sides", d.sides) }.clamped()
+}
+
+/// `[control_center]`'s `clock_*` keys; the default for any missing.
+fn clock(doc: &Doc) -> ClockOptions {
+    let d = ClockOptions::default();
+    let key = |k: &str| doc.path(&format!("control_center.clock_{k}"));
+    let flag = |k: &str, or: bool| key(k).and_then(Doc::as_bool).unwrap_or(or);
+    ClockOptions { hour24: flag("24h", d.hour24), seconds: flag("seconds", d.seconds), date: flag("date", d.date), style: key("date_style").and_then(Doc::as_str).map_or(d.style, DateStyle::from_word) }
 }
 
 /// `[animations]` as the compositor reads it for a window-state change:
@@ -147,6 +158,14 @@ mod tests {
         assert_eq!(odd, Shape { height: 120, radius: 16, below: 0, sides: 16 });
         // The window gap no longer moves it.
         assert_eq!(parse("[window_manager]\ngap = 20\n").shape, Shape::default());
+    }
+
+    #[test]
+    fn the_clock_shows_what_system_settings_chose() {
+        assert_eq!(Settings::default().clock, ClockOptions::default());
+        let set = parse("[control_center]\nclock_24h = true\nclock_seconds = true\nclock_date = false\nclock_date_style = \"long\"\n").clock;
+        assert_eq!(set, ClockOptions { hour24: true, seconds: true, date: false, style: DateStyle::Long });
+        assert_eq!(parse("[control_center]\nclock_date_style = \"???\"\n").clock.style, DateStyle::Short);
     }
 
     #[test]

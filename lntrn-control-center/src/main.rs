@@ -9,6 +9,8 @@
 //!   `lantern.toml` as it changes.
 //! - `bar.rs` — where the bar sits (its layer surface, its monitor) and
 //!   how it is painted, floating or docked.
+//! - `clock.rs` — the time and date at its right end, and the thread
+//!   that turns the minute.
 //! - `dock.rs` — when to dock: the compositor's word on whether a window
 //!   fills our monitor, read on a thread of its own.
 //! - `morph.rs` — the plate's glide between floating and docked.
@@ -18,6 +20,7 @@
 
 mod app;
 mod bar;
+mod clock;
 mod dock;
 mod instance;
 mod morph;

@@ -13,6 +13,7 @@ use lntrn_math::Rect;
 use lntrn_ui::{Action, AreaCx, Host, HostCx, ShellRequest, Ui};
 
 use crate::bar::{self, Look};
+use crate::clock;
 use crate::dock;
 use crate::morph::{Glide, Morph};
 use crate::settings::{self, Settings};
@@ -140,6 +141,12 @@ impl Host for App {
         }
         let plate = bar::plate(ui.clip(), ui.m, self.settings.shape, self.morph.value(now));
         bar::draw(ui, self.look, plate);
+        if let Some(now) = clock::Local::now() {
+            clock::draw(ui, plate.rect, self.settings.clock, &now);
+        }
+        if let Some(soon) = clock::redraw_after(self.settings.clock) {
+            ui.state.request_redraw_after(soon);
+        }
         // Clicks off the plate go to whatever is under it.
         if self.region != Some(plate.rect) {
             self.region = Some(plate.rect);
@@ -154,6 +161,7 @@ impl Host for App {
 impl AppHost for App {
     fn waker(&mut self, waker: Waker) {
         settings::watch(self.changed.clone(), waker.clone());
+        clock::watch(waker.clone());
         dock::watch(self.output.clone(), self.covered.clone(), waker);
     }
 }

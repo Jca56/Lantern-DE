@@ -326,6 +326,14 @@ fn the_control_center_page_sets_the_bars_shape() {
         control_center::draw(&mut cfg, ui);
     });
     assert_eq!(cfg.control_center.gap_sides, 0);
+    // The clock's switches.
+    h.click_on(WidgetId::ROOT.with("clock").with("24-hour clock"), |ui| {
+        control_center::draw(&mut cfg, ui);
+    });
+    h.click_on(WidgetId::ROOT.with("clock").with("Show the date"), |ui| {
+        control_center::draw(&mut cfg, ui);
+    });
+    assert_eq!((cfg.control_center.clock_24h, cfg.control_center.clock_seconds, cfg.control_center.clock_date), (true, false, false));
     assert!(clipped().is_empty());
 }
 

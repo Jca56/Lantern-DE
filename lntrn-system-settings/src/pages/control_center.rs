@@ -1,12 +1,12 @@
 //! The Control Center page: the bar along the bottom of the screen, its
 //! height, corners and gaps, over the bottom of a screen with the bar
-//! drawn on it at its real size (the middle of the screen left out). The
-//! bar reads `[control_center]` as it changes.
+//! drawn on it at its real size (the middle of the screen left out), then
+//! what its clock shows. The bar reads `[control_center]` as it changes.
 
 use lntrn_math::{Color, Rect, Vec2};
 use lntrn_ui::Ui;
 
-use crate::config::{CC_GAPS_BELOW, CC_GAPS_SIDES, CC_HEIGHTS, CC_RADII, Config};
+use crate::config::{CC_DATE_STYLES, CC_GAPS_BELOW, CC_GAPS_SIDES, CC_HEIGHTS, CC_RADII, Config};
 use crate::kit::{self, look, pixels};
 
 /// The preview's height, logical: the tallest bar on its biggest gap with
@@ -53,5 +53,18 @@ pub fn draw(cfg: &mut Config, ui: &mut Ui) -> bool {
         changed |= c.slider_int("Gap at the sides", "", &mut cc.gap_sides, CC_GAPS_SIDES, 1, pixels);
     });
     kit::note(ui, "It floats this far from the screen's edges, and docks full width and square while a window is maximized or full screen on its monitor. It follows these as they change.");
+
+    kit::caption(ui, "Clock");
+    kit::card(ui, "clock", |c| {
+        changed |= c.switch("24-hour clock", "18:52 instead of 6:52 PM.", &mut cc.clock_24h);
+        changed |= c.switch("Show seconds", "", &mut cc.clock_seconds);
+        changed |= c.switch("Show the date", "Under the time, or beside it on a short bar.", &mut cc.clock_date);
+        let labels: Vec<&str> = CC_DATE_STYLES.iter().map(|(_, shown)| *shown).collect();
+        let mut index = CC_DATE_STYLES.iter().position(|(word, _)| *word == cc.clock_date_style).unwrap_or(0);
+        if c.dropdown("Date style", "", &mut index, &labels) {
+            cc.clock_date_style = CC_DATE_STYLES[index].0.to_owned();
+            changed = true;
+        }
+    });
     changed
 }

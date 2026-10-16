@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 
 pub use appearance::{Appearance, GRADIENT_STOPS, WindowManager, Windows};
-pub use control_center::{CC_GAPS_BELOW, CC_GAPS_SIDES, CC_HEIGHTS, CC_RADII, ControlCenter};
+pub use control_center::{CC_DATE_STYLES, CC_GAPS_BELOW, CC_GAPS_SIDES, CC_HEIGHTS, CC_RADII, ControlCenter};
 use lntrn_data::{Doc, from_doc, to_doc, toml};
 use lntrn_props::Reflect;
 pub use monitors::Monitor;
@@ -358,6 +358,11 @@ mod tests {
         let doc = read_existing(&path).unwrap();
         let key = |k: &str| doc.path(&format!("control_center.{k}")).and_then(Doc::as_i64);
         assert_eq!((key("height"), key("corner_radius"), key("gap_below"), key("gap_sides")), (Some(90), Some(16), Some(8), Some(120)));
+        let flag = |k: &str| doc.path(&format!("control_center.{k}")).and_then(Doc::as_bool);
+        assert_eq!((flag("clock_24h"), flag("clock_seconds"), flag("clock_date")), (Some(false), Some(false), Some(true)));
+        cfg.control_center.clock_date_style = "sideways".into();
+        cfg.save_to(&path).unwrap();
+        assert_eq!(read_existing(&path).unwrap().path("control_center.clock_date_style").and_then(Doc::as_str), Some("short"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

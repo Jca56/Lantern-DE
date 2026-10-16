@@ -44,12 +44,19 @@ System Settings toggle picks which one the session uses.
 - [x] Single instance (`flock` in `$XDG_RUNTIME_DIR`)
 - [x] Float normally, dock under a maximized/fullscreen window, with a glide
 - [x] System Settings page (Desktop group): height, radius, gaps, live preview
+- [x] Clock (right): time over date (one line on a short bar), libc local
+      time, a real-time-clock thread turning the minute (right after a
+      suspend); `clock_24h`, `clock_seconds`, `clock_date`,
+      `clock_date_style` in `[control_center]` and on the Settings page
 
 ## Next (ideas, unordered)
 
-- [ ] Launcher button (left)
-- [ ] Task list: running windows (foreign-toplevel)
-- [ ] Clock (right), `request_redraw_after` to the next minute
+Planned order (Alva, 2026-10-16): clock → app launcher (far left) → pins +
+open windows dock (middle).
+
+- [ ] App launcher (far left)
+- [ ] Pins + open windows dock (middle): window feed per monitor/workspace
+      from the compositor (foreign-toplevel lacks both), app icons
 - [ ] System tray / quick toggles (audio, network, bluetooth, battery)
 
 ## Known gaps
