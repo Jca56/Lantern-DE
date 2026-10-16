@@ -992,20 +992,14 @@ impl Lantern {
         if !self.workspace_ipc.has_clients() {
             return;
         }
-        let output_names: Vec<String> = self.space.outputs().map(|o| o.name()).collect();
-        // Also ensure any output our state tracks but isn't currently in space is broadcast
-        let extra: Vec<String> = self
-            .workspaces
-            .outputs()
-            .filter(|n| !output_names.iter().any(|x| x == *n))
-            .cloned()
-            .collect();
-        for name in output_names.iter().chain(extra.iter()) {
-            let active = self.workspaces.active_id(name);
-            let ids = self.workspaces.populated_ids(name);
-            let line = crate::workspace_ipc::format_state_line(name, active, &ids);
+        for name in self.ipc_output_names() {
+            let active = self.workspaces.active_id(&name);
+            let ids = self.workspaces.populated_ids(&name);
+            let line = crate::workspace_ipc::format_state_line(&name, active, &ids);
             self.workspace_ipc.broadcast_line(&line);
         }
+        // A switch or a window coming or going can uncover an output.
+        self.broadcast_covered(true);
         self.workspace_ipc.mark_initial_delivered();
     }
 

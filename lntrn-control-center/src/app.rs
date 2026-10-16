@@ -1,16 +1,20 @@
 //! The app as the shell sees it: one editor, the bar, filling a layer
 //! surface of its own. It follows `lantern.toml` as it changes: the look
 //! and the gap at once, a new primary monitor by starting over on it (a
-//! surface can't change monitors).
+//! surface can't change monitors). It docks while the compositor says a
+//! window fills its monitor, and floats again when none does.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use lntrn_app::{AppHost, Waker};
 use lntrn_core::log_info;
+use lntrn_math::Rect;
 use lntrn_ui::{Action, AreaCx, Host, HostCx, ShellRequest, Ui};
 
 use crate::bar::{self, Look};
+use crate::dock;
+use crate::morph::{Glide, Morph};
 use crate::settings::{self, Settings};
 
 pub const APP_ID: &str = "lntrn-control-center";
@@ -38,12 +42,38 @@ pub struct App {
     output: Option<String>,
     /// Raised by the watcher thread when `lantern.toml` changes.
     changed: Arc<AtomicBool>,
+    /// Kept by the dock thread: whether a window fills our monitor.
+    covered: Arc<AtomicBool>,
+    /// Whether the bar is docked, or on its way there.
+    docked: bool,
+    morph: Morph,
+    /// Where the surface last took input: the plate, in physical pixels.
+    region: Option<Rect>,
 }
 
 impl App {
     pub fn new(settings: Settings, output: Option<String>) -> Self {
         let look = Look::of(&settings.desktop);
-        Self { settings, look, output, changed: Arc::new(AtomicBool::new(false)) }
+        Self { settings, look, output, changed: Arc::new(AtomicBool::new(false)), covered: Arc::new(AtomicBool::new(false)), docked: false, morph: Morph::at(false), region: None }
+    }
+
+    /// Head for docked or floating when the compositor's word changed. The
+    /// zone goes over at once, so windows fill or give way while the
+    /// plate glides to meet them: docking as long as the window's own
+    /// maximize glide, floating again quickly, at once under Reduce Motion.
+    fn dock(&mut self, now: f64, reduce_motion: bool, cx: &mut AreaCx<()>) {
+        let docked = self.covered.load(Ordering::Acquire);
+        if docked == self.docked {
+            return;
+        }
+        self.docked = docked;
+        let glide = match (reduce_motion, docked) {
+            (true, _) => Glide::NONE,
+            (false, true) => self.settings.dock_glide,
+            (false, false) => Glide::UNDOCK,
+        };
+        self.morph.aim(docked, now, glide);
+        cx.request(ShellRequest::SetLayer(bar::layer(self.settings.gap, docked, self.output.as_deref())));
     }
 
     /// Take in a change to `lantern.toml`. Returns `true` when the theme
@@ -63,7 +93,7 @@ impl App {
             return false;
         }
         if new.gap != self.settings.gap {
-            cx.request(ShellRequest::SetLayer(bar::layer(new.gap, self.output.as_deref())));
+            cx.request(ShellRequest::SetLayer(bar::layer(new.gap, self.docked, self.output.as_deref())));
         }
         self.look = Look::of(&new.desktop);
         let theme = bar::theme(&new.desktop);
@@ -102,7 +132,19 @@ impl Host for App {
 
     fn draw_body(&mut self, _editor: Editor, ui: &mut Ui, cx: &mut AreaCx<()>) -> bool {
         let restyled = self.follow(cx);
-        bar::draw(ui, self.look, self.settings.gap);
+        let now = ui.now();
+        self.dock(now, ui.state.reduce_motion, cx);
+        if self.morph.moving(now) {
+            // Every frame until it lands: the present waits for vsync.
+            ui.state.request_redraw_after(0.0);
+        }
+        let plate = bar::plate(ui.clip(), ui.m, self.settings.gap, self.morph.value(now));
+        bar::draw(ui, self.look, plate);
+        // Clicks off the plate go to whatever is under it.
+        if self.region != Some(plate.rect) {
+            self.region = Some(plate.rect);
+            cx.request(ShellRequest::SetInputRegion(Some(vec![plate.rect])));
+        }
         restyled
     }
 
@@ -111,6 +153,7 @@ impl Host for App {
 
 impl AppHost for App {
     fn waker(&mut self, waker: Waker) {
-        settings::watch(self.changed.clone(), waker);
+        settings::watch(self.changed.clone(), waker.clone());
+        dock::watch(self.output.clone(), self.covered.clone(), waker);
     }
 }

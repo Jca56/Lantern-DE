@@ -8,14 +8,19 @@
 //! - `app.rs` — the [`lntrn_ui::Host`]: one editor, the bar, following
 //!   `lantern.toml` as it changes.
 //! - `bar.rs` — where the bar sits (its layer surface, its monitor) and
-//!   how it is painted.
+//!   how it is painted, floating or docked.
+//! - `dock.rs` — when to dock: the compositor's word on whether a window
+//!   fills our monitor, read on a thread of its own.
+//! - `morph.rs` — the plate's glide between floating and docked.
 //! - `settings.rs` — what it reads from `lantern.toml`, and the thread
 //!   that watches the file.
 //! - `instance.rs` — one bar at a time.
 
 mod app;
 mod bar;
+mod dock;
 mod instance;
+mod morph;
 mod settings;
 
 use std::os::unix::process::CommandExt;
@@ -42,10 +47,10 @@ fn main() {
     let config = AppConfig {
         title: "Control Center".into(),
         app_id: APP_ID.into(),
-        layer: Some(bar::layer(settings.gap, output.as_deref())),
+        layer: Some(bar::layer(settings.gap, false, output.as_deref())),
         title_bar: false,
         sans: settings.desktop.font.clone(),
-        // See-through past the plate's rounded corners.
+        // See-through past the plate.
         transparent: true,
         // Nothing of the shell's to keep: the layout is one bar.
         persist: false,

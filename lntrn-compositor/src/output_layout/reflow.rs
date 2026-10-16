@@ -65,6 +65,9 @@ impl Lantern {
     /// into (or stranded at) where the output used to be.
     pub fn reflow_held_windows(&mut self) {
         let mut moves: Vec<(Window, Point<i32, Logical>)> = Vec::new();
+        // Windows whose state animation was sent on to the new rect: theirs
+        // is kept, where everyone else's is cut short below.
+        let mut gliding: Vec<WlSurface> = Vec::new();
 
         let fullscreen: Vec<WlSurface> = self
             .fullscreen_windows
@@ -139,7 +142,9 @@ impl Lantern {
                 continue;
             }
             if let Some(window) = self.find_mapped_window(surface) {
-                window.configure_rect(target);
+                if self.refit(surface, &window, target) {
+                    gliding.push(surface.clone());
+                }
                 moves.push((window, target.loc));
             }
         }
@@ -173,17 +178,41 @@ impl Lantern {
                 continue;
             }
             if let Some(window) = self.find_mapped_window(surface) {
-                window.configure_rect(target);
+                if self.refit(surface, &window, target) {
+                    gliding.push(surface.clone());
+                }
                 moves.push((window, target.loc));
             }
         }
 
         for (window, _) in &moves {
             if let Some(surface) = window.get_wl_surface() {
-                self.window_state_anim.remove(&surface);
+                if !gliding.contains(&surface) {
+                    self.window_state_anim.remove(&surface);
+                }
             }
         }
         self.relocate_windows(&moves);
+    }
+
+    /// Fit a maximized or solo-tiled window to `target`. While a state
+    /// animation is still taking it into that state, the animation is sent
+    /// on to `target` instead of being cut short: a panel that docks just as
+    /// a maximize begins (the Control Center) changes the work area under
+    /// it, and cutting the glide made the window snap. Returns whether the
+    /// window was left to its animation.
+    fn refit(&mut self, surface: &WlSurface, window: &Window, target: Rectangle<i32, Logical>) -> bool {
+        if self.window_state_anim.retarget(surface, target) {
+            // The smooth path's per-frame configures carry the new size;
+            // the crossfade path was told its final size up front, so it
+            // is told again.
+            if !self.window_state_anim.is_smooth(surface) {
+                window.configure_rect(target);
+            }
+            return true;
+        }
+        window.configure_rect(target);
+        false
     }
 
     /// Note each output's work-area insets, and say whether any changed

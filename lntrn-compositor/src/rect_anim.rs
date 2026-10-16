@@ -115,6 +115,13 @@ impl RectAnim {
         self.target.loc = loc;
     }
 
+    /// Move the whole destination, likewise without touching timing or
+    /// curve: the work area changed under a maximize still on its way (a
+    /// panel docking as it began).
+    pub fn set_target(&mut self, target: Rectangle<i32, Logical>) {
+        self.target = target;
+    }
+
     /// Redirect this animation to a new target, starting from the current
     /// interpolated rect. Use when the user retriggers a state change mid-flight
     /// (e.g. maximize → unmaximize before the first finishes).

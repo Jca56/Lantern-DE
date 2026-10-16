@@ -40,6 +40,8 @@ impl Lantern {
             states.push(STATE_FULLSCREEN);
         }
         self.foreign_toplevel_state.set_states(surface, states);
+        // Maximized, fullscreen and minimized all change here.
+        self.broadcast_covered(false);
     }
 
     /// The work area of the output a window belongs to (see

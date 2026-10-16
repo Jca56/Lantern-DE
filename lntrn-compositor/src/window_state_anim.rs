@@ -126,6 +126,20 @@ impl WindowStateAnimState {
         }
     }
 
+    /// Send an in-flight anim (and its smooth-hold) on to `target`, keeping
+    /// its timing and curve, so the window lands where it now fits rather
+    /// than where it was headed. Returns whether there was one to send on.
+    pub fn retarget(&mut self, surface: &WlSurface, target: Rectangle<i32, Logical>) -> bool {
+        let Some(anim) = self.animations.get_mut(surface) else {
+            return false;
+        };
+        anim.set_target(target);
+        if let Some(hold) = self.smooth_holds.get_mut(surface) {
+            hold.target = target;
+        }
+        true
+    }
+
     pub fn target_rect(&self, surface: &WlSurface) -> Option<Rectangle<i32, Logical>> {
         self.animations.get(surface).map(|a| a.target())
     }

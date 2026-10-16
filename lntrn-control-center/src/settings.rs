@@ -1,6 +1,6 @@
 //! What the bar takes from `lantern.toml`: the desktop's look (through
-//! `lntrn-kit`), the window gap it floats by, and the primary monitor it
-//! lives on. A thread watches the file and wakes the loop when it
+//! `lntrn-kit`), the window gap it floats by, the primary monitor it lives
+//! on, and how windows glide (which docking keeps step with). A thread watches the file and wakes the loop when it
 //! changes, so a bar sitting still draws nothing.
 
 use std::path::Path;
@@ -13,6 +13,8 @@ use lntrn_core::log_warn;
 use lntrn_data::{Doc, toml};
 use lntrn_kit::desktop::{self, Desktop};
 use lntrn_sys::watch::{Event, EventKind, Watcher};
+
+use crate::morph::Glide;
 
 /// The window gap when `lantern.toml` doesn't say: the compositor's own.
 const DEFAULT_GAP: i32 = 8;
@@ -31,6 +33,9 @@ pub struct Settings {
     /// The monitor `[[monitors]]` marks `primary`, by its connector name
     /// (`DP-1`), unless it is switched off.
     pub primary: Option<String>,
+    /// The compositor's maximize glide from `[animations]`: docking takes
+    /// as long, eased alike, so the plate and the window land together.
+    pub dock_glide: Glide,
 }
 
 impl Default for Settings {
@@ -53,8 +58,17 @@ impl Settings {
 
     pub fn from_doc(doc: &Doc) -> Settings {
         let gap = doc.path("window_manager.gap").and_then(Doc::as_i64).map_or(DEFAULT_GAP, |g| g.clamp(0, MAX_GAP as i64) as i32);
-        Settings { desktop: Desktop::from_doc(doc), gap, primary: primary(doc) }
+        Settings { desktop: Desktop::from_doc(doc), gap, primary: primary(doc), dock_glide: dock_glide(doc) }
     }
+}
+
+/// `[animations]` as the compositor reads it for a window-state change:
+/// on unless `enabled` or `state` says otherwise, `speed` 1, `cinematic`.
+fn dock_glide(doc: &Doc) -> Glide {
+    let key = |k: &str| doc.path(&format!("animations.{k}"));
+    let on = ["enabled", "state"].iter().all(|k| key(k).and_then(Doc::as_bool) != Some(false));
+    let speed = key("speed").and_then(Doc::as_f64).unwrap_or(1.0);
+    Glide::windows(on, speed, key("preset").and_then(Doc::as_str).unwrap_or("cinematic"))
 }
 
 fn primary(doc: &Doc) -> Option<String> {
@@ -125,6 +139,15 @@ mod tests {
         assert_eq!(parse("[window_manager]\ngap = 12\n").gap, 12);
         assert_eq!(parse("[window_manager]\ngap = 100\n").gap, 32);
         assert_eq!(parse("[window_manager]\ngap = -3\n").gap, 0);
+    }
+
+    #[test]
+    fn docking_glides_as_the_windows_do() {
+        use crate::morph::Curve;
+        assert_eq!(Settings::default().dock_glide, Glide { seconds: 1.0, curve: Curve::EaseInOutQuint });
+        assert_eq!(parse("[animations]\nspeed = 2.0\npreset = \"snappy\"\n").dock_glide, Glide { seconds: 0.5, curve: Curve::EaseOutCubic });
+        assert_eq!(parse("[animations]\nstate = false\n").dock_glide, Glide::NONE);
+        assert_eq!(parse("[animations]\nenabled = false\nstate = true\n").dock_glide, Glide::NONE);
     }
 
     #[test]

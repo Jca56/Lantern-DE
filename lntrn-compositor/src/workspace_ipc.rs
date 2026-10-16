@@ -4,6 +4,9 @@
 //!
 //!   # Compositor → Bar (on connect + on every state change):
 //!   `state:<output>:<active>:<id1>,<id2>,<id3>`
+//!   `covered:<output>:<0|1>`      # 1 while a maximized or fullscreen window
+//!                                 # shows on the output's active workspace
+//!                                 # (a floating bar docks under one)
 //!
 //!   # Bar → Compositor:
 //!   `switch:<output>:<target>`    # switch active WS
@@ -12,6 +15,7 @@
 //!
 //! Multiple bars may connect simultaneously (multi-monitor).
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::fs::PermissionsExt;
@@ -57,6 +61,9 @@ pub struct WorkspaceIpc {
     /// Clients accepted since the last `take_new_clients` — the event loop
     /// registers a readiness source for each (see `ipc_source`).
     new_clients: Vec<(u64, OwnedFd)>,
+    /// What clients were last told each output's `covered` is, so only a
+    /// change goes out (see `window_management/covered.rs`).
+    pub covered: HashMap<String, bool>,
 }
 
 struct ClientConn {
@@ -92,6 +99,7 @@ impl WorkspaceIpc {
             clients: Vec::new(),
             next_client_id: 1,
             new_clients: Vec::new(),
+            covered: HashMap::new(),
         }
     }
 
@@ -259,6 +267,11 @@ fn parse_command(msg: &str) -> Option<IpcCommand> {
         }
         _ => None,
     }
+}
+
+/// Format a cover line for broadcast: `covered:<output>:<0|1>`.
+pub fn format_covered_line(output: &str, covered: bool) -> String {
+    format!("covered:{output}:{}", u8::from(covered))
 }
 
 /// Format a state line for broadcast: `state:<output>:<active>:<id1>,<id2>,...`.

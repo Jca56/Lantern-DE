@@ -8,6 +8,7 @@ use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 mod alt_tab;
 mod axis_resize;
 mod close_pending;
+mod covered;
 mod focus;
 mod fullscreen;
 mod half_pose;

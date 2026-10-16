@@ -1242,8 +1242,10 @@ pub fn render_surface(
 
             // Window border — sits between shadow and window content. Skipped when
             // border_width is 0. Color matches focus_glow_color (full alpha) so it
-            // visually ties into the same accent palette.
-            if border_width > 0 {
+            // visually ties into the same accent palette. A maximized window
+            // goes without: it meets the screen edges (where the ring is
+            // offscreen) and a bottom panel, where it showed as a stripe.
+            if border_width > 0 && !is_maximized {
                 if let Some(ref shader) = border_shader {
                     let corner_r = win_corner_r_logical;
                     let ssd_bar = if has_ssd {
