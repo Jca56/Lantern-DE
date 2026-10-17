@@ -161,8 +161,10 @@ fn main() {
     log(&format!("🏮 Starting {name} (the panel)..."));
     children.start_daemon(name, args);
 
-    // Run XDG autostart entries
-    autostart::run(&mut children);
+    // Run XDG autostart entries, but none for what the session runs itself:
+    // its daemons, and either panel (the one not chosen stays down).
+    let own: Vec<&str> = DAEMONS.iter().map(|(name, _)| *name).chain([panel::Panel::ControlCenter, panel::Panel::CommandCenter].map(|p| p.daemon().0)).collect();
+    autostart::run(&mut children, &own);
 
     // Main loop: wait for the compositor to exit or signal received
     log("🏮 Lantern Session running");

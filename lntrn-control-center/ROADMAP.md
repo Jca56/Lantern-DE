@@ -200,12 +200,12 @@ open windows dock (middle).
 
 ## Known gaps
 
-- **Command Center autostart:** `~/.config/autostart/lntrn-command-center.desktop`
-  starts the Command Center beside the bar at login, whatever the panel;
-  it holds obexd's one agent (no files in) and fights over the BlueZ
-  default agent. Next up.
-
 Fixed 2026-10-17:
+- **Command Center autostart:** a leftover `~/.config/autostart` entry
+  started the Command Center beside the bar at login, whatever the panel
+  (holding obexd's one agent, fighting over BlueZ's default agent). The
+  session manager now skips autostart entries for anything it runs itself
+  (its daemons, either panel), saying so in its log; the entry is gone.
 - **Monitor gone for long:** taken away, the bar waits for a monitor (sysfs
   connectors) and starts over in place, the same pid, with growing waits
   if it's taken again soon (`LNTRN_CC_TAKEN_AWAY`): the session's five

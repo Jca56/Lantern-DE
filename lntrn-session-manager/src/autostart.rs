@@ -1,5 +1,7 @@
 //! XDG autostart: the `.desktop` entries in the autostart directories that
-//! apply to this desktop, started once the shell is up.
+//! apply to this desktop, started once the shell is up; but none for a
+//! program the session runs itself, which would run twice (a leftover
+//! entry for the Command Center used to start it beside the bar).
 
 use std::collections::{HashMap, HashSet};
 use std::os::unix::fs::PermissionsExt;
@@ -19,13 +21,18 @@ struct Entry {
     exec: String,
 }
 
-/// Start every autostart entry that applies to this session.
-pub fn run(children: &mut Children) {
+/// Start every autostart entry that applies to this session, but those
+/// for a program in `own` (the session's daemons, either panel).
+pub fn run(children: &mut Children, own: &[&str]) {
     let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
     let desktops: Vec<&str> = desktop.split(':').filter(|d| !d.is_empty()).collect();
     let path = std::env::var("PATH").unwrap_or_default();
 
     for entry in entries(&dirs(), &desktops, &path) {
+        if let Some(program) = program_of(&entry.exec).filter(|p| own.contains(&p.as_str())) {
+            log(&format!("🏮 Autostart: skipping {}: the session runs {program} itself", entry.name));
+            continue;
+        }
         log(&format!("🏮 Autostart: {}", entry.exec));
         match Command::new("sh")
             .args(["-c", &entry.exec])
@@ -141,6 +148,15 @@ fn desktop_entry(content: &str) -> HashMap<&str, &str> {
     keys
 }
 
+/// The program an `Exec` runs, by its file name: past `env` and the
+/// variables it sets (`env A=1 lntrn-command-center --hide` runs
+/// `lntrn-command-center`).
+fn program_of(exec: &str) -> Option<String> {
+    let mut words = exec.split_whitespace().skip_while(|w| *w == "env" || (w.contains('=') && !w.starts_with('-')));
+    let first = words.next()?.trim_matches(['"', '\'']);
+    Path::new(first).file_name()?.to_str().map(str::to_owned)
+}
+
 /// `Exec` with its field codes taken out. Nothing is being opened at login,
 /// so `%f`, `%U` and the rest stand for nothing; `%%` is a percent sign.
 fn without_field_codes(exec: &str) -> String {
@@ -177,6 +193,15 @@ mod tests {
 
     fn exec(content: &str) -> Option<String> {
         exec_of(content, LANTERN, "")
+    }
+
+    #[test]
+    fn the_program_is_named_past_env_and_a_path() {
+        assert_eq!(program_of("lntrn-command-center --hide").as_deref(), Some("lntrn-command-center"));
+        assert_eq!(program_of("/home/a/.lantern/bin/lntrn-notifyd").as_deref(), Some("lntrn-notifyd"));
+        assert_eq!(program_of("env GDK_BACKEND=wayland A=1 steam -silent").as_deref(), Some("steam"));
+        assert_eq!(program_of("\"/opt/app/run\" --flag").as_deref(), Some("run"));
+        assert_eq!(program_of("   "), None);
     }
 
     #[test]
