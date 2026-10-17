@@ -175,6 +175,22 @@ impl Link {
     }
 }
 
+/// Lines told the compositor, by what each is about: one goes again only
+/// when it changes, or the connection does (a compositor started over
+/// knows nothing).
+#[derive(Default)]
+pub struct Told(std::collections::HashMap<&'static str, (u64, String)>);
+
+impl Told {
+    pub fn tell(&mut self, link: &Link, about: &'static str, line: String) {
+        let told = (link.connection(), line);
+        if self.0.get(about) != Some(&told) {
+            link.send(&told.1);
+            self.0.insert(about, told);
+        }
+    }
+}
+
 #[cfg(test)]
 impl Link {
     /// Take in a line as though the compositor said it.

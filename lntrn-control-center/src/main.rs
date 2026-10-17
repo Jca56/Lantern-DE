@@ -28,12 +28,16 @@
 //!   giving way to as much of the bar as shows.
 //! - `morph.rs` — the plate's glides: floating and docked, hidden and
 //!   shown.
+//! - `glass.rs` — where the popups are painted see-through, for the
+//!   compositor to blur behind.
 //! - `settings.rs` — what it reads from `lantern.toml`, and the thread
 //!   that watches the file.
 //! - `instance.rs` — one bar at a time.
 //!
-//! The session manager keeps it running: a crash, or the compositor taking
-//! the bar away with its monitor ([`TAKEN_AWAY`]), and it is started again.
+//! The session manager keeps it running: a crash, and it is started
+//! again. The compositor taking the bar away with its monitor is no crash:
+//! it waits for a monitor, then starts over in place (the same pid), so
+//! no monitor for a long while never uses up the session's restarts.
 
 mod app;
 mod bar;
@@ -41,6 +45,7 @@ mod clock;
 mod compositor;
 mod dock;
 mod game_mode;
+mod glass;
 mod hide;
 mod idlist;
 mod instance;
@@ -53,6 +58,7 @@ mod tray;
 
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use lntrn_app::{AppConfig, run};
 use lntrn_core::{log_error, log_info, log_warn};
@@ -61,10 +67,15 @@ use lntrn_ui::Shell;
 use crate::app::{APP_ID, App, Editor};
 use crate::settings::Settings;
 
-/// The exit status for a bar the compositor took away: not a clean exit,
-/// which the session manager leaves alone, so it starts the bar again
-/// (wherever the compositor puts it, if its monitor is gone). EX_TEMPFAIL.
-const TAKEN_AWAY: i32 = 75;
+/// Between looks for a monitor while there is none; at most, the wait
+/// before starting over after being taken away again soon after starting.
+const LOOK: Duration = Duration::from_secs(2);
+const MOST: Duration = Duration::from_secs(30);
+/// Up this long, a bar counts as one that stayed.
+const STAYED: Duration = Duration::from_secs(60);
+/// How many times in a row the bar was taken away soon after it started,
+/// handed to the next start.
+const AWAY: &str = "LNTRN_CC_TAKEN_AWAY";
 
 fn main() {
     lntrn_kit::startup::log_panics(APP_ID);
@@ -89,28 +100,45 @@ fn main() {
         persist: false,
         ..AppConfig::default()
     };
+    let started = Instant::now();
     run(config, App::new(settings, output), shell);
     if app::restart_wanted() {
         drop(lock);
-        restart();
+        restart(None);
     }
     if app::taken_away() {
-        log_warn!("{APP_ID}: the compositor took the bar away; exiting for the session to start it again");
-        std::process::exit(TAKEN_AWAY);
+        // In a row: since it last stayed up a while. Each wait is longer.
+        let times = if started.elapsed() > STAYED { 0 } else { std::env::var(AWAY).ok().and_then(|v| v.parse().ok()).unwrap_or(0) };
+        let wait = (LOOK * 2u32.pow(times.min(4))).min(MOST);
+        log_warn!("{APP_ID}: the compositor took the bar away; starting over in {}s, once there's a monitor", wait.as_secs());
+        std::thread::sleep(wait);
+        while !bar::any_monitor() {
+            std::thread::sleep(LOOK);
+        }
+        drop(lock);
+        restart(Some(times + 1));
     }
     std::process::exit(0);
 }
 
 /// Start over as a fresh process with the same arguments: a layer
 /// surface's monitor is fixed when it is made, so moving to a new primary
-/// monitor takes a new surface; and Quick Kill's fresh start, the newest
-/// build. The pid stays the same, so the session manager keeps it.
-fn restart() -> ! {
+/// monitor takes a new surface; Quick Kill's fresh start, the newest
+/// build; and a bar the compositor took away. The pid stays the same, so
+/// the session manager keeps it. `away`: how many times in a row it was
+/// taken away.
+fn restart(away: Option<u32>) -> ! {
     // A binary replaced since it started reads as `… (deleted)`; the new
     // one is at the same path.
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(APP_ID));
     let exe = exe.to_str().and_then(|s| s.strip_suffix(" (deleted)")).map(PathBuf::from).unwrap_or(exe);
-    let err = std::process::Command::new(&exe).args(std::env::args_os().skip(1)).exec();
+    let mut command = std::process::Command::new(&exe);
+    command.args(std::env::args_os().skip(1));
+    match away {
+        Some(times) => command.env(AWAY, times.to_string()),
+        None => command.env_remove(AWAY),
+    };
+    let err = command.exec();
     log_error!("{APP_ID}: can't start over as {}: {err}", exe.display());
     std::process::exit(1);
 }

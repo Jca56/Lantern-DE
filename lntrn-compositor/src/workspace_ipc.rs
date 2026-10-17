@@ -32,6 +32,14 @@
 //!                                 # that surface, each with a red close
 //!                                 # button where asked (lit while hovered);
 //!                                 # none listed clears them
+//!   `blur:<namespace>\t<x> <y> <w> <h> <radius>\t…`  # where to blur
+//!                                 # what's behind that surface (its plate,
+//!                                 # its popups), its logical px, corners
+//!                                 # rounded; none listed clears them
+//!   `edge:<namespace>:<0|1>`      # the layer surface called <namespace>
+//!                                 # is a bar hidden at its output's bottom
+//!                                 # edge: the pointer stops there, and a
+//!                                 # push further crosses to a monitor below
 //!
 //! Multiple bars may connect simultaneously (multi-monitor). Window ids and
 //! the feed: `window_management/dock_link.rs`.
@@ -80,8 +88,18 @@ pub enum IpcCommand {
     Close(u64),
     Icons { namespace: String, icons: Vec<(String, Rectangle<i32, Logical>)> },
     Thumbs { namespace: String, slots: Vec<DockThumb> },
+    Blur { namespace: String, rects: Vec<BlurRect> },
+    Edge { namespace: String, on: bool },
     /// What a Super tap does (lntrn-desktop's hub asks for it).
     Summon,
+}
+
+/// Where to blur what's behind a layer surface: a rect in its logical
+/// pixels, its corners rounded.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BlurRect {
+    pub rect: Rectangle<i32, Logical>,
+    pub radius: i32,
 }
 
 /// A window's live thumbnail over a dock's surface, in its logical pixels.
@@ -109,6 +127,10 @@ pub struct WorkspaceIpc {
     pub icons: HashMap<String, HashMap<String, Rectangle<i32, Logical>>>,
     /// Each layer namespace's thumbnail slots.
     pub thumbs: HashMap<String, Vec<DockThumb>>,
+    /// Each layer namespace's rects to blur behind.
+    pub blur: HashMap<String, Vec<BlurRect>>,
+    /// The layer namespaces of bars hidden at their output's bottom edge.
+    pub edges: std::collections::HashSet<String>,
 }
 
 struct ClientConn {
@@ -148,6 +170,8 @@ impl WorkspaceIpc {
             windows: HashMap::new(),
             icons: HashMap::new(),
             thumbs: HashMap::new(),
+            blur: HashMap::new(),
+            edges: std::collections::HashSet::new(),
         }
     }
 
@@ -319,6 +343,7 @@ fn parse_command(msg: &str) -> Option<IpcCommand> {
                 direction,
             })
         }
+        "edge" => Some(IpcCommand::Edge { namespace: parts[1].to_string(), on: parts[2].trim() == "1" }),
         _ => None,
     }
 }
@@ -342,6 +367,12 @@ fn parse_window_command(msg: &str) -> Option<IpcCommand> {
             let slots = fields.filter_map(dock_thumb).collect();
             Some(IpcCommand::Thumbs { namespace, slots })
         }
+        "blur" => {
+            let mut fields = rest.split('\t');
+            let namespace = fields.next().filter(|n| !n.is_empty())?.to_string();
+            let rects = fields.filter_map(blur_rect).collect();
+            Some(IpcCommand::Blur { namespace, rects })
+        }
         _ => None,
     }
 }
@@ -361,6 +392,13 @@ fn records(rest: &str) -> Option<(String, Vec<(&str, Rectangle<i32, Logical>)>)>
         })
         .collect();
     Some((namespace, parsed))
+}
+
+/// `<x> <y> <w> <h> <radius>`.
+fn blur_rect(record: &str) -> Option<BlurRect> {
+    let n: Vec<i32> = record.split_whitespace().map(|v| v.parse().ok()).collect::<Option<_>>()?;
+    let [x, y, w, h, radius] = n[..] else { return None };
+    (w > 0 && h > 0).then(|| BlurRect { rect: Rectangle::new((x, y).into(), (w, h).into()), radius: radius.max(0) })
 }
 
 /// `<id> <x> <y> <w> <h>`, then optionally its close button's
@@ -434,6 +472,12 @@ mod tests {
         };
         assert_eq!(namespace, "lntrn-control-center");
         assert_eq!(icons.iter().map(|(a, r)| (a.as_str(), r.loc.x)).collect::<Vec<_>>(), vec![("firefox", 10), ("foot", 70)]);
+        let Some(IpcCommand::Blur { namespace, rects }) = parse_command("blur:lntrn-control-center\t16 8 2000 64 16\tbroken 1\t0 0 0 10 4") else { panic!("blur") };
+        assert_eq!((namespace.as_str(), rects.len()), ("lntrn-control-center", 1), "a malformed or empty rect is dropped");
+        assert_eq!(rects[0], BlurRect { rect: Rectangle::new((16, 8).into(), (2000, 64).into()), radius: 16 });
+        assert!(matches!(parse_command("blur:lntrn-control-center"), Some(IpcCommand::Blur { rects, .. }) if rects.is_empty()));
+        assert!(matches!(parse_command("edge:lntrn-control-center:1"), Some(IpcCommand::Edge { namespace, on: true }) if namespace == "lntrn-control-center"));
+        assert!(matches!(parse_command("edge:lntrn-control-center:0"), Some(IpcCommand::Edge { on: false, .. })));
         let Some(IpcCommand::Thumbs { slots, .. }) = parse_command("thumbs:preview") else { panic!("thumbs") };
         assert!(slots.is_empty(), "none listed clears them");
         let Some(IpcCommand::Thumbs { slots, .. }) = parse_command("thumbs:preview\t7 10 20 400 213 374 26 30 30 1\t8 420 20 400 213\tjunk") else { panic!("thumbs") };

@@ -4,7 +4,9 @@
 //! one, joins it; on one that needs a password, a box opens under it to
 //! type it in (`entry`). A saved network can be forgotten (a second click
 //! on Forget makes sure), and a hidden one joined by its name from the
-//! row under the list. A company login (802.1X) isn't joined from here.
+//! row under the list; under that, the saved networks out of range open
+//! in a list of their own, to forget. A company login (802.1X) isn't
+//! joined from here.
 
 mod entry;
 #[cfg(test)]
@@ -14,7 +16,7 @@ pub use entry::{Entry, Open};
 
 use lntrn_kit::look;
 use lntrn_math::{Color, Rect, Vec2};
-use lntrn_status::wifi::{Link, Network, Security, Target, WifiState};
+use lntrn_status::wifi::{Link, Network, Saved, Security, Target, WifiState};
 use lntrn_ui::Ui;
 
 use super::Frame;
@@ -26,8 +28,13 @@ use entry::{BOX_H, HIDDEN_H};
 const WIDTH: f64 = 480.0;
 const PICTURE: f64 = 28.0;
 const LOCK: f64 = 18.0;
+/// Where a saved network's row starts its lock and name, past where the
+/// rows above have their pictures, logical.
+const INDENT_SAVED: f64 = 52.0;
 /// How long a first click on Forget waits for the second, seconds.
 const FORGET_WAIT: f64 = 4.0;
+/// Saved networks out of range shown before their list scrolls.
+const SAVED_ROWS: usize = 4;
 
 /// What a frame's clicks and keys ask of iwd.
 #[cfg_attr(test, derive(Debug, PartialEq))]
@@ -120,7 +127,13 @@ fn panel(ui: &mut Ui, s: &WifiState, entry: &mut Entry, glyphs: &mut Glyphs, scr
         (false, _) => 0.0,
         (true, open) => m.px(4.0) + m.px(if open { HIDDEN_H } else { ROW_H }),
     };
-    let h = m.px(HEAD_H) + m.px(LINE_H) * lines.len() as f64 + m.px(8.0) + list_h + if empty { m.px(LINE_H) } else { 0.0 } + hidden_h;
+    let saved = if on { s.saved.as_slice() } else { &[] };
+    let saved_h = match (saved.is_empty(), entry.saved_open) {
+        (true, _) => 0.0,
+        (false, false) => m.px(ROW_H),
+        (false, true) => m.px(ROW_H) * (1 + saved.len().min(SAVED_ROWS)) as f64,
+    };
+    let h = m.px(HEAD_H) + m.px(LINE_H) * lines.len() as f64 + m.px(8.0) + list_h + if empty { m.px(LINE_H) } else { 0.0 } + hidden_h + saved_h;
     let (mut col, panel) = frame.open(ui, WIDTH, h);
     let mut ask = None;
 
@@ -221,7 +234,62 @@ fn panel(ui: &mut Ui, s: &WifiState, entry: &mut Entry, glyphs: &mut Glyphs, scr
             ask = Some(typed);
         }
     }
+    if !saved.is_empty() {
+        let away = saved_list(ui, entry, glyphs, &mut col, saved, now);
+        if away.is_some() {
+            ask = away;
+        }
+    }
     (panel, ask)
+}
+
+/// The row that opens the list of `saved` networks out of range, and the
+/// list while it's open, each with Forget. Returns what was asked.
+fn saved_list(ui: &mut Ui, entry: &mut Entry, glyphs: &mut Glyphs, col: &mut kit::Column, saved: &[Saved], now: f64) -> Option<Ask> {
+    let m = ui.m;
+    let (ink, dim) = (ui.theme.text, ui.theme.text_dim);
+    let (name, dim_style) = (kit::name_style(ui), kit::dim_style(ui));
+    let head = col.take(m.px(ROW_H));
+    if kit::row(ui, ui.id("saved"), head, entry.saved_open).clicked {
+        entry.saved_open = !entry.saved_open;
+        ui.state.request_rebuild = true;
+    }
+    let pic = Rect::from_min_size(Vec2::new(head.min.x + m.px(10.0), (head.center().y - m.px(PICTURE) * 0.5).round()), Vec2::splat(m.px(PICTURE).round()));
+    glyphs.draw(ui, Glyph::Wifi(0), pic, ink);
+    let count = if saved.len() == 1 { "1 not in range".to_owned() } else { format!("{} not in range", saved.len()) };
+    let w = ui.measure(&count, &dim_style);
+    let right = head.max.x - m.px(10.0);
+    ui.text_right(&count, &dim_style, Rect::new(Vec2::new(right - w, head.min.y), Vec2::new(right, head.max.y)), dim);
+    kit::line(ui, Rect::new(Vec2::new(pic.max.x + m.px(14.0), head.min.y), Vec2::new(right - w - m.px(10.0), head.max.y)), "Saved networks…", &name, ink);
+    if !entry.saved_open {
+        return None;
+    }
+    let heights = vec![m.px(ROW_H); saved.len()];
+    let list = col.take(m.px(ROW_H) * saved.len().min(SAVED_ROWS) as f64);
+    let mut scroll = entry.saved_scroll;
+    let mut ask = None;
+    kit::list_rows(ui, list, &heights, &mut scroll, |ui, i, row| {
+        let n = &saved[i];
+        let (forget, left) = forget_button(ui, entry, &n.path, row.max.x - m.px(10.0), row.center().y, now);
+        if forget.is_some() {
+            ask = forget;
+        }
+        let lock = Rect::from_min_size(Vec2::new(row.min.x + m.px(INDENT_SAVED), (row.center().y - m.px(LOCK) * 0.5).round()), Vec2::splat(m.px(LOCK).round()));
+        let mut right = left;
+        if n.hidden {
+            let w = ui.measure("Hidden", &dim_style);
+            ui.text_right("Hidden", &dim_style, Rect::new(Vec2::new(right - w, row.min.y), Vec2::new(right, row.max.y)), dim);
+            right -= w + m.px(10.0);
+        }
+        let mut text_x = row.min.x + m.px(INDENT_SAVED);
+        if n.security != Security::Open {
+            glyphs.draw(ui, Glyph::Lock, lock, dim);
+            text_x = lock.max.x + m.px(8.0);
+        }
+        kit::line(ui, Rect::new(Vec2::new(text_x, row.min.y), Vec2::new(right, row.max.y)), &n.name, &name, dim);
+    });
+    entry.saved_scroll = scroll;
+    ask
 }
 
 /// Whether Forget was pressed once on the network at `path`, a moment

@@ -1,4 +1,8 @@
 //! Toast rendering for notifyd — uses Painter directly, no lntrn-ui dep.
+//! A toast with actions gets a row of buttons along its bottom (and is
+//! that much taller); one with a "default" action takes a click anywhere
+//! on it. `hit` says what a click lands on, `hit_rects` where clicks are
+//! taken at all.
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
@@ -13,6 +17,14 @@ const PADDING: f32 = 24.0;
 const TOAST_GAP: f32 = 16.0;
 const BORDER_W: f32 = 2.0;
 const SLIDE_DISTANCE: f32 = 540.0;
+
+// Action buttons along the bottom: their row's room, height, inside
+// padding, gap and text.
+const ACTIONS_H: f32 = 64.0;
+const BUTTON_H: f32 = 44.0;
+const BUTTON_PAD: f32 = 18.0;
+const BUTTON_GAP: f32 = 10.0;
+const BUTTON_TEXT: f32 = 24.0;
 
 // Close button (top-right X)
 const CLOSE_HIT: f32 = 44.0;
@@ -51,6 +63,22 @@ pub struct Toast {
     pub progress: f32,
     /// 0.0 = off-screen, 1.0 = fully in position.
     pub slide: f32,
+    /// Its actions' labels, as buttons, left to right.
+    pub buttons: Vec<String>,
+    /// A click anywhere on it is its "default" action.
+    pub default: bool,
+    /// What the pointer is over.
+    pub hover: Option<Hit>,
+}
+
+/// What a click on a toast lands on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Hit {
+    Close,
+    /// Its `n`th button.
+    Action(usize),
+    /// Anywhere else on it, when it has a "default" action.
+    Body,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -124,12 +152,17 @@ impl<'a> ToastStack<'a> {
         v * self.scale
     }
 
+    /// How tall `toast` is: taller by a row with buttons.
+    fn height(&self, toast: &Toast) -> f32 {
+        self.s(TOAST_H + if toast.buttons.is_empty() { 0.0 } else { ACTIONS_H })
+    }
+
     fn toast_pos(&self, index: usize, screen_w: f32) -> (f32, f32) {
         let w = self.s(TOAST_W);
-        let h = self.s(TOAST_H);
+        let h = self.toasts.get(index).map_or(self.s(TOAST_H), |t| self.height(t));
         let gap = self.s(TOAST_GAP);
         let margin = self.s(self.margin);
-        let offset = index as f32 * (h + gap);
+        let offset: f32 = self.toasts[..index.min(self.toasts.len())].iter().map(|t| self.height(t) + gap).sum();
         let x = if self.position.is_right() {
             screen_w - w - margin
         } else {
@@ -154,6 +187,54 @@ impl<'a> ToastStack<'a> {
         }
     }
 
+    /// The toast at `index` where it shows now, slide and all.
+    fn rect(&self, index: usize, item: &Toast, screen_w: f32) -> Rect {
+        let (base_x, y) = self.toast_pos(index, screen_w);
+        Rect::new(self.slid_x(base_x, item.slide), y, self.s(TOAST_W), self.height(item))
+    }
+
+    /// Where the buttons of the toast at `index` are, left to right; as
+    /// many as fit.
+    pub fn button_rects(&self, index: usize, item: &Toast, screen_w: f32, text: &mut TextRenderer) -> Vec<Rect> {
+        let r = self.rect(index, item, screen_w);
+        let pad = self.s(PADDING);
+        let (h, gap) = (self.s(BUTTON_H), self.s(BUTTON_GAP));
+        let y = r.y + r.h - pad - h;
+        let mut x = r.x + pad;
+        let mut rects = Vec::new();
+        for label in &item.buttons {
+            let w = text.measure_width(label, self.s(BUTTON_TEXT)) + self.s(BUTTON_PAD) * 2.0;
+            if x + w > r.x + r.w - pad {
+                break;
+            }
+            rects.push(Rect::new(x, y, w, h));
+            x += w + gap;
+        }
+        rects
+    }
+
+    /// What a click at (`px`, `py`) on the toast at `index` lands on.
+    pub fn hit(&self, index: usize, item: &Toast, screen_w: f32, (px, py): (f32, f32), text: &mut TextRenderer) -> Option<Hit> {
+        if self.close_button_rect(index, item, screen_w).contains(px, py) {
+            return Some(Hit::Close);
+        }
+        if let Some(n) = self.button_rects(index, item, screen_w, text).iter().position(|r| r.contains(px, py)) {
+            return Some(Hit::Action(n));
+        }
+        (item.default && self.rect(index, item, screen_w).contains(px, py)).then_some(Hit::Body)
+    }
+
+    /// Where the toast at `index` takes clicks: its close X, its buttons,
+    /// and all of it when it has a "default" action.
+    pub fn hit_rects(&self, index: usize, item: &Toast, screen_w: f32, text: &mut TextRenderer) -> Vec<Rect> {
+        if item.default {
+            return vec![self.rect(index, item, screen_w)];
+        }
+        let mut rects = vec![self.close_button_rect(index, item, screen_w)];
+        rects.extend(self.button_rects(index, item, screen_w, text));
+        rects
+    }
+
     /// Returns the close-X hit rect at `index`, accounting for slide.
     pub fn close_button_rect(&self, index: usize, item: &Toast, screen_w: f32) -> Rect {
         let (base_x, y) = self.toast_pos(index, screen_w);
@@ -176,6 +257,20 @@ impl<'a> ToastStack<'a> {
             let (base_x, y) = self.toast_pos(i, sw);
             let x = self.slid_x(base_x, toast.slide);
             self.draw_single(toast, x, y, painter, text, screen_w, screen_h);
+            self.draw_buttons(i, toast, painter, text, screen_w, screen_h);
+        }
+    }
+
+    /// The toast at `index`'s buttons: pills, lit under the pointer.
+    fn draw_buttons(&self, index: usize, toast: &Toast, painter: &mut Painter, text: &mut TextRenderer, screen_w: u32, screen_h: u32) {
+        let size = self.s(BUTTON_TEXT);
+        let ink = Color::from_rgb8(232, 220, 200);
+        for (n, r) in self.button_rects(index, toast, screen_w as f32, text).into_iter().enumerate() {
+            let lit = if toast.hover == Some(Hit::Action(n)) { 0.18 } else { 0.08 };
+            painter.rect_filled(r, r.h * 0.5, Color::rgba(1.0, 1.0, 1.0, lit));
+            let label = &toast.buttons[n];
+            let w = text.measure_width(label, size);
+            text.queue(label, size, r.x + (r.w - w) * 0.5, r.y + (r.h - size * 1.2) * 0.5, ink, r.w, screen_w, screen_h);
         }
     }
 
@@ -190,13 +285,15 @@ impl<'a> ToastStack<'a> {
         screen_h: u32,
     ) {
         let w = self.s(TOAST_W);
-        let h = self.s(TOAST_H);
+        let h = self.height(toast);
         let r = self.s(TOAST_RADIUS);
         let pad = self.s(PADDING);
         let accent = accent_for(toast.urgency);
 
-        // Matte dark grey badge.
+        // Matte dark grey badge, a little lighter under the pointer when a
+        // click on it does something.
         let bg = Color::from_rgb8(BG_BYTES.0, BG_BYTES.1, BG_BYTES.2).with_alpha(BG_ALPHA);
+        let bg = if toast.hover == Some(Hit::Body) { Color::from_rgb8(34, 34, 34).with_alpha(BG_ALPHA) } else { bg };
         painter.rect_filled(Rect::new(x, y, w, h), r, bg);
 
         // Subtle base border.

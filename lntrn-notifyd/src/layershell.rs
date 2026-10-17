@@ -1,10 +1,10 @@
+mod active;
 mod dispatch;
 
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::os::fd::{AsFd, AsRawFd};
 use std::ptr::NonNull;
-use std::time::Instant;
 
 use anyhow::{anyhow, Result};
 use lntrn_render::{Color, GpuContext, Painter, SurfaceError, TextRenderer};
@@ -17,12 +17,9 @@ use wayland_client::{backend::ObjectId, protocol::wl_compositor, Connection, Eve
 use wayland_protocols::wp::viewporter::client::wp_viewporter;
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
-use crate::notifications::{Notification, NotifyEvent, Urgency};
+use crate::notifications::{NotifyEvent, Outcome};
 use crate::render::{Toast, ToastStack};
-
-const SLIDE_IN_SECS: f32 = 0.5;
-const SLIDE_OUT_SECS: f32 = 0.4;
-const CRITICAL_DISPLAY_SECS: f32 = 10.0;
+use active::{ActiveNotification, CLOSED_BY_CALL, DISMISSED, EXPIRED};
 
 fn notification_sound_path() -> Option<std::path::PathBuf> {
     let sounds = lntrn_theme::lantern_home()?.join("sounds");
@@ -141,6 +138,8 @@ struct State {
     // Pointer state — logical surface coords; click queued for main-loop hit-test.
     pointer_x: f64,
     pointer_y: f64,
+    /// The pointer is over our surface (a toast's click region).
+    pointer_in: bool,
     pending_click: Option<(f64, f64)>,
 }
 
@@ -160,6 +159,7 @@ impl State {
             viewporter: None,
             pointer_x: 0.0,
             pointer_y: 0.0,
+            pointer_in: false,
             pending_click: None,
         }
     }
@@ -201,88 +201,10 @@ impl State {
     }
 }
 
-// ── Active notification tracking ────────────────────────────────────────────
-
-struct ActiveNotification {
-    title: String,
-    body: String,
-    urgency: Urgency,
-    spawned: Instant,
-    display_secs: f32,
-    id: u32,
-}
-
-impl ActiveNotification {
-    fn from_notification(notif: &Notification, default_secs: f32) -> Self {
-        let display = if notif.urgency == Urgency::Critical {
-            CRITICAL_DISPLAY_SECS
-        } else if notif.timeout_ms > 0 {
-            (notif.timeout_ms as f32 / 1000.0).clamp(2.0, 30.0)
-        } else {
-            default_secs
-        };
-
-        Self {
-            title: notif.summary.clone(),
-            body: notif.body.clone(),
-            urgency: notif.urgency,
-            spawned: Instant::now(),
-            display_secs: display,
-            id: notif.id,
-        }
-    }
-
-    fn to_toast(&self) -> Toast {
-        Toast {
-            title: self.title.clone(),
-            body: self.body.clone(),
-            urgency: self.urgency,
-            progress: self.progress(),
-            slide: self.slide(),
-        }
-    }
-
-    fn elapsed(&self) -> f32 {
-        self.spawned.elapsed().as_secs_f32()
-    }
-
-    fn progress(&self) -> f32 {
-        let elapsed = self.elapsed();
-        (1.0 - elapsed / self.display_secs).clamp(0.0, 1.0)
-    }
-
-    /// 0.0 = off-screen, 1.0 = fully visible
-    fn slide(&self) -> f32 {
-        let elapsed = self.elapsed();
-        if elapsed < SLIDE_IN_SECS {
-            // Sliding in
-            elapsed / SLIDE_IN_SECS
-        } else if elapsed >= self.display_secs {
-            // Sliding out
-            let out_elapsed = elapsed - self.display_secs;
-            (1.0 - out_elapsed / SLIDE_OUT_SECS).clamp(0.0, 1.0)
-        } else {
-            1.0
-        }
-    }
-
-    fn is_expired(&self) -> bool {
-        self.elapsed() >= self.display_secs + SLIDE_OUT_SECS
-    }
-
-    /// Trigger an early slide-out. Pulls `spawned` back so `elapsed`
-    /// already equals `display_secs`, putting the toast at the start of
-    /// its slide-out animation.
-    fn dismiss(&mut self) {
-        if self.elapsed() < self.display_secs {
-            self.spawned = Instant::now() - std::time::Duration::from_secs_f32(self.display_secs);
-        }
-    }
-}
-
 // ── Entry point ─────────────────────────────────────────────────────────────
 
-pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
+/// Show the notifications `rx` brings, telling `out` what became of each.
+pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>, out: mpsc::UnboundedSender<Outcome>) -> Result<()> {
     let conn = Connection::connect_to_env()?;
     let display = conn.display();
     let mut event_queue: EventQueue<State> = conn.new_event_queue();
@@ -386,9 +308,13 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
         while let Ok(event) = rx.try_recv() {
             match event {
                 NotifyEvent::Show(notif) => {
-                    if settings.do_not_disturb {
-                        // DND is on — silently drop. Apps still get their
-                        // D-Bus reply (notification id) from the server.
+                    if settings.do_not_disturb || !settings.show_toasts {
+                        // DND is on (or toasts are off): dropped. Apps still
+                        // get their id, and hear it's gone at once, so one
+                        // waiting on an action isn't left waiting.
+                        if !active.iter().any(|a| a.id == notif.id) {
+                            let _ = out.send(Outcome::Closed(notif.id, EXPIRED));
+                        }
                         continue;
                     }
                     let is_new = !active.iter().any(|a| a.id == notif.id);
@@ -410,7 +336,10 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
                     }
                 }
                 NotifyEvent::Close(id) => {
-                    active.retain(|a| a.id != id);
+                    if active.iter().any(|a| a.id == id) {
+                        active.retain(|a| a.id != id);
+                        let _ = out.send(Outcome::Closed(id, CLOSED_BY_CALL));
+                    }
                 }
             }
         }
@@ -421,8 +350,9 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
         }
         event_queue.dispatch_pending(&mut state)?;
 
-        // Handle a queued pointer click — hit-test in logical surface coords.
-        if let Some((px, py)) = state.pending_click.take() {
+        // What the pointer is over, and a queued click on it: hit-tested
+        // in logical surface coords.
+        {
             let toasts_hit: Vec<Toast> = active.iter().map(|a| a.to_toast()).collect();
             let stack_hit = ToastStack::new(&toasts_hit)
                 .scale(1.0)
@@ -430,10 +360,17 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
                 .position(settings.position)
                 .screen_h(state.height as f32);
             let sw = state.width as f32;
+            let pointer = (state.pointer_x as f32, state.pointer_y as f32);
             for (i, a) in active.iter_mut().enumerate() {
-                let r = stack_hit.close_button_rect(i, &toasts_hit[i], sw);
-                if r.contains(px as f32, py as f32) {
-                    a.dismiss();
+                a.hover = if state.pointer_in { stack_hit.hit(i, &toasts_hit[i], sw, pointer, &mut text) } else { None };
+            }
+            if let Some((px, py)) = state.pending_click.take() {
+                for (i, a) in active.iter_mut().enumerate() {
+                    let Some(hit) = stack_hit.hit(i, &toasts_hit[i], sw, (px as f32, py as f32), &mut text) else { continue };
+                    if let Some(key) = a.action_of(hit) {
+                        let _ = out.send(Outcome::Action(a.id, key));
+                    }
+                    a.dismiss(DISMISSED);
                     break;
                 }
             }
@@ -441,6 +378,9 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
 
         // Remove expired (after click handling so dismissed toasts still draw their slide-out)
         let had_toasts = !active.is_empty();
+        for a in active.iter().filter(|a| a.is_expired()) {
+            let _ = out.send(Outcome::Closed(a.id, a.reason.unwrap_or(EXPIRED)));
+        }
         active.retain(|a| !a.is_expired());
         if had_toasts && active.is_empty() {
             needs_clear = true;
@@ -482,8 +422,9 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
             .screen_h(ph as f32)
             .draw(&mut painter, &mut text, pw, ph);
 
-        // Update input region to the union of close-X hit areas (logical coords),
-        // so only those pixels capture clicks — the rest of the layer is pass-through.
+        // Update input region to where toasts take clicks (logical coords):
+        // close X's and buttons, all of one with a default action. The rest
+        // of the layer is pass-through.
         let region = state.compositor.as_ref().unwrap().create_region(&qh, ());
         let logical_stack = ToastStack::new(&toasts)
             .scale(1.0)
@@ -492,8 +433,9 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
             .screen_h(state.height as f32);
         let sw = state.width as f32;
         for (i, t) in toasts.iter().enumerate() {
-            let r = logical_stack.close_button_rect(i, t, sw);
-            region.add(r.x as i32, r.y as i32, r.w as i32, r.h as i32);
+            for r in logical_stack.hit_rects(i, t, sw, &mut text) {
+                region.add(r.x as i32, r.y as i32, r.w.ceil() as i32, r.h.ceil() as i32);
+            }
         }
         surface.set_input_region(Some(&region));
         region.destroy();

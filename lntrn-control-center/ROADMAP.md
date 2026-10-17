@@ -49,8 +49,8 @@ System Settings toggle picks which one the session uses.
 >   is open. Starts shown, hides after the delay.
 > - **Session (2026-10-16):** in `lntrn-session-manager`'s `DAEMONS`:
 >   started at login, restarted after a crash. The compositor taking the
->   surface away (monitor gone) exits 75, so the session starts it again;
->   its own restarts (new primary, Quick Kill) exec in place, same pid.
+>   surface away (monitor gone) waits for a monitor, then execs in place
+>   like its own restarts (new primary, Quick Kill): same pid.
 
 > - **Dock (2026-10-16, Alva's answers):** middle of the bar; shows
 >   **every** window (all monitors, all workspaces; activating one switches
@@ -200,11 +200,22 @@ open windows dock (middle).
 
 ## Known gaps
 
-- **Monitor gone for long:** the session gives up on a daemon that dies 5
-  times in a minute, so with no monitor at all for a while the bar stays
-  down until the next login. LUI2 reporting outputs (so the bar could wait
-  for one alive) would fix it.
-- **Auto hide and a monitor below:** the strip sits on the bottom edge, so
-  a monitor arranged under the bar's would let the pointer pass through.
-- **Blur:** the compositor doesn't blur behind layer surfaces, so the plate
-  stays solid rather than following `windows.background_opacity`.
+- **Command Center autostart:** `~/.config/autostart/lntrn-command-center.desktop`
+  starts the Command Center beside the bar at login, whatever the panel;
+  it holds obexd's one agent (no files in) and fights over the BlueZ
+  default agent. Next up.
+
+Fixed 2026-10-17:
+- **Monitor gone for long:** taken away, the bar waits for a monitor (sysfs
+  connectors) and starts over in place, the same pid, with growing waits
+  if it's taken again soon (`LNTRN_CC_TAKEN_AWAY`): the session's five
+  restarts are never spent on it.
+- **Auto hide and a monitor below:** the bar tells the compositor it's out
+  of sight (`edge:<namespace>:1`); the pointer stops on that edge's last
+  row, where the bar hears it, and a 40 px push more crosses
+  (`lntrn-compositor/src/edge_barrier.rs`).
+- **Blur:** the plate, the tray popups, the launcher and the dock's cards
+  are as see-through as the windows (`windows.background_opacity`), with no
+  shadows under them then, and tell the compositor where they are
+  (`blur:<namespace>\t<x> <y> <w> <h> <r>`, `glass.rs`); it blurs everything
+  under the top layers behind them (`lntrn-compositor/src/layer_blur.rs`).

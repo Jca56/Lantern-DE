@@ -198,7 +198,7 @@ impl Tray {
     }
 
     pub fn close(&mut self) {
-        self.entry.close();
+        self.entry.put_away();
         if self.bt.adding
             && let Some(bt) = &self.bluetooth
         {

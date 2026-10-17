@@ -16,6 +16,8 @@ pub struct Notification {
     pub body: String,
     pub urgency: Urgency,
     pub timeout_ms: i32,
+    /// Its actions: each one's key, and its label.
+    pub actions: Vec<(String, String)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -36,6 +38,21 @@ pub enum NotifyEvent {
     Close(u32),
 }
 
+/// What became of a notification, for the app that sent it: an action
+/// clicked, or it closed (why: 1 it expired, 2 it was dismissed, 3 a
+/// `CloseNotification` closed it).
+#[derive(Debug, PartialEq)]
+pub enum Outcome {
+    Action(u32, String),
+    Closed(u32, u32),
+}
+
+/// The spec's `actions`, key then label, as pairs; an odd one out is
+/// dropped.
+pub fn pairs(actions: Vec<String>) -> Vec<(String, String)> {
+    actions.chunks_exact(2).map(|p| (p[0].clone(), p[1].clone())).collect()
+}
+
 impl NotificationService {
     pub fn new(tx: mpsc::UnboundedSender<NotifyEvent>) -> Self {
         Self {
@@ -48,7 +65,7 @@ impl NotificationService {
 #[interface(name = "org.freedesktop.Notifications")]
 impl NotificationService {
     fn get_capabilities(&self) -> Vec<String> {
-        vec!["body".to_string()]
+        vec!["actions".to_string(), "body".to_string()]
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -59,7 +76,7 @@ impl NotificationService {
         _app_icon: &str,
         summary: &str,
         body: &str,
-        _actions: Vec<String>,
+        actions: Vec<String>,
         hints: HashMap<String, Value<'_>>,
         expire_timeout: i32,
     ) -> u32 {
@@ -82,6 +99,7 @@ impl NotificationService {
             body: body.to_string(),
             urgency,
             timeout_ms: expire_timeout,
+            actions: pairs(actions),
         }));
 
         id
@@ -101,16 +119,28 @@ impl NotificationService {
     }
 
     #[zbus(signal)]
-    async fn notification_closed(
+    pub async fn notification_closed(
         emitter: &SignalEmitter<'_>,
         id: u32,
         reason: u32,
     ) -> zbus::Result<()>;
 
     #[zbus(signal)]
-    async fn action_invoked(
+    pub async fn action_invoked(
         emitter: &SignalEmitter<'_>,
         id: u32,
         action_key: &str,
     ) -> zbus::Result<()>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn actions_come_in_pairs() {
+        let said = |a: &[&str]| pairs(a.iter().map(|s| s.to_string()).collect());
+        assert_eq!(said(&["default", "Open", "folder", "Show in folder"]), [("default".into(), "Open".into()), ("folder".into(), "Show in folder".into())]);
+        assert_eq!(said(&["open", "Open", "stray"]).len(), 1, "an odd one out is dropped");
+    }
 }

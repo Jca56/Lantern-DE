@@ -1,12 +1,14 @@
 //! Files over Bluetooth, through obexd (`org.bluez.obex`) on the session
-//! bus. Receiving: an agent on the files thread's own connection, which
+//! bus; sending is `send`'s. Receiving: an agent on the files thread's own connection, which
 //! obexd asks before a device's file comes in (`AuthorizePush`), and the
 //! person says yes or no ([`Offer`] on the board). A yes names the file
 //! for obexd, which writes it in its own folder; once whole it moves to
 //! Downloads, and a notification says so. Sending: a session per file, on
 //! a connection and a thread of its own, which obexd ties the transfer to
 //! (it ends with the connection), and a notification says how it went.
-//! Each follows its transfer's properties for how far it got. A name a device sends is only ever a name: no
+//! Each follows its transfer's properties for how far it got, and either
+//! can be stopped: a send by its own thread (obexd lets only a session's
+//! owner stop it), a file coming in by the agent's. A name a device sends is only ever a name: no
 //! folders, nothing hidden.
 
 use std::path::{Path, PathBuf};
@@ -15,42 +17,38 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
-use lntrn_dbus::{BodyReader, Message, Value, align_to, encode_dict_entry_sv, encode_string, encode_u32, encode_variant_string};
+use lntrn_dbus::{BodyReader, Message, Value, encode_string};
 
 use super::{BluetoothState, Ended, Offer, Transfer};
 use crate::board::Board;
 use crate::bus::{Answer, Bus, CallError};
 use crate::sys::{self, Bell};
 
-const OBEX: &str = "org.bluez.obex";
-const ROOT: &str = "/org/bluez/obex";
+pub(super) const OBEX: &str = "org.bluez.obex";
+pub(super) const ROOT: &str = "/org/bluez/obex";
 const AGENT_MANAGER: &str = "org.bluez.obex.AgentManager1";
 const AGENT: &str = "org.bluez.obex.Agent1";
-const CLIENT: &str = "org.bluez.obex.Client1";
-const PUSH: &str = "org.bluez.obex.ObjectPush1";
-const TRANSFER: &str = "org.bluez.obex.Transfer1";
+pub(super) const TRANSFER: &str = "org.bluez.obex.Transfer1";
 const SESSION: &str = "org.bluez.obex.Session1";
 const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 const AGENT_PATH: &str = "/org/lantern/status/obex_agent";
 const REJECTED: &str = "org.bluez.obex.Error.Rejected";
-const DENIED: &str = "org.freedesktop.DBus.Error.AccessDenied";
+pub(super) const DENIED: &str = "org.freedesktop.DBus.Error.AccessDenied";
 /// Between tries at obexd while it isn't there.
 const RECONNECT: Duration = Duration::from_secs(15);
 /// How often a transfer is read, besides what its signals say.
-const POLL: Duration = Duration::from_secs(1);
-/// How long a send waits on a device doing nothing (its person never
-/// saying yes).
-const IDLE: Duration = Duration::from_secs(120);
-/// Connecting to a device to send it something.
-const CONNECTING: Duration = Duration::from_secs(60);
+pub(super) const POLL: Duration = Duration::from_secs(1);
 /// Ended transfers kept on the board, at most.
 const KEPT: usize = 6;
 /// Names for sends obexd hasn't named yet, and for offers.
-static NEXT: AtomicU64 = AtomicU64::new(1);
+pub(super) static NEXT: AtomicU64 = AtomicU64::new(1);
+
 
 enum FileCmd {
     /// The person's answer to the offer `id`.
     Take(u64, bool),
+    /// Stop the file coming in at this path.
+    Stop(String),
 }
 
 pub(super) struct Files {
@@ -74,7 +72,16 @@ impl Files {
 
     /// Take the file offered as `id`, or turn it down.
     pub(super) fn take(&self, id: u64, yes: bool) {
-        if self.tx.send(FileCmd::Take(id, yes)).is_ok() {
+        self.send(FileCmd::Take(id, yes));
+    }
+
+    /// Stop the file coming in at `path`.
+    pub(super) fn stop(&self, path: &str) {
+        self.send(FileCmd::Stop(path.to_owned()));
+    }
+
+    fn send(&self, cmd: FileCmd) {
+        if self.tx.send(cmd).is_ok() {
             self.bell.ring();
         }
     }
@@ -114,7 +121,18 @@ fn run(board: &Arc<Board<BluetoothState>>, rx: &Receiver<FileCmd>, bell: &Bell) 
         bell.quiet();
 
         for cmd in rx.try_iter() {
-            let FileCmd::Take(id, yes) = cmd;
+            let (id, yes) = match cmd {
+                FileCmd::Take(id, yes) => (id, yes),
+                FileCmd::Stop(path) => {
+                    if let (Some((b, _)), Some(c)) = (bus.as_mut(), coming.iter().find(|c| c.path == path)) {
+                        let _ = b.call(OBEX, &path, TRANSFER, "Cancel", "", &[]);
+                        // What came of it so far isn't a file anyone wants.
+                        let _ = std::fs::remove_file(c.file.clone().map(PathBuf::from).unwrap_or_else(|| cache().join(&c.name)));
+                        end(board, &path, Ended::Stopped);
+                    }
+                    continue;
+                }
+            };
             let (Some((b, _)), Some(w)) = (bus.as_mut(), waiting.take_if(|w| w.id == id)) else { continue };
             board.update(|s| s.offer = None);
             if !yes {
@@ -258,122 +276,27 @@ fn land(board: &Board<BluetoothState>, c: &Coming) {
     let who = board.get().transfers.iter().find(|t| t.path == c.path).map(|t| t.device.clone()).unwrap_or_default();
     let who = board.get().devices.iter().find(|d| d.address.eq_ignore_ascii_case(&who)).map_or(who, |d| d.name.clone());
     end(board, &c.path, Ended::Saved(shown.clone()));
-    tell(&format!("Received {}", c.name), &format!("From {who}, saved in Downloads"));
-}
-
-/// Send `file` to the device at `address`, from a thread of its own; the
-/// board follows it as it goes.
-pub(super) fn send(address: String, file: PathBuf, board: Arc<Board<BluetoothState>>) {
-    let name = file.file_name().map_or_else(|| "File".to_owned(), |n| n.to_string_lossy().into_owned());
-    let size = std::fs::metadata(&file).map_or(0, |m| m.len());
-    let placeholder = format!("sending:{}", NEXT.fetch_add(1, Ordering::Relaxed));
-    board.update(|s| s.transfers.push(Transfer { path: placeholder.clone(), device: address.clone(), name, size, done: 0, incoming: false, end: None }));
-    let theirs = board.clone();
-    let spawned = std::thread::Builder::new().name("bluetooth-send".into()).spawn(move || {
-        let mut path = placeholder;
-        let result = Bus::session().map_err(CallError::Bus).and_then(|mut bus| {
-            bus.listen(OBEX);
-            let session = bus.call_serving(OBEX, ROOT, CLIENT, "CreateSession", "sa{sv}", &session_args(&address), CONNECTING, |_| Answer::Refuse(DENIED, "No agent here"))?;
-            let session = session.first().and_then(Value::as_str).unwrap_or_default().to_owned();
-            let mut body = Vec::new();
-            encode_string(&mut body, &file.to_string_lossy());
-            let sent = bus.call(OBEX, &session, PUSH, "SendFile", "s", &body).and_then(|reply| {
-                let transfer = reply.first().and_then(Value::as_str).unwrap_or_default().to_owned();
-                update(&theirs, &path, |t| t.path = transfer.clone());
-                path = transfer;
-                watch(&mut bus, &path, &theirs)
-            });
-            let mut session_path = Vec::new();
-            encode_string(&mut session_path, &session);
-            let _ = bus.call(OBEX, ROOT, CLIENT, "RemoveSession", "o", &session_path);
-            sent
-        });
-        let to = theirs.get().devices.iter().find(|d| d.address.eq_ignore_ascii_case(&address)).map_or_else(|| address.clone(), |d| d.name.clone());
-        let name = theirs.get().transfers.iter().find(|t| t.path == path).map(|t| t.name.clone()).unwrap_or_default();
-        match result {
-            Ok(()) => {
-                end(&theirs, &path, Ended::Sent);
-                tell(&format!("Sent {name}"), &format!("To {to}"));
-            }
-            Err(e) => {
-                let why = sending_wording(&e);
-                tell(&format!("Couldn't send {name}"), &format!("To {to}: {why}"));
-                end(&theirs, &path, Ended::Failed(why));
-            }
-        }
-    });
-    if let Err(e) = spawned {
-        eprintln!("[lntrn-status] bluetooth: can't send: no thread: {e}");
-    }
-}
-
-/// Follow the transfer at `path` on `bus` until it ends: how far it got,
-/// from its signals and from reading it every so often.
-fn watch(bus: &mut Bus, path: &str, board: &Board<BluetoothState>) -> Result<(), CallError> {
-    let (mut moved, mut last) = (Instant::now(), 0);
-    loop {
-        if sys::wait(&[bus.fd()], Some(POLL))[0] {
-            // Its signals only wake us: the reading below says it all.
-            bus.drain().map_err(CallError::Bus)?;
-        }
-        let props = properties(bus, path, TRANSFER)?;
-        let done = number(&props, "Transferred");
-        update(board, path, |t| t.done = done);
-        match text(&props, "Status").as_deref() {
-            Some("complete") => return Ok(()),
-            Some("error") => return Err(CallError::Refused { name: String::new(), why: "It stopped going".into() }),
-            _ => {}
-        }
-        if done != last {
-            (moved, last) = (Instant::now(), done);
-        } else if moved.elapsed() > IDLE {
-            let _ = bus.call(OBEX, path, TRANSFER, "Cancel", "", &[]);
-            return Err(CallError::Refused { name: String::new(), why: "It never took it".into() });
-        }
-    }
-}
-
-/// Why a send failed, as said.
-fn sending_wording(e: &CallError) -> String {
-    let why = e.to_string();
-    match () {
-        _ if why.contains("Unable to find service record") => "It doesn't take files".to_owned(),
-        _ if why.contains("Host is down") || why.contains("Connection refused") || why.contains("Timed out") || why.contains("timed out") => "It didn't answer: is it on and nearby?".to_owned(),
-        _ => why,
-    }
-}
-
-/// `CreateSession`'s arguments: the device, and that it's a push.
-fn session_args(address: &str) -> Vec<u8> {
-    let mut body = Vec::new();
-    encode_string(&mut body, address);
-    let mut entries = Vec::new();
-    encode_dict_entry_sv(&mut entries, "Target", |b| encode_variant_string(b, "opp"));
-    align_to(&mut body, 4);
-    encode_u32(&mut body, entries.len() as u32);
-    align_to(&mut body, 8);
-    body.extend_from_slice(&entries);
-    body
+    tell_saved(&format!("Received {}", c.name), &format!("From {who}, saved in Downloads"), to);
 }
 
 /// Every property `iface` has at `path`.
-fn properties(bus: &mut Bus, path: &str, iface: &str) -> Result<std::collections::HashMap<String, Value>, CallError> {
+pub(super) fn properties(bus: &mut Bus, path: &str, iface: &str) -> Result<std::collections::HashMap<String, Value>, CallError> {
     let mut body = Vec::new();
     encode_string(&mut body, iface);
     let reply = bus.call(OBEX, path, PROPERTIES, "GetAll", "s", &body)?;
     Ok(reply.first().and_then(Value::as_dict).cloned().unwrap_or_default())
 }
 
-fn text(props: &std::collections::HashMap<String, Value>, key: &str) -> Option<String> {
+pub(super) fn text(props: &std::collections::HashMap<String, Value>, key: &str) -> Option<String> {
     props.get(key).and_then(Value::as_str).map(str::to_owned)
 }
 
-fn number(props: &std::collections::HashMap<String, Value>, key: &str) -> u64 {
+pub(super) fn number(props: &std::collections::HashMap<String, Value>, key: &str) -> u64 {
     props.get(key).and_then(Value::as_u64).unwrap_or(0)
 }
 
 /// Change the board's transfer at `path`.
-fn update(board: &Board<BluetoothState>, path: &str, f: impl FnOnce(&mut Transfer)) {
+pub(super) fn update(board: &Board<BluetoothState>, path: &str, f: impl FnOnce(&mut Transfer)) {
     board.update(|s| {
         if let Some(t) = s.transfers.iter_mut().find(|t| t.path == path) {
             f(t);
@@ -383,7 +306,7 @@ fn update(board: &Board<BluetoothState>, path: &str, f: impl FnOnce(&mut Transfe
 
 /// The transfer at `path` ended as `how`; only the last few ended ones
 /// are kept.
-fn end(board: &Board<BluetoothState>, path: &str, how: Ended) {
+pub(super) fn end(board: &Board<BluetoothState>, path: &str, how: Ended) {
     board.update(|s| {
         if let Some(t) = s.transfers.iter_mut().find(|t| t.path == path && t.end.is_none()) {
             t.end = Some((how, Instant::now()));
@@ -430,8 +353,25 @@ fn downloads() -> Option<PathBuf> {
     std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Downloads"))
 }
 
+/// A notification that `file` came in, with Open (a click on it, too)
+/// and Show in folder; what the person clicks is done from its thread.
+fn tell_saved(title: &str, body: &str, file: PathBuf) {
+    let (title, body) = (title.to_owned(), body.to_owned());
+    let _ = std::thread::Builder::new().name("bluetooth-tell".into()).spawn(move || {
+        let actions = ["-A", "default=Open", "-A", "open=Open", "-A", "folder=Show in folder"];
+        let Ok(out) = std::process::Command::new("notify-send").args(["-a", "Bluetooth", "-i", "bluetooth"]).args(actions).args([&title, &body]).output() else { return };
+        let clicked = String::from_utf8_lossy(&out.stdout);
+        let (program, path) = match clicked.lines().next().map(str::trim) {
+            Some("default" | "open") => ("xdg-open", file.clone()),
+            Some("folder") => ("lntrn-file-manager", file.parent().map(Path::to_path_buf).unwrap_or_default()),
+            _ => return,
+        };
+        let _ = std::process::Command::new(program).arg(path).status();
+    });
+}
+
 /// A desktop notification, from a thread so nothing waits on it.
-fn tell(title: &str, body: &str) {
+pub(super) fn tell(title: &str, body: &str) {
     let (title, body) = (title.to_owned(), body.to_owned());
     let _ = std::thread::Builder::new().name("bluetooth-tell".into()).spawn(move || {
         let _ = std::process::Command::new("notify-send").args(["-a", "Bluetooth", "-i", "bluetooth", &title, &body]).status();
@@ -476,13 +416,5 @@ mod tests {
         std::fs::write(dir.join("README"), b"x").unwrap();
         assert_eq!(unique_in(&dir, "README"), dir.join("README (2)"));
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn a_push_is_asked_for_by_address_and_kind() {
-        let body = session_args("AA:BB:CC:DD:EE:FF");
-        let values = BodyReader::new(&body, "sa{sv}").read_all();
-        assert_eq!(values[0].as_str(), Some("AA:BB:CC:DD:EE:FF"));
-        assert_eq!(values[1].as_dict().and_then(|d| d.get("Target")).and_then(Value::as_str), Some("opp"));
     }
 }

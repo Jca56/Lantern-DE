@@ -40,7 +40,11 @@ pub fn dim_style(ui: &Ui) -> TextStyle {
 /// The panel: the launcher's, a shadow under a plate with a hairline.
 pub fn panel(ui: &mut Ui, rect: Rect, look: Look) {
     let m = ui.m;
-    ui.draw.shadow(rect, m.px(RADIUS), m.px(24.0), Color::BLACK.fade(0.45));
+    if look.glass {
+        crate::glass::pane(rect, m.px(RADIUS));
+    } else {
+        ui.draw.shadow(rect, m.px(RADIUS), m.px(24.0), Color::BLACK.fade(0.45));
+    }
     ui.draw.rounded_rect(rect, m.px(RADIUS), look.plate);
     ui.draw.stroke_rect(rect, m.px(1.0), m.px(RADIUS), look.edge);
 }

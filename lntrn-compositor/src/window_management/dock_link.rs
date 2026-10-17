@@ -115,6 +115,19 @@ impl Lantern {
                     self.workspace_ipc.thumbs.insert(namespace.clone(), slots.clone());
                 }
             }
+            (IpcCommand::Blur { namespace, rects }, _) => {
+                if rects.is_empty() {
+                    self.workspace_ipc.blur.remove(namespace);
+                } else {
+                    self.workspace_ipc.blur.insert(namespace.clone(), rects.clone());
+                }
+            }
+            (IpcCommand::Edge { namespace, on: true }, _) => {
+                self.workspace_ipc.edges.insert(namespace.clone());
+            }
+            (IpcCommand::Edge { namespace, on: false }, _) => {
+                self.workspace_ipc.edges.remove(namespace);
+            }
             _ => return false,
         }
         self.schedule_render();

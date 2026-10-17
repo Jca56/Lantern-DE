@@ -91,11 +91,20 @@ pub fn home(primary: Option<&str>) -> Option<String> {
 /// Whether the kernel sees a monitor on the connector the compositor
 /// calls `name`: `/sys/class/drm/card1-DP-1/status` says `connected`.
 fn connected(name: &str) -> bool {
-    let Ok(dir) = std::fs::read_dir("/sys/class/drm") else { return false };
-    dir.flatten().any(|entry| {
+    monitors().any(|connector| connector == name)
+}
+
+/// Whether the kernel sees any monitor plugged in.
+pub fn any_monitor() -> bool {
+    monitors().next().is_some()
+}
+
+/// The connectors (`DP-1`) the kernel sees a monitor on.
+fn monitors() -> impl Iterator<Item = String> {
+    std::fs::read_dir("/sys/class/drm").into_iter().flatten().flatten().filter_map(|entry| {
         let file = entry.file_name();
-        let ours = file.to_str().and_then(|f| f.strip_prefix("card")).and_then(|f| f.split_once('-')).is_some_and(|(_, connector)| connector == name);
-        ours && std::fs::read_to_string(entry.path().join("status")).is_ok_and(|s| s.trim() == "connected")
+        let connector = file.to_str()?.strip_prefix("card")?.split_once('-')?.1.to_owned();
+        std::fs::read_to_string(entry.path().join("status")).is_ok_and(|s| s.trim() == "connected").then_some(connector)
     })
 }
 
@@ -113,16 +122,22 @@ pub struct Look {
     pub plate: Color,
     /// A hairline round the plate, so it reads against a dark wallpaper.
     pub edge: Color,
+    /// See-through as the windows are: the compositor blurs what's behind
+    /// (and a panel casts no shadow, which would show through it).
+    pub glass: bool,
 }
 
 impl Look {
-    /// The window background the desktop has, chosen or its style's own.
+    /// The window background the desktop has, chosen or its style's own,
+    /// as see-through as the windows.
     pub fn of(desktop: &Desktop) -> Look {
         let plate = desktop.background.unwrap_or(match desktop.style {
             Style::Lantern => look::BG,
             Style::Fox => FOX_PLATE,
         });
-        Look { plate, edge: plate.lerp(Color::WHITE, 0.10) }
+        let glass = desktop.opacity < 0.99;
+        let alpha = if glass { desktop.opacity } else { 1.0 };
+        Look { plate: plate.with_alpha(alpha), edge: plate.lerp(Color::WHITE, 0.10).with_alpha(alpha.max(0.6)), glass }
     }
 }
 

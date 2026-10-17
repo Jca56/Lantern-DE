@@ -2077,6 +2077,9 @@ pub fn render_surface(
     // but skipped when fulfilling screencopy so the badge never appears
     // in its own recording.
     let mut nocapture_top: Vec<usize> = Vec::new();
+    // Blur a top layer asked for behind it (`layer_blur`), as indices into
+    // `top_layer_elements` until those join `elements`.
+    let mut layer_backdrops: Vec<crate::layer_blur::LayerBackdrop> = Vec::new();
     {
         use smithay::wayland::compositor::with_states;
         use smithay::wayland::shell::wlr_layer::{Layer, LayerSurfaceCachedState};
@@ -2119,6 +2122,12 @@ pub fn render_surface(
                 .layer_surface_namespaces
                 .get(ls.wl_surface())
                 .is_some_and(|ns| ns == crate::screencopy_render::NO_CAPTURE_NAMESPACE);
+            // A top layer asking for blur behind it (the bar's plate, its
+            // popups), while windows are see-through.
+            let modal = fullscreen_here && !no_capture && crate::modal_overlay::is_modal(&cached);
+            let blur_rects = (!is_bottom && !modal && state.system_bg_opacity < 0.99)
+                .then(|| state.layer_surface_namespaces.get(ls.wl_surface()).and_then(|ns| state.workspace_ipc.blur.get(ns)).cloned())
+                .flatten();
             let target = if is_bottom {
                 &mut bottom_layer_elements
             } else if fullscreen_here && !no_capture && crate::modal_overlay::is_modal(&cached) {
@@ -2135,6 +2144,10 @@ pub fn render_surface(
                     .into_iter()
                     .map(CustomRenderElements::Surface),
             );
+            if let Some(rects) = blur_rects {
+                let at = crate::layer_position::layer_surface_position_logical(&cached, output_pos) - output_pos.loc;
+                layer_backdrops.extend(crate::layer_blur::placed(&rects, at, top_layer_elements.len()));
+            }
         }
     }
 
@@ -2148,6 +2161,9 @@ pub fn render_surface(
     let mut nocapture_indices: Vec<usize> =
         nocapture_top.into_iter().map(|i| top_base + i).collect();
     elements.extend(top_layer_elements);
+    for backdrop in &mut layer_backdrops {
+        backdrop.behind += top_base;
+    }
 
     // (window_elements and bottom_layer_elements extended after blur pipeline below)
 
@@ -2235,7 +2251,7 @@ pub fn render_surface(
     // Skip the (expensive) blur pass when a fullscreen window covers this
     // output — its backdrops are fully occluded, and the pass was overrunning
     // the vblank deadline and dropping frames during fullscreen gameplay.
-    if !blur_backdrops.is_empty() && blur_enabled && !fullscreen_here {
+    if (!blur_backdrops.is_empty() || !layer_backdrops.is_empty()) && blur_enabled && !fullscreen_here {
         if let (Some(ref down_shader), Some(ref up_shader)) =
             (&udev.blur_down_shader, &udev.blur_up_shader)
         {
@@ -2259,7 +2275,7 @@ pub fn render_surface(
                 renderer,
                 output_phys,
                 passes,
-                blur_backdrops.len(),
+                blur_backdrops.len() + layer_backdrops.len(),
                 &mut udev.blur_states,
                 blur_key,
             ) {
@@ -2319,9 +2335,11 @@ pub fn render_surface(
                     // re-ran the full blur every 100 ms whenever the terminal
                     // redrew its own text, even though its backdrop's source
                     // hadn't changed at all.
+                    // A top layer's backdrop samples every window.
                     let min_end = blur_backdrops
                         .iter()
                         .map(|b| b.1)
+                        .chain(layer_backdrops.first().map(|_| 0))
                         .min()
                         .unwrap_or(0)
                         .min(window_elements.len());
@@ -2384,6 +2402,32 @@ pub fn render_surface(
                             break;
                         }
                     }
+                    // Each top layer's backdrop: everything under the top
+                    // layers, every window included. Results follow the
+                    // windows'.
+                    for j in 0..layer_backdrops.len() {
+                        if !blur_ok {
+                            break;
+                        }
+                        let groups: [&[CustomRenderElements]; 3] = [&wp_elements, &bottom_layer_elements, &window_elements];
+                        let r = crate::blur::render_and_blur(
+                            renderer,
+                            blur_state,
+                            &groups,
+                            BG_COLOR.into(),
+                            output_phys,
+                            output_scale,
+                            down_shader,
+                            up_shader,
+                            tint_rgba,
+                            blur_darken,
+                            blur_backdrops.len() + j,
+                        );
+                        if let Err(e) = r {
+                            tracing::warn!("blur: render_and_blur for a layer failed: {:?}", e);
+                            blur_ok = false;
+                        }
+                    }
                     if blur_ok {
                         blur_state.last_blur = Some(std::time::Instant::now());
                         blur_state.last_blur_fingerprint = Some(fingerprint);
@@ -2432,6 +2476,20 @@ pub fn render_surface(
                         } else {
                             window_elements.insert(*idx, CustomRenderElements::Backdrop(backdrop));
                         }
+                    }
+                    // The top layers' backdrops, back to front too, each
+                    // just behind its surface in `elements`.
+                    for (j, b) in layer_backdrops.iter().enumerate().rev() {
+                        let backdrop = crate::blur::create_backdrop(blur_state, ctx_id.clone(), b.rect, output_logical, output_scale, 1.0, blur_backdrops.len() + j);
+                        let element = match udev.backdrop_shader {
+                            Some(ref shader) => {
+                                let size = [(b.rect.size.w as f64 * output_scale).round() as f32, (b.rect.size.h as f64 * output_scale).round() as f32];
+                                let rounded = crate::rounded_element::RoundedBackdropElement::new(backdrop, shader.clone(), size, b.radius * output_scale as f32, [blur_tex_w, blur_tex_h]);
+                                CustomRenderElements::RoundedBackdrop(rounded)
+                            }
+                            None => CustomRenderElements::Backdrop(backdrop),
+                        };
+                        crate::layer_blur::insert(&mut elements, &mut nocapture_indices, b.behind, element);
                     }
                 }
             }

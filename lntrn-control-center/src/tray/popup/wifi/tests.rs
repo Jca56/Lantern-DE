@@ -4,7 +4,7 @@
 
 use lntrn_kit::desktop::Desktop;
 use lntrn_math::Vec2;
-use lntrn_status::wifi::{Link, Network, Security, Target, WifiState};
+use lntrn_status::wifi::{Link, Network, Saved, Security, Target, WifiState};
 use lntrn_ui::testing::Harness;
 use lntrn_ui::{Key, WidgetId};
 
@@ -131,6 +131,20 @@ fn a_saved_network_is_forgotten_on_a_second_click() {
     assert!(p.asked.is_empty(), "the first only asks if you're sure");
     h.click_on(forget, |ui| p.frame(ui, &s));
     assert_eq!(p.asked, [Ask::Forget(HOME.into())]);
+}
+
+#[test]
+fn a_saved_network_out_of_range_is_forgotten_from_its_list() {
+    let (mut h, mut p) = (harness(), Popup::default());
+    let mut s = iwd();
+    s.saved = vec![Saved { path: "/net/connman/iwd/aabb_psk".into(), name: "Hotel".into(), security: Security::Psk, hidden: false }];
+    h.settle(3, |ui| p.frame(ui, &s));
+    let forget = id(&["forget", "/net/connman/iwd/aabb_psk"]);
+    assert!(h.rect_of(forget).is_none(), "the list starts shut");
+    h.click_on(id(&["saved"]), |ui| p.frame(ui, &s));
+    h.click_on(forget, |ui| p.frame(ui, &s));
+    h.click_on(forget, |ui| p.frame(ui, &s));
+    assert_eq!(p.asked, [Ask::Forget("/net/connman/iwd/aabb_psk".into())]);
 }
 
 #[test]

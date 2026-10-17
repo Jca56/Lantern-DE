@@ -7,7 +7,7 @@ use std::path::Path;
 
 use lntrn_dbus::Value;
 
-use super::{DEVICE, IWD, NETWORK, Network, STATION, Security, WifiState, Link};
+use super::{DEVICE, IWD, KNOWN, Link, NETWORK, Network, STATION, Saved, Security, WifiState};
 use crate::bus::{self, Bus, CallError, Objects};
 
 /// The WiFi device: the first by path.
@@ -72,12 +72,38 @@ fn read(objects: &Objects, station: &bus::Props, ordered: &[(String, i32)], powe
     let current = in_use.as_ref().and_then(|p| objects.get(p)?.get(NETWORK));
     let ssid = current.and_then(|p| bus::text(p, "Name"));
     let strength = in_use.as_ref().and_then(|p| ordered.iter().find(|(n, _)| n == p)).map_or(0, |(_, s)| strength(*s));
-    WifiState { present: true, powered, link, ssid, strength, scanning: bus::flag(station, "Scanning"), networks, ..WifiState::default() }
+    let saved = saved(objects, &networks);
+    WifiState { present: true, powered, link, ssid, strength, scanning: bus::flag(station, "Scanning"), networks, saved, ..WifiState::default() }
 }
 
-/// The saved network behind the network in range at `network`, by path.
+/// What iwd keeps the passwords of, but for the networks in range (which
+/// show among them): the last joined first.
+fn saved(objects: &Objects, in_range: &[Network]) -> Vec<Saved> {
+    let near: Vec<String> = in_range.iter().filter_map(|n| known(objects, &n.path)).collect();
+    let mut saved: Vec<(String, Saved)> = objects
+        .iter()
+        .filter(|(path, _)| !near.contains(path))
+        .filter_map(|(path, ifaces)| {
+            let k = ifaces.get(KNOWN)?;
+            let name = bus::text(k, "Name").filter(|n| !n.is_empty())?;
+            let last = bus::text(k, "LastConnectedTime").unwrap_or_default();
+            let security = Security::from_type(&bus::text(k, "Type").unwrap_or_default());
+            Some((last, Saved { path: path.clone(), name, security, hidden: bus::flag(k, "Hidden") }))
+        })
+        .collect();
+    // iwd's times are ISO 8601: they sort as they read.
+    saved.sort_by(|(a, x), (b, y)| b.cmp(a).then_with(|| x.name.to_lowercase().cmp(&y.name.to_lowercase())));
+    saved.into_iter().map(|(_, s)| s).collect()
+}
+
+/// The saved network at `network`, or behind the network in range there,
+/// by path.
 pub(super) fn known(objects: &Objects, network: &str) -> Option<String> {
-    bus::text(objects.get(network)?.get(NETWORK)?, "KnownNetwork")
+    let ifaces = objects.get(network)?;
+    if ifaces.contains_key(KNOWN) {
+        return Some(network.to_owned());
+    }
+    bus::text(ifaces.get(NETWORK)?, "KnownNetwork")
 }
 
 /// Whether a physical wired port under `root` (`/sys/class/net`) has a
@@ -131,6 +157,17 @@ mod tests {
         assert!(state.networks[2].joinable(), "open");
         // The saved network behind one in range, to forget.
         assert_eq!((known(&objects, &home).as_deref(), known(&objects, &cafe)), (Some("/k/1"), None));
+        assert!(state.saved.is_empty(), "nothing saved that isn't in range");
+        // Saved ones out of range: the last joined first.
+        let saved = |name: &str, last: &str| HashMap::from([(KNOWN.to_owned(), props(&[("Name", s(name)), ("Type", s("psk")), ("LastConnectedTime", s(last)), ("Hidden", Value::Bool(name == "Attic"))]))]);
+        objects.insert("/k/1".into(), saved("Home", "2026-10-17T08:00:00Z"));
+        objects.insert("/k/2".into(), saved("Hotel", "2026-01-02T10:00:00Z"));
+        objects.insert("/k/3".into(), saved("Attic", "2026-09-30T21:00:00Z"));
+        let state = read(&objects, &station, &ordered, true);
+        let names: Vec<&str> = state.saved.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["Attic", "Hotel"], "Home is in range");
+        assert!(state.saved[0].hidden && state.saved[1].security == Security::Psk);
+        assert_eq!(known(&objects, "/k/2").as_deref(), Some("/k/2"));
     }
 
     #[test]

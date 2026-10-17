@@ -3,7 +3,7 @@
 //! their batteries, and while someone adds one, the devices in range
 //! (`read`); switching the adapter, connecting and disconnecting devices,
 //! pairing new ones and forgetting old ones (`pair`); files to and from
-//! them, through obexd (`files`).
+//! them, through obexd (`files`, `send`).
 //!
 //! The thread follows BlueZ's signals and reads everything again once a
 //! burst of them settles, but not for the radio chatter of a scan (a
@@ -18,6 +18,7 @@ mod agent;
 mod files;
 mod pair;
 mod read;
+mod send;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -122,6 +123,8 @@ pub enum Ended {
     Saved(String),
     Sent,
     Failed(String),
+    /// Stopped from here.
+    Stopped,
 }
 
 /// A file a device wants to send here, waiting on a yes or no.
@@ -184,6 +187,7 @@ pub struct Bluetooth {
     tx: Sender<Cmd>,
     bell: Option<Arc<Bell>>,
     files: Option<Files>,
+    stops: send::Stops,
 }
 
 impl Bluetooth {
@@ -201,7 +205,7 @@ impl Bluetooth {
             }
         }
         let files = Files::start(board.clone());
-        Bluetooth { board, tx, bell, files }
+        Bluetooth { board, tx, bell, files, stops: send::Stops::default() }
     }
 
     pub fn state(&self) -> BluetoothState {
@@ -255,7 +259,17 @@ impl Bluetooth {
 
     /// Send `file` to the device at `address`.
     pub fn send_file(&self, address: &str, file: PathBuf) {
-        files::send(address.to_owned(), file, self.board.clone());
+        send::send(address.to_owned(), file, self.board.clone(), self.stops.clone());
+    }
+
+    /// Stop the transfer at `path`, coming in or going out.
+    pub fn stop_transfer(&self, path: &str) {
+        let incoming = self.board.get().transfers.iter().any(|t| t.path == path && t.incoming);
+        match (&self.files, incoming) {
+            (Some(files), true) => files.stop(path),
+            (_, false) => _ = self.stops.lock().map(|mut s| s.insert(path.to_owned())),
+            (None, true) => {}
+        }
     }
 
     /// Take the file offered as `id`, or turn it down.

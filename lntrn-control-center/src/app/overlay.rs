@@ -16,6 +16,7 @@ use lntrn_ui::{Anchor, AreaCx, KeyboardMode, LayerConfig, NewWindow, Shell, Shel
 
 use super::{APP_ID, App, RESTART, actions};
 use crate::dock::{self, CardPress, Entry, Popup, Thumb};
+use crate::glass;
 use crate::launcher::{self, Outcome, Place};
 use crate::tray::{self, Item};
 
@@ -101,6 +102,8 @@ impl App {
         if self.overlay.closing {
             return;
         }
+        // Only this frame's panels count.
+        glass::take();
         self.dock.refresh(&self.link);
         let popup = self.dock.popup.clone();
         let region = if self.launcher.open {
@@ -126,8 +129,12 @@ impl App {
         if self.dock.popup != popup {
             self.wake();
         }
+        // The panels painted see-through: the compositor blurs behind them.
+        let panes = glass::take();
+        self.told.tell(&self.link, "overlay blur", glass::line(NAMESPACE, &panes, Vec2::splat(ui.m.scale)));
         if !self.launcher.open && self.dock.popup.is_none() && self.tray.popup.is_none() {
             self.overlay.closing = true;
+            self.told.tell(&self.link, "overlay blur", glass::line(NAMESPACE, &[], Vec2::splat(1.0)));
             self.tell_thumbs(Vec::new(), 1.0);
             cx.request(ShellRequest::CloseWindow);
             return;

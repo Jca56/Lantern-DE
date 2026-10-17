@@ -25,7 +25,8 @@ use lntrn_ui::{Action, AreaCx, Host, HostCx, LayerConfig, Shell, ShellRequest, U
 
 use crate::bar::{self, Look};
 use crate::clock;
-use crate::compositor::Link;
+use crate::compositor::{Link, Told};
+use crate::glass;
 use crate::dock::{self, Dock, Press};
 use crate::hide::{self, Reveal};
 use crate::launcher::{self, Launcher};
@@ -98,6 +99,9 @@ pub struct App {
     /// The dock's icons as the compositor was last told them, with the
     /// connection it was told on (a new one forgets them).
     icons_sent: Option<(u64, String)>,
+    /// The blur behind the plate and the popups, and whether the bar
+    /// waits at the edge, as last told the compositor.
+    told: Told,
     /// The loop's: what one window changes, the other is woken to show.
     waker: Option<Waker>,
 }
@@ -108,7 +112,7 @@ impl App {
         // As `main` makes the surface.
         let sent = bar::layer(settings.shape, false, output.as_deref());
         let dock = Dock::new(lntrn_apps::installed());
-        Self { settings, look, output, changed: Arc::new(AtomicBool::new(false)), link: Link::new(), docked: false, morph: Morph::at(false), reveal: Reveal::new(), sent, region: None, launcher: Launcher::new(), dock, icons: Icons::new(ICON_PX), overlay: overlay::Overlay::default(), tray: Tray::default(), icons_sent: None, waker: None }
+        Self { settings, look, output, changed: Arc::new(AtomicBool::new(false)), link: Link::new(), docked: false, morph: Morph::at(false), reveal: Reveal::new(), sent, region: None, launcher: Launcher::new(), dock, icons: Icons::new(ICON_PX), overlay: overlay::Overlay::default(), tray: Tray::default(), icons_sent: None, told: Told::default(), waker: None }
     }
 
     /// Head for docked or floating when the compositor's word changed. The
@@ -200,6 +204,12 @@ impl App {
             cx.request(ShellRequest::SetInputRegion(Some(region.clone())));
             self.region = Some(region);
         }
+        // Glass while the windows are see-through: the compositor blurs
+        // what's behind the plate. Out of sight with auto hide, the bar
+        // waits at the bottom edge, where the compositor holds the pointer.
+        let glass = if self.look.glass && shown > 0.0 { vec![(plate.rect, plate.radius)] } else { Vec::new() };
+        self.told.tell(&self.link, "blur", glass::line(bar::NAMESPACE, &glass, Vec2::new(m.scale, per)));
+        self.told.tell(&self.link, "edge", format!("edge:{}:{}", bar::NAMESPACE, u8::from(hide.auto() && shown <= 0.0)));
         if shown <= 0.0 {
             self.dock.away();
             return restyled;

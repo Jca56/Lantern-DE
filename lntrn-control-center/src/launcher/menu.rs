@@ -83,7 +83,11 @@ pub fn draw(l: &mut Launcher, icons: &mut Icons, ui: &mut Ui, place: Place, look
         return Outcome::Close;
     }
 
-    ui.draw.shadow(panel, m.px(RADIUS), m.px(24.0), lntrn_math::Color::BLACK.fade(0.45));
+    if look.glass {
+        crate::glass::pane(panel, m.px(RADIUS));
+    } else {
+        ui.draw.shadow(panel, m.px(RADIUS), m.px(24.0), lntrn_math::Color::BLACK.fade(0.45));
+    }
     ui.draw.rounded_rect(panel, m.px(RADIUS), look.plate);
     ui.draw.stroke_rect(panel, m.px(1.0), m.px(RADIUS), look.edge);
 

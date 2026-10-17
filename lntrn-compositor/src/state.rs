@@ -354,6 +354,9 @@ pub struct Lantern {
     pub system_bg_opacity: f32,
     /// App IDs that skip the blur backdrop.
     pub blur_exclude: Vec<String>,
+    /// How far the pointer has been pushed past a hidden bar's edge
+    /// (`edge_barrier`).
+    pub edge_push: f64,
     /// Blur strength/tint/darken from `[windows]`, cached on the same
     /// 30-frame poll cycle as `system_bg_opacity` — these were read from
     /// config (mutex + string alloc + line walk) every frame at 240Hz.
@@ -659,6 +662,7 @@ impl Lantern {
             screencopy_pbos: HashMap::new(),
             system_bg_opacity: crate::read_config_f32("background_opacity", 1.0),
             blur_exclude: crate::read_config_list("windows", "blur_exclude"),
+            edge_push: 0.0,
             blur_intensity: crate::read_config_f32("blur_intensity", 0.8),
             blur_tint: crate::read_config_f32("blur_tint", 0.15),
             blur_darken: crate::read_config_f32("blur_darken", 0.0),

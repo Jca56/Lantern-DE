@@ -96,6 +96,16 @@ impl Network {
     }
 }
 
+/// A network iwd keeps the password of, out of range now.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Saved {
+    /// iwd's path for what it keeps: what [`Wifi::forget`] takes.
+    pub path: String,
+    pub name: String,
+    pub security: Security,
+    pub hidden: bool,
+}
+
 /// What is being joined from here.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
@@ -129,6 +139,8 @@ pub struct WifiState {
     pub scanning: bool,
     /// In range, the one in use first, then by signal.
     pub networks: Vec<Network>,
+    /// Saved but out of range, the last joined first.
+    pub saved: Vec<Saved>,
     /// A cable is plugged in and its link is up.
     pub wired: bool,
     /// What is being joined from here.
@@ -157,7 +169,8 @@ enum Cmd {
     Scan,
     Join(Target, Option<Secret>),
     Leave,
-    /// The saved network behind the network in range at this path.
+    /// A saved network, or the one behind the network in range, at this
+    /// path.
     Forget(String),
     Attend(bool),
 }
@@ -236,8 +249,9 @@ impl Wifi {
         self.send(Cmd::Join(target, secret));
     }
 
-    /// Forget the saved network behind the one in range at `path`: iwd
-    /// drops its password, and leaves it when it is in use.
+    /// Forget a saved network: the one at `path` (one of [`WifiState::saved`]),
+    /// or behind the one in range there. iwd drops its password, and
+    /// leaves it when it is in use.
     pub fn forget(&self, path: &str) {
         self.send(Cmd::Forget(path.to_owned()));
     }
@@ -373,7 +387,8 @@ fn act(bus: &mut Bus, cmd: Cmd, board: &Arc<Board<WifiState>>) {
     }
 }
 
-/// Forget the saved network behind the one in range at `network`.
+/// Forget the saved network at `network`, or behind the one in range
+/// there.
 fn forget(bus: &mut Bus, objects: &Objects, network: &str) -> Result<(), CallError> {
     match read::known(objects, network) {
         Some(known) => bus.call0(IWD, &known, KNOWN, "Forget").map(|_| ()),

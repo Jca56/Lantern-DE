@@ -46,6 +46,8 @@ enum Ask {
     /// Pick a file to send to the device at this address, called this.
     SendFile(String, String),
     TakeFile(u64, bool),
+    /// Stop the transfer at this path.
+    Stop(String),
 }
 
 pub fn draw(tray: &mut Tray, ui: &mut Ui, frame: &Frame) -> Option<Rect> {
@@ -68,6 +70,7 @@ pub fn draw(tray: &mut Tray, ui: &mut Ui, frame: &Frame) -> Option<Rect> {
             Ask::Answer(id, reply) => bt.answer(id, reply),
             Ask::Forget(path) => bt.forget(&path),
             Ask::TakeFile(id, yes) => bt.take_file(id, yes),
+            Ask::Stop(path) => bt.stop_transfer(&path),
             Ask::SendFile(..) => {}
         }
     }
@@ -275,7 +278,7 @@ fn under(ui: &mut Ui, entry: &mut Entry, s: &BluetoothState, d: &Device, rect: R
         ask = strips::offer(ui, take(STRIP_H), o).or(ask);
     }
     for t in s.transfers.iter().filter(|t| t.device.eq_ignore_ascii_case(&d.address) && strips::shows(t)).take(TRANSFERS) {
-        strips::transfer(ui, take(TRANSFER_H), t);
+        ask = strips::transfer(ui, take(TRANSFER_H), t).or(ask);
     }
     ask
 }

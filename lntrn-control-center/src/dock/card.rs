@@ -84,7 +84,11 @@ pub fn draw(dock: &mut Dock, ui: &mut Ui, key: &str, bottom: f64, aspect: f64, l
     let card = Rect::new(Vec2::new(left, (bottom - h).round()), Vec2::new(left + w, bottom.round()));
     dock.on_card = ui.state.pointer_in_window && card.contains(ui.state.pointer);
 
-    ui.draw.shadow(card, m.px(RADIUS), m.px(20.0), Color::BLACK.fade(0.45));
+    if look.glass {
+        crate::glass::pane(card, m.px(RADIUS));
+    } else {
+        ui.draw.shadow(card, m.px(RADIUS), m.px(20.0), Color::BLACK.fade(0.45));
+    }
     ui.draw.rounded_rect(card, m.px(RADIUS), look.plate);
     ui.draw.stroke_rect(card, m.px(1.0), m.px(RADIUS), look.edge);
     if k == 0 {

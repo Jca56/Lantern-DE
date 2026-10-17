@@ -34,6 +34,9 @@ impl Lantern {
         // output shows (below the 1080p one next to the 4K), and the cursor
         // used to slide off into it and vanish.
         pos = self.nearest_point_on_layout(pos);
+        // A bar hidden at this output's bottom edge holds the pointer there
+        // until it's pushed on to a monitor below.
+        pos = self.edge_barrier(prev_loc, pos);
 
         // Pointer constraints (FPS/TPS mouse-look). A game that grabs the
         // pointer via pointer-constraints-v1 expects the cursor to STAY put

@@ -190,7 +190,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
             } => {
                 state.pointer_x = surface_x;
                 state.pointer_y = surface_y;
+                state.pointer_in = true;
             }
+            wl_pointer::Event::Leave { .. } => state.pointer_in = false,
             wl_pointer::Event::Button {
                 button,
                 state: btn_state,

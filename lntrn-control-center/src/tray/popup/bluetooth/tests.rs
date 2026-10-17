@@ -3,7 +3,7 @@
 //! offered and sent.
 
 use lntrn_kit::desktop::Desktop;
-use lntrn_status::bluetooth::{Asked, BluetoothState, Device, Offer, Question, Reply};
+use lntrn_status::bluetooth::{Asked, BluetoothState, Device, Ended, Offer, Question, Reply, Transfer};
 use lntrn_ui::testing::Harness;
 use lntrn_ui::{Key, Ui, WidgetId};
 
@@ -147,6 +147,18 @@ fn a_paired_device_offers_its_buttons_under_the_pointer() {
     h.move_to(h.rect_of(id(&["device", BUDS])).unwrap().center());
     h.settle(3, |ui| p.frame(ui, &s));
     assert!(h.rect_of(id(&["send", BUDS])).is_none());
+}
+
+#[test]
+fn a_file_on_its_way_stops_with_a_click_and_one_ended_has_no_stop() {
+    let (mut h, mut p) = (harness(), Popup::default());
+    let mut s = bluez();
+    let sending = Transfer { path: "/org/bluez/obex/client/session1/transfer1".into(), device: "BB:BB:BB:BB:BB:BB".into(), name: "song.flac".into(), size: 1000, done: 400, incoming: false, end: None };
+    s.transfers = vec![sending.clone(), Transfer { path: "/t/old".into(), end: Some((Ended::Sent, std::time::Instant::now())), ..sending.clone() }];
+    h.settle(3, |ui| p.frame(ui, &s));
+    assert!(h.rect_of(id(&["stop", "/t/old"])).is_none(), "it has ended");
+    h.click_on(id(&["stop", &sending.path]), |ui| p.frame(ui, &s));
+    assert_eq!(p.asked, [Ask::Stop(sending.path)]);
 }
 
 #[test]

@@ -1,7 +1,8 @@
 //! What shows under a Bluetooth device's row: what pairing it asks (a
 //! code to check against the device's, a PIN or passkey to type here, a
 //! code to type on it), a file it wants to send, and files on their way
-//! to or from it. Each answers with a click, or Enter in its field.
+//! to or from it (each stopped with a click). Each answers with a click,
+//! or Enter in its field.
 
 use std::time::Duration;
 
@@ -17,7 +18,7 @@ use super::Ask;
 
 /// A question's strip, or an offer's; a transfer's; logical.
 pub const STRIP_H: f64 = 96.0;
-pub const TRANSFER_H: f64 = 64.0;
+pub const TRANSFER_H: f64 = 70.0;
 /// How long an ended transfer still shows.
 pub const ENDED_SHOWS: Duration = Duration::from_secs(60);
 /// Where a strip's insides start, past the row's picture; its field's
@@ -167,10 +168,19 @@ pub fn shows(t: &Transfer) -> bool {
     t.end.as_ref().is_none_or(|(_, at)| at.elapsed() < ENDED_SHOWS)
 }
 
-/// The strip for `t` in `rect`: what it is, and how far it got.
-pub(super) fn transfer(ui: &mut Ui, rect: Rect, t: &Transfer) {
+/// The strip for `t` in `rect`: what it is, how far it got, and Stop
+/// while it goes. Returns whether it is to stop.
+pub(super) fn transfer(ui: &mut Ui, rect: Rect, t: &Transfer) -> Option<Ask> {
     let m = ui.m;
-    let (line, _) = parts(ui, rect);
+    let (mut line, _) = parts(ui, rect);
+    let mut ask = None;
+    if t.end.is_none() {
+        let (stop, button) = kit::button(ui, ui.id("stop").with(t.path.as_str()), line.max.x, line.center().y + m.px(6.0), "Stop");
+        if stop {
+            ask = Some(Ask::Stop(t.path.clone()));
+        }
+        line = Rect::new(line.min, Vec2::new(button.min.x - m.px(12.0), line.max.y));
+    }
     let style = kit::dim_style(ui);
     let (ink, accent) = (ui.theme.text, ui.theme.accent);
     let (said, color) = match &t.end {
@@ -179,6 +189,7 @@ pub(super) fn transfer(ui: &mut Ui, rect: Rect, t: &Transfer) {
         Some((Ended::Saved(_), _)) => (format!("Saved {} in Downloads", t.name), accent),
         Some((Ended::Sent, _)) => (format!("Sent {}", t.name), accent),
         Some((Ended::Failed(why), _)) => (format!("{}: {why}", t.name), look::BAD),
+        Some((Ended::Stopped, _)) => (format!("Stopped {}", t.name), ui.theme.text_dim),
     };
     let share = if t.size > 0 { (t.done as f64 / t.size as f64).clamp(0.0, 1.0) } else { 0.0 };
     let mut room = line;
@@ -195,6 +206,7 @@ pub(super) fn transfer(ui: &mut Ui, rect: Rect, t: &Transfer) {
         let fill = Rect::new(track.min, Vec2::new(track.min.x + (track.width() * share).max(track.height()), track.max.y));
         ui.draw.rounded_rect(fill, track.height() * 0.5, accent);
     }
+    ask
 }
 
 #[cfg(test)]

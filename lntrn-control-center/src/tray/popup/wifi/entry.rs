@@ -56,6 +56,10 @@ pub struct Entry {
     /// A saved network (by path) whose Forget was pressed once, and when:
     /// a second press soon after forgets it.
     pub(super) forgetting: Option<(String, f64)>,
+    /// The list of saved networks out of range is open, and how far it's
+    /// scrolled.
+    pub(super) saved_open: bool,
+    pub(super) saved_scroll: f64,
 }
 
 impl Entry {
@@ -66,6 +70,12 @@ impl Entry {
         if !again {
             (self.open, self.reveal) = (Some(open), true);
         }
+    }
+
+    /// The popup goes: the box closes, and the saved networks' list.
+    pub fn put_away(&mut self) {
+        self.close();
+        (self.saved_open, self.saved_scroll, self.forgetting) = (false, 0.0, None);
     }
 
     /// Close the box, wiping what was typed.

@@ -96,6 +96,33 @@ fn auto_hide_slides_away_to_the_strip_and_back_with_the_windows_giving_way() {
     assert_eq!(at(&mut h, &mut shell, &mut app, 5.0), None);
 }
 
+/// See-through windows make the plate glass: the compositor is told where
+/// to blur behind it. Out of sight with auto hide, it's told the bar waits
+/// at the bottom edge (and that there's nothing to blur).
+#[test]
+fn the_plate_is_glass_for_the_compositor_and_a_hidden_bar_waits_at_the_edge() {
+    let hide = HideOptions { visibility: Visibility::AutoHide, delay: 0.5, slide: 0.25 };
+    let desktop = lntrn_kit::desktop::Desktop { opacity: 0.8, ..lntrn_kit::desktop::Desktop::default() };
+    let (mut h, mut shell, mut app) = bar_with(Settings { hide, desktop, ..Settings::default() });
+    // As the live bar: the surface is the whole window.
+    (shell.title_bar, shell.resize_edges) = (false, false);
+    h.shell_settle(&mut shell, &mut app, 4);
+    let sent = app.link().take_sent();
+    let blur = sent.iter().find(|l| l.starts_with("blur:lntrn-control-center\t")).expect("where the plate is");
+    let n: Vec<i64> = blur.split('\t').nth(1).unwrap().split(' ').map(|v| v.parse().unwrap()).collect();
+    let near = |a: i64, b: i64| (a - b).abs() <= 1;
+    assert!(near(n[0], 16) && near(n[1], 0) && near(n[2], 2954 - 32) && near(n[3], 64) && near(n[4], 16), "the floating plate, logical: {n:?}");
+    assert!(sent.contains(&"edge:lntrn-control-center:0".to_owned()));
+    // The delay waited out, then the slide.
+    for step in [0.6, 0.3, 0.3] {
+        h.advance(step);
+        h.shell_settle(&mut shell, &mut app, 4);
+    }
+    let sent = app.link().take_sent();
+    assert!(sent.contains(&"blur:lntrn-control-center".to_owned()), "out of sight: nothing to blur");
+    assert!(sent.contains(&"edge:lntrn-control-center:1".to_owned()));
+}
+
 /// The dock as the live bar runs it, the compositor's window feed fed by
 /// hand: apps with no desktop entry, so this machine's installed apps
 /// don't matter.
