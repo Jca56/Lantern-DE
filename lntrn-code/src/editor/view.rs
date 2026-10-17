@@ -152,7 +152,9 @@ pub fn draw_doc(ui: &mut Ui, doc: &mut Doc, settings: &Settings, opts: ViewOpts)
     let clicks = id.with("clicks");
     let last_double = ui.state.floats(clicks, [-10.0; 4])[0];
 
-    let content_w = if wrapping { inner_w } else { gutter_w + (doc.max_cells() as f64 + 4.0) * cell_w };
+    // The minimap covers the right of the view, so the text scrolls far
+    // enough for its longest line to clear it.
+    let content_w = if wrapping { inner_w } else { gutter_w + (doc.max_cells() as f64 + 4.0) * cell_w + map_w };
     let colors = &settings.colors;
     let highlight_line = settings.highlight_line;
     ui.scroll_area_2d("code", None, content_w, |ui, view| {

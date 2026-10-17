@@ -14,6 +14,8 @@ pub mod ops;
 pub mod prose;
 pub mod tabs;
 pub mod view;
+#[cfg(test)]
+mod view_tests;
 pub mod wrap;
 
 use lntrn_text::TextStyle;
