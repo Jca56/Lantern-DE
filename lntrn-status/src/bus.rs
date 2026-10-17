@@ -1,8 +1,10 @@
-//! The system bus as the D-Bus subsystems use it, over `lntrn-dbus`:
-//! calls that wait for their reply and never start a daemon that isn't
-//! running (and calls that answer the daemon's questions while they wait,
-//! as an agent does), an object manager's objects as maps, properties
-//! set, and the signals of one daemon heard as they come.
+//! The buses as the D-Bus subsystems use them, over `lntrn-dbus`: calls
+//! that wait for their reply (and calls that answer the daemon's
+//! questions while they wait, as an agent does), answers to calls made to
+//! us, an object manager's objects as maps, properties set, and the
+//! signals of one daemon heard as they come. On the system bus a call
+//! never starts a daemon that isn't running; on the session bus it may
+//! (obexd starts when it's first asked for).
 //!
 //! A message is only ever read whole: the thread waits for the socket to
 //! have something, then reads one message blocking (a non-blocking read
@@ -48,6 +50,7 @@ impl std::fmt::Display for CallError {
 }
 
 /// What we say to a call made to us.
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub enum Answer {
     /// Values, `sig` saying what they are.
     Reply(&'static str, Vec<u8>),
@@ -57,6 +60,8 @@ pub enum Answer {
 
 pub struct Bus {
     conn: Connection,
+    /// What every call is flagged with.
+    flags: u8,
 }
 
 /// A reply's values, or the error it is.
@@ -71,17 +76,21 @@ fn values(reply: &Message) -> Result<Vec<Value>, CallError> {
 
 impl Bus {
     pub fn system() -> io::Result<Bus> {
-        Connection::connect_system().map(|conn| Bus { conn })
+        Connection::connect_system().map(|conn| Bus { conn, flags: FLAG_NO_AUTO_START })
+    }
+
+    pub fn session() -> io::Result<Bus> {
+        Connection::connect().map(|conn| Bus { conn, flags: 0 })
     }
 
     pub fn fd(&self) -> RawFd {
         self.conn.as_raw_fd()
     }
 
-    /// Call `member` and wait for its reply's values. The daemon is never
-    /// started for it: one that's down fails at once.
+    /// Call `member` and wait for its reply's values. On the system bus
+    /// the daemon is never started for it: one that's down fails at once.
     pub fn call(&mut self, dest: &str, path: &str, iface: &str, member: &str, sig: &str, body: &[u8]) -> Result<Vec<Value>, CallError> {
-        let serial = self.conn.method_call_with_flags(FLAG_NO_AUTO_START, dest, path, iface, member, sig, body);
+        let serial = self.conn.method_call_with_flags(self.flags, dest, path, iface, member, sig, body);
         let reply = self.conn.read_reply(serial).map_err(CallError::Bus)?;
         values(&reply)
     }
@@ -93,7 +102,7 @@ impl Bus {
     /// they are sent.
     #[allow(clippy::too_many_arguments)]
     pub fn call_serving(&mut self, dest: &str, path: &str, iface: &str, member: &str, sig: &str, body: &[u8], wait: Duration, mut serve: impl FnMut(&Message) -> Answer) -> Result<Vec<Value>, CallError> {
-        let serial = self.conn.method_call_with_flags(FLAG_NO_AUTO_START, dest, path, iface, member, sig, body);
+        let serial = self.conn.method_call_with_flags(self.flags, dest, path, iface, member, sig, body);
         let until = Instant::now() + wait;
         loop {
             let left = until.saturating_duration_since(Instant::now());
@@ -102,16 +111,23 @@ impl Bus {
             }
             let msg = self.conn.read_next().map_err(CallError::Bus)?;
             if msg.is_method_call() {
-                match serve(&msg) {
-                    Answer::Reply(sig, mut body) => {
-                        self.conn.send_reply(msg.serial, &msg.sender, sig, &body);
-                        wipe_bytes(&mut body);
-                    }
-                    Answer::Refuse(name, why) => self.conn.send_error(msg.serial, &msg.sender, name, why),
-                }
+                let answer = serve(&msg);
+                self.answer(msg.serial, &msg.sender, answer);
             } else if msg.reply_serial == serial && !msg.is_signal() {
                 return values(&msg);
             }
+        }
+    }
+
+    /// Answer the call `serial` that `sender` made to us; what a reply
+    /// carried is wiped once it's sent.
+    pub fn answer(&mut self, serial: u32, sender: &str, answer: Answer) {
+        match answer {
+            Answer::Reply(sig, mut body) => {
+                self.conn.send_reply(serial, sender, sig, &body);
+                wipe_bytes(&mut body);
+            }
+            Answer::Refuse(name, why) => self.conn.send_error(serial, sender, name, why),
         }
     }
 

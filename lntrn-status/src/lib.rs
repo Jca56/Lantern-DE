@@ -13,7 +13,10 @@
 //!   password it asks for, or a hidden one by name), leaving, forgetting
 //!   a saved one. Whether a cable is plugged in, too.
 //! - [`bluetooth`]: BlueZ over the system bus: on or off, the paired
-//!   devices, their batteries; connecting and disconnecting them.
+//!   devices, their batteries; connecting and disconnecting them, finding
+//!   and pairing new ones (the desktop's pairing agent asking the person
+//!   what pairing needs), forgetting old ones; files to and from them
+//!   through obexd on the session bus.
 //!
 //! Each `start` takes a [`Notify`], called from its thread whenever what
 //! it shows changed (never when it didn't), so a UI sleeps until then;

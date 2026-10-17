@@ -10,7 +10,10 @@
 //! keys do, and goes through the workspaces; a middle click mutes.
 //!
 //! What they show comes from `lntrn-status`, a thread each, started the
-//! first time its item shows, waking the loop only when it changed.
+//! first time its item shows, waking the loop only when it changed. A
+//! device asking something of the person (to pair from its end, to send
+//! a file) opens the Bluetooth popup by itself, once for each ask; a file
+//! to send is picked in the file manager, from a thread.
 
 mod bar;
 pub mod glyphs;
@@ -18,9 +21,12 @@ pub mod popup;
 
 pub use bar::{TrayPress, draw};
 
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, channel};
 
 use lntrn_app::Waker;
+use lntrn_core::log_warn;
 use lntrn_math::Rect;
 use lntrn_status::{Audio, Backlight, Battery, Bluetooth, Notify, Wifi};
 
@@ -126,6 +132,13 @@ pub struct Tray {
     scroll: f64,
     /// What is typed in the WiFi popup: a password, a hidden network.
     pub entry: popup::Entry,
+    /// What is typed and open in the Bluetooth popup.
+    pub bt: popup::BtEntry,
+    /// The last of a device's asks that opened its popup by itself: a
+    /// file offer's (`true`) or a question's, by id.
+    called: Option<(bool, u64)>,
+    /// Files picked to send, by the address they go to.
+    picks: Option<(Sender<(String, PathBuf)>, Receiver<(String, PathBuf)>)>,
     waker: Option<Waker>,
 }
 
@@ -186,8 +199,56 @@ impl Tray {
 
     pub fn close(&mut self) {
         self.entry.close();
+        if self.bt.adding
+            && let Some(bt) = &self.bluetooth
+        {
+            bt.scan(false);
+        }
+        self.bt.close();
         if let Some(item) = self.popup.take() {
             self.attend(item, false);
+        }
+    }
+
+    /// A device asking something of the person that hasn't opened the
+    /// Bluetooth popup yet: it opens now. Returns whether it did.
+    pub fn calling(&mut self) -> bool {
+        let Some(s) = self.bluetooth.as_ref().map(Bluetooth::state) else { return false };
+        let call = s.question.as_ref().map(|q| (false, q.id)).or(s.offer.as_ref().map(|o| (true, o.id)));
+        let Some(call) = call.filter(|c| self.called != Some(*c)) else { return false };
+        self.called = Some(call);
+        if self.popup == Some(Item::Bluetooth) {
+            return false;
+        }
+        self.toggle(Item::Bluetooth);
+        true
+    }
+
+    /// Ask the file manager for a file to send to the device at
+    /// `address`, called `name`. It comes back from a thread, and goes
+    /// ([`Self::follow_picks`]).
+    pub fn pick_file(&mut self, address: &str, name: &str) {
+        let tx = self.picks.get_or_insert_with(channel).0.clone();
+        let (address, title, waker) = (address.to_owned(), format!("Send to {name}"), self.waker.clone());
+        let spawned = std::thread::Builder::new().name("pick-file".into()).spawn(move || {
+            let out = std::process::Command::new("lntrn-file-manager").args(["--pick", "--pick-print0", "--title", &title]).output();
+            let Some(path) = out.ok().and_then(|o| first_pick(&o.stdout)) else { return };
+            if tx.send((address, path)).is_ok()
+                && let Some(waker) = waker
+            {
+                waker.wake();
+            }
+        });
+        if let Err(e) = spawned {
+            log_warn!("tray: no thread to pick a file in: {e}");
+        }
+    }
+
+    /// Send the files picked since last time.
+    pub fn follow_picks(&self) {
+        let (Some((_, rx)), Some(bt)) = (&self.picks, &self.bluetooth) else { return };
+        for (address, path) in rx.try_iter() {
+            bt.send_file(&address, path);
         }
     }
 
@@ -199,5 +260,25 @@ impl Tray {
             (Item::Brightness, _, Some(backlight)) => backlight.attend(on),
             _ => {}
         }
+    }
+}
+
+/// The first path the file manager printed: each one its bytes then a
+/// NUL (one a line, from one older than that).
+fn first_pick(stdout: &[u8]) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    let end = if stdout.contains(&0) { 0 } else { b'\n' };
+    stdout.split(|b| *b == end).find(|p| !p.is_empty()).map(|p| PathBuf::from(std::ffi::OsStr::from_bytes(p)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_picked_file_is_the_first_path_printed() {
+        assert_eq!(first_pick(b"/home/a/My Photo.jpg\0/home/a/b\0"), Some(PathBuf::from("/home/a/My Photo.jpg")));
+        assert_eq!(first_pick(b"/home/a/old.txt\n"), Some(PathBuf::from("/home/a/old.txt")));
+        assert_eq!(first_pick(b""), None, "nothing picked");
     }
 }

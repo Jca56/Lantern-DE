@@ -124,6 +124,23 @@ System Settings toggle picks which one the session uses.
 >   name and only for the network being joined, then unregisters; errors
 >   are worded by iwd's error name (`lntrn-dbus` `Message::error_name`).
 >   802.1X company logins stay out (they need a provisioning file).
+> - **Bluetooth pairing and files (2026-10-17, Alva's answers):** no more
+>   `bluetoothctl`: `lntrn-status`'s Bluetooth thread is the desktop's
+>   default BlueZ agent (`KeyboardDisplay`, answering BlueZ's unique name
+>   only), so pairing from here and from a phone both come to the popup.
+>   **Add a device…** under the paired list scans and makes the PC seen
+>   (Discoverable, BlueZ's own timeout if the bar dies) while open; a
+>   click on a nearby device pairs, trusts and connects it. What pairing
+>   asks shows inline under the device's row (a code to check, a PIN or
+>   six digits to type, a code to type on a keyboard), or in a card up top
+>   for a device in neither list; such an ask **opens the popup by
+>   itself**, once. Paired devices get **Forget** (second click confirms)
+>   and, when they take files, **Send a file** on hover (picked with
+>   `lntrn-file-manager --pick`, the popup stepping aside). Files coming
+>   in ask Accept/Decline inline, land in obexd's cache under a cleaned
+>   name and move to `~/Downloads`; progress shows under the device, and
+>   a notification says how sends and receives went. obexd takes one
+>   agent at a time: the bar's retries every 15 s while another holds it.
 > - **Tray order (2026-10-17, Alva's answers):** System Settings' System
 >   Tray card drags its rows by a six-dot grip at their left (or Up/Down,
 >   Home/End on a focused grip) into `[control_center] tray_order`, a list
@@ -175,8 +192,7 @@ Planned order (Alva, 2026-10-16): clock → app launcher (far left) → pins +
 open windows dock (middle).
 
 - [x] Tray: WiFi password entry, hidden networks, Forget (see above)
-- [ ] Tray, next pass: Bluetooth pairing (an agent; the Command Center no
-      longer runs beside the bar, so it can be the bar's own)
+- [x] Tray: Bluetooth pairing (both ways), Forget, files (see above)
 - [ ] Mini system monitors: CPU (gold), GPU (green), RAM (blue), opening
       lntrn-system-monitor (Notes.md)
 - [ ] SNI app icons (Steam & co.): the Command Center owns the watcher

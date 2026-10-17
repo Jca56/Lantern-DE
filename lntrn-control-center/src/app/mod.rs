@@ -158,6 +158,13 @@ impl App {
                 self.open_launcher(cx);
             }
         }
+        // A device asking something (to pair, to send a file): its popup
+        // opens by itself, bringing a hidden bar up. Files picked to send go.
+        self.tray.follow_picks();
+        if !self.launcher.open && self.tray.calling() {
+            self.open_overlay(cx);
+            self.wake();
+        }
         let want = !hide.auto() || ui.state.pointer_in_window || self.overlay.open;
         let grown = hide::grown(surface, m);
         if let Some(wait) = self.reveal.step(now, want, grown, hide.glide(ui.state.reduce_motion), hide.delay) {

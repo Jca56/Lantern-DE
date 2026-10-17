@@ -12,6 +12,7 @@ mod brightness;
 pub mod kit;
 mod wifi;
 
+pub use bluetooth::Entry as BtEntry;
 pub use wifi::Entry;
 
 use lntrn_math::{Rect, Vec2};
