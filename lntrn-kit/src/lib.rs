@@ -18,7 +18,8 @@
 //! - `desktop`: what an app follows from the desktop's settings (accent,
 //!   window opacity, font).
 //! - `layout`: the page column, captions and notes.
-//! - `card`: cards and their rows.
+//! - `card`: cards and their rows, and (`reorder`) entries the user drags
+//!   into an order by their grips.
 //! - `controls`: switch, slider, segmented control, buttons, text field.
 //! - `pickers`: the dropdown and the colour chip.
 //! - `bits`: badges and banners.
@@ -37,6 +38,7 @@ pub mod look;
 pub mod nav;
 pub mod pickers;
 pub mod probe;
+mod reorder;
 pub mod startup;
 
 pub use card::{Card, card};

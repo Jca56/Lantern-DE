@@ -1,4 +1,4 @@
-//! The tray's faces on the bar, laid right to left from the clock: a
+//! The tray's faces on the bar, in their order up to the clock: a
 //! picture each on a face as tall as the dock's (lit under the pointer,
 //! in the accent while its popup is up), the battery wider for its
 //! percent, the workspace's number in a box of its own. Hold Alt over one
@@ -99,7 +99,7 @@ impl Seen {
 pub fn draw(tray: &mut Tray, ui: &mut Ui, plate: Rect, right: f64, under: Color, options: TrayOptions, link: &compositor::Link) -> TrayFrame {
     let m = ui.m;
     let seen = Seen::read(tray, options, link);
-    let items: Vec<Item> = Item::ALL.into_iter().filter(|&i| seen.shows(i, options)).collect();
+    let items: Vec<Item> = options.order.into_iter().filter(|&i| seen.shows(i, options)).collect();
     tray.faces.clear();
     let mut frame = TrayFrame { rect: Rect::new(Vec2::new(right, plate.min.y), Vec2::new(right, plate.max.y)), press: None, pressed: false };
     if items.is_empty() {

@@ -1,8 +1,9 @@
 //! The system tray: the bar's right end before the clock, left to right
-//! the battery (with its percent), WiFi, Bluetooth, sound, brightness,
-//! the workspace's number and Game Mode (`bar`). Each shows only where it
-//! means something (no battery on a desktop) and where System Settings
-//! leaves it on (`[control_center]`'s `tray_*`). A click on the first
+//! in the order System Settings puts them (`[control_center]`'s
+//! `tray_order`), at first the battery (with its percent), WiFi,
+//! Bluetooth, sound, brightness, the workspace's number and Game Mode
+//! (`bar`). Each shows only where it means something (no battery on a
+//! desktop) and where System Settings leaves it on (`tray_*`). A click on the first
 //! five opens their popup above the bar, in the overlay (`popup`); the
 //! workspace's number turns to the next workspace and Game Mode flips.
 //! The wheel turns the sound and the brightness up and down, as their
@@ -38,12 +39,38 @@ pub enum Item {
 }
 
 impl Item {
-    /// Left to right.
+    /// Left to right, until System Settings says otherwise.
     pub const ALL: [Item; 7] = [Item::Battery, Item::Wifi, Item::Bluetooth, Item::Audio, Item::Brightness, Item::Workspace, Item::GameMode];
+
+    /// What `tray_order` calls it.
+    pub fn word(self) -> &'static str {
+        match self {
+            Item::Battery => "battery",
+            Item::Wifi => "wifi",
+            Item::Bluetooth => "bluetooth",
+            Item::Audio => "audio",
+            Item::Brightness => "brightness",
+            Item::Workspace => "workspace",
+            Item::GameMode => "game_mode",
+        }
+    }
+
+    /// Every item once, in the order `words` name them: a word that isn't
+    /// one is passed over, and the ones left out follow in their own order.
+    pub fn ordered<'a>(words: impl IntoIterator<Item = &'a str>) -> [Item; 7] {
+        let mut order = Vec::with_capacity(Item::ALL.len());
+        let named = words.into_iter().filter_map(|w| Item::ALL.into_iter().find(|i| i.word() == w));
+        for item in named.chain(Item::ALL) {
+            if !order.contains(&item) {
+                order.push(item);
+            }
+        }
+        order.try_into().unwrap_or(Item::ALL)
+    }
 }
 
-/// Which items show: `[control_center]`'s `tray_*` keys, all on unless
-/// System Settings turned them off.
+/// Which items show, and in what order: `[control_center]`'s `tray_*`
+/// keys, all on unless System Settings turned them off.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TrayOptions {
     pub battery: bool,
@@ -55,11 +82,13 @@ pub struct TrayOptions {
     pub brightness: bool,
     pub workspace: bool,
     pub game_mode: bool,
+    /// Left to right (`tray_order`).
+    pub order: [Item; 7],
 }
 
 impl Default for TrayOptions {
     fn default() -> Self {
-        TrayOptions { battery: true, battery_percent: true, wifi: true, bluetooth: true, audio: true, brightness: true, workspace: true, game_mode: true }
+        TrayOptions { battery: true, battery_percent: true, wifi: true, bluetooth: true, audio: true, brightness: true, workspace: true, game_mode: true, order: Item::ALL }
     }
 }
 

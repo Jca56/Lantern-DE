@@ -4,7 +4,8 @@
 //! height, corners and gaps, over the bottom of a screen with the bar
 //! drawn on it at its real size (the middle of the screen left out), then
 //! whether it hides between uses, what its clock shows, and which items its
-//! system tray shows. The bar reads `[control_center]` as it changes.
+//! system tray shows, dragged into the order the bar shows them in. The
+//! bar reads `[control_center]` as it changes.
 
 use lntrn_math::{Color, Rect, Vec2};
 use lntrn_ui::Ui;
@@ -112,22 +113,25 @@ pub fn draw(cfg: &mut Config, ui: &mut Ui) -> bool {
 
     kit::caption(ui, "System Tray");
     kit::card(ui, "tray", |c| {
-        // A desktop has no battery or backlight to show.
-        if machine::has_battery() {
-            changed |= c.switch("Battery", "Its charge, and a click for the details.", &mut cc.tray_battery);
-            if cc.tray_battery {
-                changed |= c.switch("Battery percent", "The number beside the battery.", &mut cc.tray_battery_percent);
+        // In `tray_order`'s order, the top one leftmost on the bar.
+        let moved = c.reorder("order", &mut cc.tray_order, String::as_str, |c, word| match word.as_str() {
+            // A desktop has no battery or backlight to show.
+            "battery" if machine::has_battery() => {
+                changed |= c.switch("Battery", "Its charge, and a click for the details.", &mut cc.tray_battery);
+                if cc.tray_battery {
+                    c.nested(|c| changed |= c.switch("Battery percent", "The number beside the battery.", &mut cc.tray_battery_percent));
+                }
             }
-        }
-        changed |= c.switch("WiFi", "Networks, and joining one.", &mut cc.tray_wifi);
-        changed |= c.switch("Bluetooth", "Connecting paired devices.", &mut cc.tray_bluetooth);
-        changed |= c.switch("Sound", "The volume and the outputs. The wheel turns it up and down, a middle click mutes.", &mut cc.tray_audio);
-        if machine::has_backlight() {
-            changed |= c.switch("Brightness", "The screen's. The wheel turns it up and down.", &mut cc.tray_brightness);
-        }
-        changed |= c.switch("Workspace number", "A click goes to the next workspace, the wheel goes through them.", &mut cc.tray_workspace);
-        changed |= c.switch("Game Mode", "Native resolution for games, as Super+G toggles it.", &mut cc.tray_game_mode);
+            "wifi" => changed |= c.switch("WiFi", "Networks, and joining one.", &mut cc.tray_wifi),
+            "bluetooth" => changed |= c.switch("Bluetooth", "Connecting paired devices.", &mut cc.tray_bluetooth),
+            "audio" => changed |= c.switch("Sound", "The volume and the outputs. The wheel turns it up and down, a middle click mutes.", &mut cc.tray_audio),
+            "brightness" if machine::has_backlight() => changed |= c.switch("Brightness", "The screen's. The wheel turns it up and down.", &mut cc.tray_brightness),
+            "workspace" => changed |= c.switch("Workspace number", "A click goes to the next workspace, the wheel goes through them.", &mut cc.tray_workspace),
+            "game_mode" => changed |= c.switch("Game Mode", "Native resolution for games, as Super+G toggles it.", &mut cc.tray_game_mode),
+            _ => {}
+        });
+        changed |= moved;
     });
-    kit::note(ui, "Each shows where the machine has it. Hold Alt over one in the bar to read what it says.");
+    kit::note(ui, "Drag one by the dots at its left to move it: top to bottom here is left to right on the bar. Each shows where the machine has it. Hold Alt over one in the bar to read what it says.");
     changed
 }

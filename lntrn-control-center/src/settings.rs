@@ -21,7 +21,7 @@ use crate::bar::Shape;
 use crate::clock::{ClockOptions, DateStyle};
 use crate::hide::{HideOptions, Visibility};
 use crate::morph::Glide;
-use crate::tray::TrayOptions;
+use crate::tray::{Item, TrayOptions};
 /// How long a burst of writes to the file is let settle before it is read.
 const SETTLE: Duration = Duration::from_millis(100);
 
@@ -37,7 +37,8 @@ pub struct Settings {
     /// `[control_center]`'s `visibility` and `auto_hide_*` keys: whether
     /// it hides, and how.
     pub hide: HideOptions,
-    /// `[control_center]`'s `tray_*` keys: which of the tray's items show.
+    /// `[control_center]`'s `tray_*` keys: which of the tray's items show,
+    /// and in what order.
     pub tray: TrayOptions,
     /// The monitor `[[monitors]]` marks `primary`, by its connector name
     /// (`DP-1`), unless it is switched off.
@@ -99,10 +100,13 @@ fn hide(doc: &Doc) -> HideOptions {
     }
 }
 
-/// `[control_center]`'s `tray_*` switches; on unless set off.
+/// `[control_center]`'s `tray_*` switches, on unless set off, and
+/// `tray_order`, the items left to right (the rest after the ones it
+/// names, in their own order).
 fn tray(doc: &Doc) -> TrayOptions {
     let d = TrayOptions::default();
-    let on = |k: &str, or: bool| doc.path(&format!("control_center.tray_{k}")).and_then(Doc::as_bool).unwrap_or(or);
+    let key = |k: &str| doc.path(&format!("control_center.tray_{k}"));
+    let on = |k: &str, or: bool| key(k).and_then(Doc::as_bool).unwrap_or(or);
     TrayOptions {
         battery: on("battery", d.battery),
         battery_percent: on("battery_percent", d.battery_percent),
@@ -112,6 +116,7 @@ fn tray(doc: &Doc) -> TrayOptions {
         brightness: on("brightness", d.brightness),
         workspace: on("workspace", d.workspace),
         game_mode: on("game_mode", d.game_mode),
+        order: key("order").and_then(Doc::as_list).map_or(d.order, |words| Item::ordered(words.iter().filter_map(Doc::as_str))),
     }
 }
 
@@ -220,6 +225,18 @@ mod tests {
         assert_eq!(Settings::default().tray, TrayOptions::default());
         let set = parse("[control_center]\ntray_wifi = false\ntray_battery_percent = false\ntray_game_mode = \"no\"\n").tray;
         assert_eq!(set, TrayOptions { wifi: false, battery_percent: false, ..TrayOptions::default() }, "a word isn't a switch");
+    }
+
+    #[test]
+    fn the_tray_is_in_the_order_system_settings_dragged_it_into() {
+        use Item::*;
+        let order = |text: &str| parse(&format!("[control_center]\ntray_order = {text}\n")).tray.order;
+        assert_eq!(order("[\"game_mode\", \"wifi\", \"battery\", \"audio\", \"brightness\", \"workspace\", \"bluetooth\"]"), [GameMode, Wifi, Battery, Audio, Brightness, Workspace, Bluetooth]);
+        // A stray word passed over, one named twice taken once, the ones
+        // left out after the rest in their own order.
+        assert_eq!(order("[\"workspace\", \"clock\", \"audio\", \"workspace\"]"), [Workspace, Audio, Battery, Wifi, Bluetooth, Brightness, GameMode]);
+        assert_eq!(order("\"wifi\""), Item::ALL, "not a list");
+        assert_eq!(Settings::default().tray.order, Item::ALL);
     }
 
     #[test]

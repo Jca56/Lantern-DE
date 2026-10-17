@@ -377,6 +377,15 @@ mod tests {
         cfg.control_center.clock_date_style = "sideways".into();
         cfg.save_to(&path).unwrap();
         assert_eq!(read_existing(&path).unwrap().path("control_center.clock_date_style").and_then(Doc::as_str), Some("short"));
+        // The tray's order: every item once, a stray word dropped, a
+        // missing item put at the end.
+        let order = |cfg: &Config| cfg.control_center.tray_order.join(" ");
+        assert_eq!(order(&cfg), control_center::CC_TRAY_ITEMS.join(" "));
+        cfg.control_center.tray_order = ["game_mode", "wifi", "clock", "wifi", "battery", "audio", "brightness", "workspace"].map(str::to_owned).to_vec();
+        cfg.save_to(&path).unwrap();
+        assert_eq!(order(&cfg), "game_mode wifi battery audio brightness workspace bluetooth");
+        let words: Vec<String> = read_existing(&path).unwrap().path("control_center.tray_order").and_then(Doc::as_list).unwrap().iter().filter_map(Doc::as_str).map(str::to_owned).collect();
+        assert_eq!(words, cfg.control_center.tray_order);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

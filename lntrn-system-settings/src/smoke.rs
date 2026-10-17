@@ -106,7 +106,7 @@ fn the_sidebar_switches_pages_and_a_tile_puts_a_wallpaper_up() {
     click(&mut h, &mut shell, &mut app, second.center());
     assert!(app.config.appearance.wallpaper.ends_with("wallpapers/Red_Moon.png"), "{}", app.config.appearance.wallpaper);
 
-    let row = h.rect_of(in_body(&h, |body| body.with_index(0).with("sidebar").with("mouse"))).unwrap();
+    let row = h.rect_of(in_body(&h, |body| body.with_index(0).with("sidebar").with("pages").with("mouse"))).unwrap();
     click(&mut h, &mut shell, &mut app, row.center());
     assert_eq!(app.page, Page::Mouse);
 }
@@ -371,6 +371,96 @@ fn the_control_center_page_sets_auto_hide_and_the_am_pm() {
     });
     assert!(!cfg.control_center.clock_ampm);
     assert!(clipped().is_empty());
+}
+
+/// Four entries in a card's order: Beta with a row nested under it, `c`
+/// declaring none (what a machine lacks). `true` when the order changed.
+fn four(ui: &mut Ui, order: &mut [String], on: &mut [bool; 4]) -> bool {
+    let mut moved = false;
+    kit::card(ui, "list", |c| {
+        moved = c.reorder("order", order, String::as_str, |c, word| match word.as_str() {
+            "a" => {
+                c.switch("Alpha", "", &mut on[0]);
+            }
+            "b" => {
+                c.switch("Beta", "", &mut on[1]);
+                c.nested(|c| {
+                    c.switch("Beta's own", "", &mut on[2]);
+                });
+            }
+            "d" => {
+                c.switch("Delta", "", &mut on[3]);
+            }
+            _ => {}
+        });
+    });
+    moved
+}
+
+#[test]
+fn a_grip_drags_its_entry_and_the_arrows_move_it() {
+    let mut h = kit_at(1000.0, 900.0);
+    let mut order = ["a", "b", "c", "d"].map(str::to_owned);
+    let (mut on, mut moves) = ([false; 4], 0);
+    h.settle(4, |ui| {
+        moves += usize::from(four(ui, &mut order, &mut on));
+    });
+    let grip = |k: &str| WidgetId::ROOT.with("list").with("order").with("grip").with(k);
+    let id = |label: &str| WidgetId::ROOT.with("list").with(label);
+    assert!(h.rect_of(grip("c")).is_none(), "nothing to grip");
+    let (a, b) = (h.rect_of(grip("a")).unwrap(), h.rect_of(grip("b")).unwrap());
+    let own = h.rect_of(id("Beta's own")).unwrap();
+    assert!(b.min.y < own.min.y && own.max.y <= b.max.y + 1.0, "Beta's grip runs down what is nested under it");
+    assert!(h.rect_of(id("Alpha")).unwrap().min.x >= a.max.x, "a switch row leaves the grip alone");
+
+    // A press on a grip that doesn't go anywhere moves and flips nothing.
+    h.click_at(a.center(), |ui| {
+        moves += usize::from(four(ui, &mut order, &mut on));
+    });
+    // Dropped low on Beta: past its middle, so after it and what is
+    // nested under it, but not past the missing one.
+    h.drag(a.center(), Vec2::new(a.center().x, b.max.y - 10.0), 6, |ui| {
+        moves += usize::from(four(ui, &mut order, &mut on));
+    });
+    assert_eq!((order.join(" "), on, moves), ("b a c d".to_owned(), [false; 4], 1));
+    let (a, b) = (h.rect_of(grip("a")).unwrap(), h.rect_of(grip("b")).unwrap());
+    assert!(a.min.y > h.rect_of(id("Beta's own")).unwrap().max.y && b.min.y < a.min.y, "Beta's nested row went up with it");
+
+    // The grip kept the focus: up one, then to the end.
+    h.key(Key::ArrowUp);
+    h.settle(4, |ui| {
+        four(ui, &mut order, &mut on);
+    });
+    assert_eq!(order.join(" "), "a b c d");
+    h.key(Key::End);
+    h.settle(4, |ui| {
+        four(ui, &mut order, &mut on);
+    });
+    assert_eq!(order.join(" "), "b c d a");
+}
+
+#[test]
+fn the_control_center_page_drags_the_trays_items_into_order() {
+    let mut cfg = Config::empty();
+    // Tall enough for the tray's card under the clock's.
+    let mut h = kit_at(1000.0, 2600.0);
+    h.settle(4, |ui| {
+        control_center::draw(&mut cfg, ui);
+    });
+    let grip = |k: &str| WidgetId::ROOT.with("tray").with("order").with("grip").with(k);
+    let (wifi, audio) = (h.rect_of(grip("wifi")).unwrap(), h.rect_of(grip("audio")).unwrap());
+    h.drag(wifi.center(), Vec2::new(wifi.center().x, audio.center().y + 10.0), 6, |ui| {
+        control_center::draw(&mut cfg, ui);
+    });
+    // The battery and the backlight are this machine's to have or not.
+    let everywhere = |cfg: &Config| cfg.control_center.tray_order.iter().filter(|w| !matches!(w.as_str(), "battery" | "brightness")).cloned().collect::<Vec<_>>().join(" ");
+    assert_eq!(everywhere(&cfg), "bluetooth audio wifi workspace game_mode");
+    assert!(cfg.control_center.tray_wifi, "the drag flipped nothing");
+    // The rest of the row still flips its switch.
+    h.click_on(WidgetId::ROOT.with("tray").with("WiFi"), |ui| {
+        control_center::draw(&mut cfg, ui);
+    });
+    assert!(!cfg.control_center.tray_wifi);
 }
 
 #[test]

@@ -19,12 +19,23 @@ const HINT_MIN_W: f64 = 260.0;
 const FIELD_W: f64 = 440.0;
 /// A meter row's bar.
 const METER_W: f64 = 240.0;
+/// How far a nested row's text sits in from its parent's.
+const NEST: f64 = 32.0;
 
 /// A card being filled. Rows go in through its methods, which know
 /// whether a line belongs above them.
 pub struct Card<'a, 'u> {
     pub ui: &'a mut Ui<'u>,
-    rows: usize,
+    pub(crate) rows: usize,
+    /// How far rows' text sits right of where it would (nested rows, a
+    /// grip's room), and the line above them.
+    pub(crate) indent: f64,
+    pub(crate) line_indent: f64,
+    /// The strip at the card's left that rows leave to a grip: a switch
+    /// row's click target starts after it.
+    pub(crate) grip_w: f64,
+    /// The first row laid out since this was last cleared.
+    pub(crate) first: Option<Rect>,
 }
 
 /// A rounded panel around the rows `f` declares. Its height is only known
@@ -42,7 +53,7 @@ pub fn card(ui: &mut Ui, id: &str, f: impl FnOnce(&mut Card)) {
         ui.draw.rounded_rect(rect, r, look::CARD);
         ui.draw.stroke_rect(rect, m.px(1.0), r, look::LINE);
     }
-    let mut card = Card { ui, rows: 0 };
+    let mut card = Card { ui, rows: 0, indent: 0.0, line_indent: 0.0, grip_w: 0.0, first: None };
     f(&mut card);
     let ui = card.ui;
     // Every row leaves a gap after it; the card ends at its last row.
@@ -73,9 +84,10 @@ impl Card<'_, '_> {
         if self.rows > 0 {
             let pad = m.px(ROW_PAD);
             let y = (rect.min.y - (m.gap + m.px(1.0)) * 0.5).round();
-            self.ui.draw.hline(rect.min.x + pad, rect.max.x - pad, y, m.px(1.0), look::LINE);
+            self.ui.draw.hline(rect.min.x + pad + self.line_indent, rect.max.x - pad, y, m.px(1.0), look::LINE);
         }
         self.rows += 1;
+        self.first.get_or_insert(rect);
         rect
     }
 
@@ -89,7 +101,7 @@ impl Card<'_, '_> {
         let small = small_style(self.ui);
         let label_h = style.line_height() as f64;
         let label_w = self.ui.measure(label, &style);
-        let inner = (self.ui.avail_width() - pad * 2.0).max(1.0);
+        let inner = (self.ui.avail_width() - pad * 2.0 - self.indent).max(1.0);
         let beside = inner - pad - control_w;
         // A hint needs room to wrap in, not just the label's width.
         let need = if hint.is_empty() { label_w } else { label_w.max(m.px(HINT_MIN_W)) };
@@ -106,14 +118,15 @@ impl Card<'_, '_> {
             let control_h = control_h.max(m.px(56.0));
             let row = self.next(edge + text_h + between + control_h + edge);
             let top = row.min.y + edge + text_h + between;
-            let slot = Rect::new(Vec2::new((row.max.x - pad - control_w).max(row.min.x + pad), top), Vec2::new(row.max.x - pad, top + control_h));
-            return Laid { row, slot, text: Vec2::new(row.min.x + pad, row.min.y + edge), text_w };
+            let left = row.min.x + pad + self.indent;
+            let slot = Rect::new(Vec2::new((row.max.x - pad - control_w).max(left), top), Vec2::new(row.max.x - pad, top + control_h));
+            return Laid { row, slot, text: Vec2::new(left, row.min.y + edge), text_w };
         }
         let h = (text_h + m.px(30.0)).max(control_h + m.px(40.0)).max(m.px(ROW_H));
         let row = self.next(h);
         let top = (row.center().y - text_h * 0.5).round();
         let slot = Rect::new(Vec2::new(row.max.x - pad - control_w, row.min.y), Vec2::new(row.max.x - pad, row.max.y));
-        Laid { row, slot, text: Vec2::new(row.min.x + pad, top), text_w }
+        Laid { row, slot, text: Vec2::new(row.min.x + pad + self.indent, top), text_w }
     }
 
     /// Write a row's label and the hint under it.
@@ -148,12 +161,25 @@ impl Card<'_, '_> {
         f(self.ui, rect)
     }
 
-    /// An on/off row. The whole row is the click target.
+    /// Rows that belong to the one above (a setting that only matters
+    /// while it is on): their text set in under its text, the line above
+    /// each of them too.
+    pub fn nested(&mut self, f: impl FnOnce(&mut Card)) {
+        let (indent, line) = (self.indent, self.line_indent);
+        self.indent += self.ui.m.px(NEST);
+        self.line_indent = self.indent;
+        f(self);
+        (self.indent, self.line_indent) = (indent, line);
+    }
+
+    /// An on/off row. The whole row is the click target (but a grip's
+    /// strip at its left).
     pub fn switch(&mut self, label: &str, hint: &str, value: &mut bool) -> bool {
         let w = self.ui.m.px(controls::SWITCH_W);
         let at = self.lay(label, hint, w, 0.0);
         let id = self.ui.id(label);
-        let changed = controls::switch(self.ui, id, at.row, at.slot, value);
+        let hit = Rect::new(Vec2::new(at.row.min.x + self.grip_w, at.row.min.y), at.row.max);
+        let changed = controls::switch(self.ui, id, hit, at.slot, value);
         self.write(&at, label, hint);
         changed
     }

@@ -110,6 +110,16 @@ System Settings toggle picks which one the session uses.
 >   the workspace socket and opens or closes its launcher (the hub sends
 >   `summon` on that socket).
 
+> - **Tray order (2026-10-17, Alva's answers):** System Settings' System
+>   Tray card drags its rows by a six-dot grip at their left (or Up/Down,
+>   Home/End on a focused grip) into `[control_center] tray_order`, a list
+>   of `battery wifi bluetooth audio brightness workspace game_mode`; top
+>   to bottom there is left to right on the bar, live. A stray word is
+>   passed over and a missing item follows in its own order (both sides).
+>   Battery percent rides along nested under Battery. The list is
+>   `lntrn-kit`'s `Card::reorder` (and `Card::nested`), for anything else
+>   that wants one.
+
 ## Done
 
 - [x] Layer surface on the primary monitor, exclusive zone, floating plate

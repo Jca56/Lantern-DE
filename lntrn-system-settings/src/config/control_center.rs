@@ -3,7 +3,7 @@
 //! floats this far from the screen's edges, and docks full width and
 //! square while a window is maximized or full screen on its monitor),
 //! whether it hides out of sight between uses, what its clock shows, and
-//! which items its system tray shows.
+//! which items its system tray shows, in what order.
 
 use lntrn_props::props;
 
@@ -21,6 +21,9 @@ pub const CC_VISIBILITIES: [(&str, &str); 2] = [("always", "Always shown"), ("au
 /// The clock's date styles: the word stored, and how the page shows it
 /// (by example, as the bar writes it).
 pub const CC_DATE_STYLES: [(&str, &str); 4] = [("short", "Thu, Oct 16"), ("numeric", "10/16/2026"), ("long", "Thursday, October 16"), ("with_year", "Oct 16, 2026")];
+/// The tray's items as `tray_order` names them, in the order they start
+/// in, left to right (the bar's `Item`).
+pub const CC_TRAY_ITEMS: [&str; 7] = ["battery", "wifi", "bluetooth", "audio", "brightness", "workspace", "game_mode"];
 
 props! {
     /// The bar's size and where it floats, in logical pixels, whether it
@@ -60,6 +63,8 @@ props! {
         pub tray_brightness: bool = true => { id: 18 },
         pub tray_workspace: bool = true => { id: 19 },
         pub tray_game_mode: bool = true => { id: 20 },
+        /// The tray's items left to right, each of [`CC_TRAY_ITEMS`] once.
+        pub tray_order: Vec<String> = CC_TRAY_ITEMS.map(str::to_owned).to_vec() => { id: 21 },
     }
 }
 
@@ -78,5 +83,14 @@ impl ControlCenter {
         if !CC_DATE_STYLES.iter().any(|(word, _)| *word == self.clock_date_style) {
             self.clock_date_style = "short".to_owned();
         }
+        // Every item once, where it was put: a word that isn't one goes,
+        // and one left out goes at the end.
+        let mut order: Vec<String> = Vec::with_capacity(CC_TRAY_ITEMS.len());
+        for word in self.tray_order.iter().map(String::as_str).chain(CC_TRAY_ITEMS) {
+            if CC_TRAY_ITEMS.contains(&word) && !order.iter().any(|w| w == word) {
+                order.push(word.to_owned());
+            }
+        }
+        self.tray_order = order;
     }
 }
