@@ -110,6 +110,20 @@ System Settings toggle picks which one the session uses.
 >   the workspace socket and opens or closes its launcher (the hub sends
 >   `summon` on that socket).
 
+> - **WiFi passwords (2026-10-17, Alva's answers):** a click on a network
+>   that needs a password opens a box under its row: the field (dots, an
+>   eye to show it), Join, a line saying what's wrong; Enter joins,
+>   Escape closes the box before the popup. A password that didn't work
+>   keeps the box open, focused, to fix; one that worked, or the box
+>   closing, wipes what was typed. A **Join a hidden network…** row under
+>   the list takes a name and an optional password. Saved networks have
+>   **Forget** (the connected one always, others on hover; a second click
+>   within 4 s confirms). `lntrn-status` does the iwd side: the join's
+>   own connection registers a short-lived `net.connman.iwd.Agent`
+>   (`wifi/join.rs`), answers `RequestPassphrase` only to iwd's unique
+>   name and only for the network being joined, then unregisters; errors
+>   are worded by iwd's error name (`lntrn-dbus` `Message::error_name`).
+>   802.1X company logins stay out (they need a provisioning file).
 > - **Tray order (2026-10-17, Alva's answers):** System Settings' System
 >   Tray card drags its rows by a six-dot grip at their left (or Up/Down,
 >   Home/End on a focused grip) into `[control_center] tray_order`, a list
@@ -160,8 +174,9 @@ System Settings toggle picks which one the session uses.
 Planned order (Alva, 2026-10-16): clock → app launcher (far left) → pins +
 open windows dock (middle).
 
-- [ ] Tray, next pass: WiFi password entry (an iwd agent), Bluetooth
-      pairing (an agent, once CC's can be shared or handed over)
+- [x] Tray: WiFi password entry, hidden networks, Forget (see above)
+- [ ] Tray, next pass: Bluetooth pairing (an agent; the Command Center no
+      longer runs beside the bar, so it can be the bar's own)
 - [ ] Mini system monitors: CPU (gold), GPU (green), RAM (blue), opening
       lntrn-system-monitor (Notes.md)
 - [ ] SNI app icons (Steam & co.): the Command Center owns the watcher

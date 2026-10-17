@@ -31,10 +31,16 @@ pub enum Glyph {
     Mouse,
     Keyboard,
     Computer,
+    /// A password shown as itself, and hidden as dots.
+    Eye,
+    EyeOff,
+    Plus,
 }
 
 /// What unlit parts of a picture show at: there, but faint.
 const UNLIT: f64 = 0.28;
+/// An eye's outline, lid to lid.
+const EYE: &str = "M2 12C5 6.5 8.5 5 12 5C15.5 5 19 6.5 22 12C19 17.5 15.5 19 12 19C8.5 19 5 17.5 2 12Z";
 
 impl Glyph {
     /// The picture for a Bluetooth device's icon name (`audio-headset`,
@@ -93,6 +99,9 @@ impl Glyph {
             Glyph::Mouse => r#"<rect x="6" y="3" width="12" height="18" rx="6"/><path d="M12 7v4"/>"#.to_owned(),
             Glyph::Keyboard => r#"<rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h1M9.5 10h1M13.5 10h1M17 10h1M8 14h8"/>"#.to_owned(),
             Glyph::Computer => r#"<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>"#.to_owned(),
+            Glyph::Eye => format!(r#"<path d="{EYE}"/><circle cx="12" cy="12" r="3"/>"#),
+            Glyph::EyeOff => format!(r#"<g opacity="{UNLIT}"><path d="{EYE}"/><circle cx="12" cy="12" r="3"/></g><path d="M3.5 3.5l17 17"/>"#),
+            Glyph::Plus => r#"<path d="M12 5v14M5 12h14"/>"#.to_owned(),
         }
     }
 
@@ -141,7 +150,7 @@ impl Glyphs {
 mod tests {
     use super::*;
 
-    const ALL: [Glyph; 20] = [
+    const ALL: [Glyph; 23] = [
         Glyph::Wifi(0),
         Glyph::Wifi(1),
         Glyph::Wifi(2),
@@ -162,6 +171,9 @@ mod tests {
         Glyph::Mouse,
         Glyph::Keyboard,
         Glyph::Computer,
+        Glyph::Eye,
+        Glyph::EyeOff,
+        Glyph::Plus,
     ];
 
     #[test]

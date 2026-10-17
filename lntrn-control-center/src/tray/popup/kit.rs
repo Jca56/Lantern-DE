@@ -1,7 +1,7 @@
 //! What the popups are built of, at the launcher's sizes: the panel, a
 //! column laid down its inside, switches, sliders, rows, small buttons,
-//! a scrolling list, and text cut short with an ellipsis where it would
-//! run past its room.
+//! a scrolling list (its rows as tall as each needs), and text cut short
+//! with an ellipsis where it would run past its room.
 
 use lntrn_kit::look;
 use lntrn_math::{Color, Rect, Vec2};
@@ -153,37 +153,56 @@ pub fn row(ui: &mut Ui, id: WidgetId, rect: Rect, current: bool) -> Response {
 /// A small button with `label`, its right end at `right`, centred on
 /// `cy`. Returns whether it was clicked, and its rect.
 pub fn button(ui: &mut Ui, id: WidgetId, right: f64, cy: f64, label: &str) -> (bool, Rect) {
+    button_with(ui, id, right, cy, label, Some(ui.theme.text))
+}
+
+/// [`button`] with its label in `ink`, or dim and deaf to clicks when
+/// `None`.
+pub fn button_with(ui: &mut Ui, id: WidgetId, right: f64, cy: f64, label: &str, ink: Option<Color>) -> (bool, Rect) {
     let m = ui.m;
     let style = dim_style(ui);
     let w = ui.measure(label, &style) + m.px(28.0);
     let rect = Rect::new(Vec2::new(right - w, (cy - m.px(18.0)).round()), Vec2::new(right, (cy + m.px(18.0)).round()));
     let r = ui.interact(id, rect, Sense::CLICK);
-    let face = if r.held { 0.16 } else if r.hovered { 0.12 } else { 0.07 };
+    let face = match ink {
+        None => 0.04,
+        Some(_) if r.held => 0.16,
+        Some(_) if r.hovered => 0.12,
+        Some(_) => 0.07,
+    };
     ui.draw.rounded_rect(rect, rect.height() * 0.5, Color::WHITE.fade(face));
-    ui.text_centered(label, &style, rect, ui.theme.text);
-    (r.clicked, rect)
+    ui.text_centered(label, &style, rect, ink.unwrap_or(ui.theme.text_dim.fade(0.6)));
+    (r.clicked && ink.is_some(), rect)
 }
 
 /// `count` rows of `row_h` in `rect`, scrolled by the wheel over it from
 /// `scroll`, each drawn by `each(ui, index, its rect)`.
-pub fn list(ui: &mut Ui, rect: Rect, count: usize, row_h: f64, scroll: &mut f64, mut each: impl FnMut(&mut Ui, usize, Rect)) {
-    let max = (count as f64 * row_h - rect.height()).max(0.0);
+pub fn list(ui: &mut Ui, rect: Rect, count: usize, row_h: f64, scroll: &mut f64, each: impl FnMut(&mut Ui, usize, Rect)) {
+    list_rows(ui, rect, &vec![row_h; count], scroll, each);
+}
+
+/// [`list`] with each row as tall as `heights` says.
+pub fn list_rows(ui: &mut Ui, rect: Rect, heights: &[f64], scroll: &mut f64, mut each: impl FnMut(&mut Ui, usize, Rect)) {
+    let total: f64 = heights.iter().sum();
+    let max = (total - rect.height()).max(0.0);
     if rect.contains(ui.state.pointer) && ui.state.wheel.y != 0.0 {
         *scroll -= ui.state.wheel.y;
         ui.state.wheel = Vec2::ZERO;
     }
     *scroll = scroll.clamp(0.0, max);
-    let first = (*scroll / row_h).floor() as usize;
-    let last = (((*scroll + rect.height()) / row_h).ceil() as usize).min(count);
     ui.draw.push_clip(rect);
-    for i in first..last {
-        let r = Rect::from_min_size(Vec2::new(rect.min.x, rect.min.y + i as f64 * row_h - *scroll), Vec2::new(rect.width(), row_h));
-        each(ui, i, r);
+    let mut top = rect.min.y - *scroll;
+    for (i, &h) in heights.iter().enumerate() {
+        let r = Rect::from_min_size(Vec2::new(rect.min.x, top), Vec2::new(rect.width(), h));
+        top += h;
+        if r.max.y > rect.min.y && r.min.y < rect.max.y {
+            each(ui, i, r);
+        }
     }
     ui.draw.pop_clip();
     if max > 0.0 {
         let m = ui.m;
-        let thumb = (rect.height() * rect.height() / (count as f64 * row_h)).max(m.px(32.0));
+        let thumb = (rect.height() * rect.height() / total).max(m.px(32.0));
         let y = rect.min.y + (rect.height() - thumb) * (*scroll / max);
         ui.draw.rounded_rect(Rect::from_min_size(Vec2::new(rect.max.x - m.px(4.0), y), Vec2::new(m.px(4.0), thumb)), m.px(2.0), ui.theme.text_dim.fade(0.5));
     }
@@ -193,6 +212,14 @@ pub fn list(ui: &mut Ui, rect: Rect, count: usize, row_h: f64, scroll: &mut f64,
 /// [`MAX_ROWS`] of them.
 pub fn list_h(ui: &Ui, count: usize) -> f64 {
     ui.m.px(ROW_H) * count.min(MAX_ROWS) as f64
+}
+
+/// How far `scroll` must go for the row `at` of `heights` to show whole
+/// in a list `shown` tall.
+pub fn scrolled_to(heights: &[f64], at: usize, shown: f64, scroll: f64) -> f64 {
+    let top: f64 = heights[..at.min(heights.len())].iter().sum();
+    let bottom = top + heights.get(at).copied().unwrap_or(0.0);
+    scroll.max(bottom - shown).min(top)
 }
 
 

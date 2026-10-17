@@ -124,6 +124,8 @@ pub struct Tray {
     wheel: Option<(Item, f64)>,
     /// How far the WiFi and Bluetooth lists are scrolled, pixels.
     scroll: f64,
+    /// What is typed in the WiFi popup: a password, a hidden network.
+    pub entry: popup::Entry,
     waker: Option<Waker>,
 }
 
@@ -183,6 +185,7 @@ impl Tray {
     }
 
     pub fn close(&mut self) {
+        self.entry.close();
         if let Some(item) = self.popup.take() {
             self.attend(item, false);
         }

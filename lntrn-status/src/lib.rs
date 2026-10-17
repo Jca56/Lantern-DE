@@ -9,8 +9,9 @@
 //!   are, and changing them, through WirePlumber's `wpctl`; `pactl
 //!   subscribe` says when anything changed, so nothing is polled.
 //! - [`wifi`]: iwd over the system bus: on or off, the network in use and
-//!   its signal, the networks in range; joining a known one, leaving.
-//!   Whether a cable is plugged in, too.
+//!   its signal, the networks in range; joining one (telling iwd the
+//!   password it asks for, or a hidden one by name), leaving, forgetting
+//!   a saved one. Whether a cable is plugged in, too.
 //! - [`bluetooth`]: BlueZ over the system bus: on or off, the paired
 //!   devices, their batteries; connecting and disconnecting them.
 //!
@@ -28,6 +29,7 @@ pub mod bluetooth;
 mod board;
 mod bus;
 mod level;
+pub mod secret;
 mod sys;
 pub mod wifi;
 

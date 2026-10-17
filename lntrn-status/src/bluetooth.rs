@@ -191,7 +191,7 @@ fn run(board: &Board<BluetoothState>, rx: &Receiver<Cmd>, bell: &Bell) {
                     let fresh = read(&objects);
                     (s.present, s.powered, s.devices) = (fresh.present, fresh.powered, fresh.devices);
                 }),
-                Err(CallError::Refused(_)) => board.update(|s| *s = BluetoothState { busy: s.busy.clone(), ..BluetoothState::default() }),
+                Err(CallError::Refused { .. }) => board.update(|s| *s = BluetoothState { busy: s.busy.clone(), ..BluetoothState::default() }),
                 Err(CallError::Bus(_)) => bus = None,
             }
         }
@@ -310,7 +310,7 @@ mod tests {
             body.extend_from_slice(&entries);
             lntrn_dbus::align_to(&mut body, 4);
             lntrn_dbus::encode_u32(&mut body, 0);
-            Message { msg_type: 4, serial: 1, reply_serial: 0, sender: String::new(), path: String::new(), member: "PropertiesChanged".into(), interface: String::new(), signature: "sa{sv}as".into(), destination: String::new(), body, fds: Vec::new() }
+            Message { msg_type: 4, serial: 1, reply_serial: 0, sender: String::new(), path: String::new(), member: "PropertiesChanged".into(), interface: String::new(), signature: "sa{sv}as".into(), destination: String::new(), error_name: String::new(), body, fds: Vec::new() }
         };
         assert!(!shows(&signal(&[("ManufacturerData", Value::String(String::new()))])));
         assert!(shows(&signal(&[("Connected", Value::Bool(true))])));

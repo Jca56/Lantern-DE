@@ -1,7 +1,8 @@
 //! The system bus as the D-Bus subsystems use it, over `lntrn-dbus`:
 //! calls that wait for their reply and never start a daemon that isn't
-//! running, an object manager's objects as maps, properties set, and the
-//! signals of one daemon heard as they come.
+//! running (and calls that answer the daemon's questions while they wait,
+//! as an agent does), an object manager's objects as maps, properties
+//! set, and the signals of one daemon heard as they come.
 //!
 //! A message is only ever read whole: the thread waits for the socket to
 //! have something, then reads one message blocking (a non-blocking read
@@ -10,10 +11,11 @@
 use std::collections::HashMap;
 use std::io;
 use std::os::fd::RawFd;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use lntrn_dbus::{BodyReader, Connection, FLAG_NO_AUTO_START, Message, Value, encode_string, encode_variant_bool};
 
+use crate::secret::wipe_bytes;
 use crate::sys;
 
 /// A D-Bus object's properties, by interface: what an object manager
@@ -31,21 +33,40 @@ const OBJECT_MANAGER: &str = "org.freedesktop.DBus.ObjectManager";
 pub enum CallError {
     /// The connection is gone, or the daemon never answered: open another.
     Bus(io::Error),
-    /// The daemon answered no, saying why.
-    Refused(String),
+    /// The daemon answered no: its error's name
+    /// (`net.connman.iwd.Failed`), and why in words.
+    Refused { name: String, why: String },
 }
 
 impl std::fmt::Display for CallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CallError::Bus(e) => write!(f, "{e}"),
-            CallError::Refused(why) => f.write_str(why),
+            CallError::Refused { why, .. } => f.write_str(why),
         }
     }
 }
 
+/// What we say to a call made to us.
+pub enum Answer {
+    /// Values, `sig` saying what they are.
+    Reply(&'static str, Vec<u8>),
+    /// No: an error's name, and why.
+    Refuse(&'static str, &'static str),
+}
+
 pub struct Bus {
     conn: Connection,
+}
+
+/// A reply's values, or the error it is.
+fn values(reply: &Message) -> Result<Vec<Value>, CallError> {
+    let values = BodyReader::new(&reply.body, &reply.signature).read_all();
+    if reply.is_error() {
+        let why = values.first().and_then(Value::as_str).unwrap_or("refused").to_owned();
+        return Err(CallError::Refused { name: reply.error_name.clone(), why });
+    }
+    Ok(values)
 }
 
 impl Bus {
@@ -62,12 +83,44 @@ impl Bus {
     pub fn call(&mut self, dest: &str, path: &str, iface: &str, member: &str, sig: &str, body: &[u8]) -> Result<Vec<Value>, CallError> {
         let serial = self.conn.method_call_with_flags(FLAG_NO_AUTO_START, dest, path, iface, member, sig, body);
         let reply = self.conn.read_reply(serial).map_err(CallError::Bus)?;
-        let values = BodyReader::new(&reply.body, &reply.signature).read_all();
-        if reply.is_error() {
-            let why = values.first().and_then(Value::as_str).unwrap_or("refused").to_owned();
-            return Err(CallError::Refused(why));
+        values(&reply)
+    }
+
+    /// [`Self::call`] for a reply that takes as long as it takes, waited
+    /// for up to `wait` (then `TimedOut`), answering meanwhile each call
+    /// made to us with `serve`: an agent's questions, which the daemon
+    /// asks before it replies. What our replies carried is wiped once
+    /// they are sent.
+    #[allow(clippy::too_many_arguments)]
+    pub fn call_serving(&mut self, dest: &str, path: &str, iface: &str, member: &str, sig: &str, body: &[u8], wait: Duration, mut serve: impl FnMut(&Message) -> Answer) -> Result<Vec<Value>, CallError> {
+        let serial = self.conn.method_call_with_flags(FLAG_NO_AUTO_START, dest, path, iface, member, sig, body);
+        let until = Instant::now() + wait;
+        loop {
+            let left = until.saturating_duration_since(Instant::now());
+            if left.is_zero() || !sys::wait(&[self.fd()], Some(left))[0] {
+                return Err(CallError::Bus(io::ErrorKind::TimedOut.into()));
+            }
+            let msg = self.conn.read_next().map_err(CallError::Bus)?;
+            if msg.is_method_call() {
+                match serve(&msg) {
+                    Answer::Reply(sig, mut body) => {
+                        self.conn.send_reply(msg.serial, &msg.sender, sig, &body);
+                        wipe_bytes(&mut body);
+                    }
+                    Answer::Refuse(name, why) => self.conn.send_error(msg.serial, &msg.sender, name, why),
+                }
+            } else if msg.reply_serial == serial && !msg.is_signal() {
+                return values(&msg);
+            }
         }
-        Ok(values)
+    }
+
+    /// Who has `name` on the bus now, by their unique name (`:1.7`).
+    pub fn owner(&mut self, name: &str) -> Result<String, CallError> {
+        let mut body = Vec::new();
+        encode_string(&mut body, name);
+        let reply = self.call(DBUS, "/org/freedesktop/DBus", DBUS, "GetNameOwner", "s", &body)?;
+        reply.first().and_then(Value::as_str).map(str::to_owned).ok_or_else(|| CallError::Refused { name: String::new(), why: format!("no one has {name}") })
     }
 
     /// Call a method that takes no arguments.

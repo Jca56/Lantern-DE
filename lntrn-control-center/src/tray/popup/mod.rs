@@ -2,7 +2,8 @@
 //! item's face, as wide as it needs and as tall as its rows, kept on the
 //! screen. The battery's details and charge limit; WiFi's switch and
 //! networks; Bluetooth's switch and devices; the volume and the outputs;
-//! the brightness. A click off the panel, or Escape, puts it away.
+//! the brightness. A click off the panel, or Escape, puts it away (the
+//! WiFi box being typed in first, while there is one).
 
 mod audio;
 mod battery;
@@ -10,6 +11,8 @@ mod bluetooth;
 mod brightness;
 pub mod kit;
 mod wifi;
+
+pub use wifi::Entry;
 
 use lntrn_math::{Rect, Vec2};
 use lntrn_status::battery::Charge;
@@ -46,7 +49,7 @@ impl Frame {
 /// Draw `item`'s popup. Returns its panel, or `None` when it is to go
 /// (clicked off, Escaped, or its item gone).
 pub fn draw(tray: &mut Tray, ui: &mut Ui, item: Item, frame: &Frame) -> Option<Rect> {
-    if ui.state.take_key(|k| k.key == Key::Escape && k.mods.is_empty()).is_some() {
+    if ui.state.take_key(|k| k.key == Key::Escape && k.mods.is_empty()).is_some() && !escape(tray, item) {
         return None;
     }
     let panel = match item {
@@ -62,6 +65,16 @@ pub fn draw(tray: &mut Tray, ui: &mut Ui, item: Item, frame: &Frame) -> Option<R
         return None;
     }
     Some(panel)
+}
+
+/// Escape on `item`'s popup: closes the WiFi box being typed in, while
+/// there is one. Returns whether the popup stays.
+fn escape(tray: &mut Tray, item: Item) -> bool {
+    let typing = item == Item::Wifi && tray.entry.open.is_some();
+    if typing {
+        tray.entry.close();
+    }
+    typing
 }
 
 /// How long a battery has left, as said: `3 h 20 min left`, `Full in
@@ -82,6 +95,15 @@ pub fn duration(secs: u64, charge: Charge) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn escape_closes_the_wifi_box_before_the_popup() {
+        let mut tray = Tray::default();
+        tray.entry.toggle(wifi::Open::Hidden);
+        assert!(escape(&mut tray, Item::Wifi), "the box goes, the popup stays");
+        assert!(tray.entry.open.is_none());
+        assert!(!escape(&mut tray, Item::Wifi) && !escape(&mut tray, Item::Audio));
+    }
 
     #[test]
     fn time_left_reads_as_said() {

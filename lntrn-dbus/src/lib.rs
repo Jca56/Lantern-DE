@@ -20,6 +20,7 @@ const MSG_SIGNAL: u8 = 4;
 const FIELD_PATH: u8 = 1;
 const FIELD_INTERFACE: u8 = 2;
 const FIELD_MEMBER: u8 = 3;
+const FIELD_ERROR_NAME: u8 = 4;
 const FIELD_DESTINATION: u8 = 6;
 const FIELD_SENDER: u8 = 7;
 const FIELD_SIGNATURE: u8 = 8;
@@ -44,6 +45,9 @@ pub struct Message {
     pub interface: String,
     pub signature: String,
     pub destination: String,
+    /// An error reply's name (`org.freedesktop.DBus.Error.Failed`); empty
+    /// for any other message.
+    pub error_name: String,
     pub body: Vec<u8>,
     /// File descriptors that arrived with this message. Always empty unless
     /// the connection negotiated fd passing (`connect_system_with_fds`).
@@ -772,6 +776,7 @@ fn read_message(stream: &mut UnixStream, fd_passing: bool) -> io::Result<Message
     let mut interface = String::new();
     let mut signature = String::new();
     let mut destination = String::new();
+    let mut error_name = String::new();
     let mut r = BodyReader::new(&fields_buf, "");
     while r.pos < fields_len {
         r.align(8);
@@ -790,6 +795,7 @@ fn read_message(stream: &mut UnixStream, fd_passing: bool) -> io::Result<Message
             (FIELD_MEMBER, "s") => member = r.read_string(),
             (FIELD_INTERFACE, "s") => interface = r.read_string(),
             (FIELD_DESTINATION, "s") => destination = r.read_string(),
+            (FIELD_ERROR_NAME, "s") => error_name = r.read_string(),
             (FIELD_SIGNATURE, "g") => {
                 let slen = r.read_byte() as usize;
                 let sbytes = r.read_bytes(slen);
@@ -826,6 +832,7 @@ fn read_message(stream: &mut UnixStream, fd_passing: bool) -> io::Result<Message
         interface,
         signature,
         destination,
+        error_name,
         body,
         fds,
     })

@@ -232,6 +232,19 @@ fn a_length_past_the_end_of_the_message_stops_at_its_end() {
 }
 
 #[test]
+fn an_error_reply_says_its_name_and_why() {
+    let (mut bus, mut client) = UnixStream::pair().unwrap();
+    bus.write_all(&encode_error(9, 4, ":1.7", "net.connman.iwd.InvalidFormat", "Argument format is invalid")).unwrap();
+    let msg = read_message(&mut client, false).unwrap();
+    assert!(msg.is_error());
+    assert_eq!((msg.reply_serial, msg.error_name.as_str()), (4, "net.connman.iwd.InvalidFormat"));
+    assert_eq!(BodyReader::new(&msg.body, &msg.signature).read_all()[0].as_str(), Some("Argument format is invalid"));
+    // Anything else has none.
+    bus.write_all(&encode_signal(10, "/org/lantern", "org.lantern.Test", "Ping", "", &[])).unwrap();
+    assert!(read_message(&mut client, false).unwrap().error_name.is_empty());
+}
+
+#[test]
 fn a_call_carries_its_flags() {
     let plain = encode_method_call(1, 0, "net.connman.iwd", "/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects", "", &[]);
     let flagged = encode_method_call(2, FLAG_NO_AUTO_START, "net.connman.iwd", "/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects", "", &[]);
