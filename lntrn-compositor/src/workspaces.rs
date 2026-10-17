@@ -1052,6 +1052,7 @@ impl Lantern {
                     let target = self.workspaces.neighbor_id(&output, direction);
                     self.switch_workspace_on(&output, target);
                 }
+                crate::workspace_ipc::IpcCommand::Summon => self.summon_panel(),
                 // The window commands, done above.
                 _ => {}
             }

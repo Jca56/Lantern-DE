@@ -180,24 +180,30 @@ impl Lantern {
                 // Reserved for future use
             }
             ScreenCorner::TopCenter => {
-                tracing::info!("Hot edge: top-center → toggle Command Center");
-                self.open_command_center();
+                tracing::info!("Hot edge: top-center → summon the panel");
+                self.summon_panel();
             }
         }
         self.schedule_render();
     }
 
-    /// Spawn `lntrn-command-center --toggle`. Mirrors the Super-tap path
-    /// in `input.rs` so behavior is identical regardless of how the
-    /// panel was summoned.
-    fn open_command_center(&mut self) {
-        let socket = self.socket_name.clone();
-        crate::input::spawn_detached_args_logged(
-            "lntrn-command-center",
-            &["--toggle"],
-            &socket,
-            "lntrn-command-center",
-        );
+    /// A Super tap, the top-center hot edge or the desktop's hub asked for
+    /// the panel: whichever `[session] panel` chooses. The Command Center
+    /// toggles (`lntrn-command-center --toggle`, which hands it to the
+    /// running one); the Control Center is told on the workspace socket to
+    /// open or close its launcher (`launcher:toggle`).
+    pub(crate) fn summon_panel(&mut self) {
+        if crate::read_config("session", "panel", "control_center") == "command_center" {
+            let socket = self.socket_name.clone();
+            crate::input::spawn_detached_args_logged(
+                "lntrn-command-center",
+                &["--toggle"],
+                &socket,
+                "lntrn-command-center",
+            );
+        } else {
+            self.workspace_ipc.broadcast_line("launcher:toggle");
+        }
     }
 
     /// Toggle peek-desktop: make all windows nearly transparent so the

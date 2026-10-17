@@ -7,13 +7,15 @@
 //! compositor's. Of `[terminal]` we own the keys on its page; the tabs
 //! it has pinned are the terminal's. `[notepad]` is shared with Notepad,
 //! which writes the same keys, and `[screenshot]` with the screenshot
-//! tool. `[control_center]` is the bar's, which reads it live. The one
+//! tool. `[control_center]` is the bar's, which reads it live, and
+//! `[session]` the session manager's (which panel it runs). The one
 //! file beside it is the desktop's ring (`radial.rs`).
 
 mod appearance;
 mod control_center;
 mod monitors;
 pub mod radial;
+mod session;
 mod system;
 
 use std::path::PathBuf;
@@ -24,6 +26,7 @@ pub use control_center::{CC_DATE_STYLES, CC_GAPS_BELOW, CC_GAPS_SIDES, CC_HEIGHT
 use lntrn_data::{Doc, from_doc, to_doc, toml};
 use lntrn_props::Reflect;
 pub use monitors::Monitor;
+pub use session::{PANELS, Session};
 pub use system::{ANIMATION_PRESETS, Animations, CURSOR_STYLES, Input, NOTEPAD_PAGES, NOTIFICATION_POSITIONS, Notepad, Notifications, Power, Screenshot, TERMINAL_FONT_SIZES, Terminal};
 
 pub struct Config {
@@ -38,6 +41,7 @@ pub struct Config {
     pub notepad: Notepad,
     pub screenshot: Screenshot,
     pub control_center: ControlCenter,
+    pub session: Session,
     /// The screens the file lists: their wallpapers and how each is set
     /// up.
     pub monitors: Vec<Monitor>,
@@ -104,12 +108,13 @@ impl Config {
             notepad: Notepad::default(),
             screenshot: Screenshot::default(),
             control_center: ControlCenter::default(),
+            session: Session::default(),
             monitors: Vec::new(),
             mtime: None,
         }
     }
 
-    fn sections(&self) -> [(&'static str, &dyn Reflect); 11] {
+    fn sections(&self) -> [(&'static str, &dyn Reflect); 12] {
         [
             ("appearance", &self.appearance),
             ("window_manager", &self.window_manager),
@@ -122,10 +127,11 @@ impl Config {
             ("notepad", &self.notepad),
             ("screenshot", &self.screenshot),
             ("control_center", &self.control_center),
+            ("session", &self.session),
         ]
     }
 
-    fn sections_mut(&mut self) -> [(&'static str, &mut dyn Reflect); 11] {
+    fn sections_mut(&mut self) -> [(&'static str, &mut dyn Reflect); 12] {
         [
             ("appearance", &mut self.appearance),
             ("window_manager", &mut self.window_manager),
@@ -138,6 +144,7 @@ impl Config {
             ("notepad", &mut self.notepad),
             ("screenshot", &mut self.screenshot),
             ("control_center", &mut self.control_center),
+            ("session", &mut self.session),
         ]
     }
 
@@ -191,6 +198,7 @@ impl Config {
         self.terminal.clamp();
         self.notepad.clamp();
         self.control_center.clamp();
+        self.session.clamp();
     }
 
     /// Merge our sections into the file on disk and write it back
@@ -361,6 +369,11 @@ mod tests {
         let flag = |k: &str| doc.path(&format!("control_center.{k}")).and_then(Doc::as_bool);
         assert_eq!((flag("clock_24h"), flag("clock_seconds"), flag("clock_date")), (Some(false), Some(false), Some(true)));
         assert_eq!((flag("tray_wifi"), flag("tray_battery_percent"), flag("tray_game_mode")), (Some(true), Some(true), Some(true)), "the tray's items, all on");
+        // The panel the session runs, a word it knows.
+        assert_eq!(doc.path("session.panel").and_then(Doc::as_str), Some("control_center"));
+        cfg.session.panel = "both".into();
+        cfg.save_to(&path).unwrap();
+        assert_eq!(read_existing(&path).unwrap().path("session.panel").and_then(Doc::as_str), Some("control_center"));
         cfg.control_center.clock_date_style = "sideways".into();
         cfg.save_to(&path).unwrap();
         assert_eq!(read_existing(&path).unwrap().path("control_center.clock_date_style").and_then(Doc::as_str), Some("short"));

@@ -148,6 +148,16 @@ impl App {
         let (m, surface, shape, hide) = (ui.m, ui.clip(), self.settings.shape, self.settings.hide);
         self.follow_cover(now, ui.state.reduce_motion);
         self.dock.refresh(&self.link);
+        // A Super tap: the launcher opens, or closes when it is up. Opening
+        // it brings a hidden bar up with it.
+        if self.link.take_launcher() {
+            if self.launcher.open {
+                self.launcher.close();
+                self.wake();
+            } else {
+                self.open_launcher(cx);
+            }
+        }
         let want = !hide.auto() || ui.state.pointer_in_window || self.overlay.open;
         let grown = hide::grown(surface, m);
         if let Some(wait) = self.reveal.step(now, want, grown, hide.glide(ui.state.reduce_motion), hide.delay) {

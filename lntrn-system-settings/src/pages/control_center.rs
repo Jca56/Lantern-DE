@@ -1,4 +1,6 @@
-//! The Control Center page: the bar along the bottom of the screen, its
+//! The Control Center page: which panel the desktop runs, the Control
+//! Center or the Command Center (`[session] panel`, only one at a time),
+//! then the bar along the bottom of the screen, its
 //! height, corners and gaps, over the bottom of a screen with the bar
 //! drawn on it at its real size (the middle of the screen left out), then
 //! whether it hides between uses, what its clock shows, and which items its
@@ -7,7 +9,7 @@
 use lntrn_math::{Color, Rect, Vec2};
 use lntrn_ui::Ui;
 
-use crate::config::{CC_DATE_STYLES, CC_GAPS_BELOW, CC_GAPS_SIDES, CC_HEIGHTS, CC_HIDE_DELAYS, CC_RADII, CC_SLIDES, CC_VISIBILITIES, Config};
+use crate::config::{CC_DATE_STYLES, CC_GAPS_BELOW, CC_GAPS_SIDES, CC_HEIGHTS, CC_HIDE_DELAYS, CC_RADII, CC_SLIDES, CC_VISIBILITIES, Config, PANELS};
 use crate::kit::{self, look, pixels};
 use crate::machine;
 
@@ -51,8 +53,21 @@ fn preview(ui: &mut Ui, rect: Rect, (height, radius, below, sides): (i64, i64, i
 
 pub fn draw(cfg: &mut Config, ui: &mut Ui) -> bool {
     let plate = plate_color(cfg);
-    let cc = &mut cfg.control_center;
     let mut changed = false;
+
+    kit::caption(ui, "Panel");
+    let session = &mut cfg.session;
+    kit::card(ui, "panel", |c| {
+        let labels: Vec<&str> = PANELS.iter().map(|(_, shown)| *shown).collect();
+        let mut index = PANELS.iter().position(|(word, _)| *word == session.panel).unwrap_or(0);
+        if c.dropdown("Desktop panel", "The one the desktop runs, and a Super tap opens.", &mut index, &labels) {
+            session.panel = PANELS[index].0.to_owned();
+            changed = true;
+        }
+    });
+    kit::note(ui, "Only one runs at a time, and switching takes effect at once. The Control Center is the bar along the bottom: a Super tap opens its app launcher. The Command Center drops down from the top: a Super tap opens it. The settings below are the Control Center's.");
+
+    let cc = &mut cfg.control_center;
 
     kit::caption(ui, "Shape");
     kit::card(ui, "shape", |c| {

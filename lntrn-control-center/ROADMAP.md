@@ -99,6 +99,17 @@ System Settings toggle picks which one the session uses.
 >   auto-starting iwd. lntrn-dbus gained 16-bit/double decoding,
 >   `FLAG_NO_AUTO_START`, and guards against messages cut short.
 
+> - **One panel at a time (2026-10-17, Alva's answers):** System Settings →
+>   Control Center → Panel picks the Control Center or the Command Center
+>   (`[session] panel`, default `control_center`). The session manager
+>   supervises whichever is chosen (the Command Center as `--hide`) and
+>   swaps them live when the file changes (`lntrn-session-manager/src/
+>   panel.rs`). A Super tap, the top-center hot edge and the desktop hub's
+>   Command Center all go through the compositor's `summon_panel`: the
+>   Command Center toggles, the Control Center gets `launcher:toggle` on
+>   the workspace socket and opens or closes its launcher (the hub sends
+>   `summon` on that socket).
+
 ## Done
 
 - [x] Layer surface on the primary monitor, exclusive zone, floating plate

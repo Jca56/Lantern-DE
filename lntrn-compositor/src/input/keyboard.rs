@@ -16,8 +16,7 @@ use crate::state::Lantern;
 use crate::window_management::ArrowDir;
 
 use super::spawn::{
-    fire_audio_osd, fire_brightness_osd, spawn_detached, spawn_detached_args,
-    spawn_detached_args_logged, AudioRepeat,
+    fire_audio_osd, fire_brightness_osd, spawn_detached, spawn_detached_args, AudioRepeat,
 };
 
 /// Max time Super may be held and still count as a "tap" that opens the
@@ -156,13 +155,8 @@ impl Lantern {
                     .unwrap_or(false);
                 if !_modifiers.logo && was_super && data.super_clean_tap && held_briefly {
                     data.super_clean_tap = false;
-                    tracing::info!("Super tap → toggling lntrn-command-center");
-                    spawn_detached_args_logged(
-                        "lntrn-command-center",
-                        &["--toggle"],
-                        &data.socket_name,
-                        "lntrn-command-center",
-                    );
+                    tracing::info!("Super tap → summoning the panel");
+                    data.summon_panel();
                 }
 
                 if event.state() == KeyState::Pressed

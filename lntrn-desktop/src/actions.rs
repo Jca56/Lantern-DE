@@ -102,7 +102,7 @@ pub fn apply_action(app: &mut DesktopState, action: PendingAction, needs_rescan:
                 spawn_reaped(command);
             }
         }
-        PendingAction::CommandCenter => spawn_reaped(command_center_toggle()),
+        PendingAction::CommandCenter => summon_panel(),
         PendingAction::CopyName(idx) => {
             if let Some(item) = app.items.get(idx) {
                 let s = item.name.clone();
@@ -132,6 +132,26 @@ fn spawn_reaped(mut command: std::process::Command) {
         }
         Err(e) => tracing::warn!("[desktop] could not run {:?}: {e}", command.get_program()),
     });
+}
+
+/// What a Super tap does: ask the compositor for the panel the session runs
+/// (the Command Center toggles, the Control Center's launcher opens), on its
+/// workspace socket. With no compositor there to ask, toggle the Command
+/// Center ourselves, as the hub always did.
+fn summon_panel() {
+    use std::io::Write;
+    use std::os::unix::net::UnixStream;
+
+    // SAFETY: getuid() takes nothing and cannot fail.
+    let path = format!("/run/user/{}/lntrn-workspaces.sock", unsafe { libc::getuid() });
+    let asked = UnixStream::connect(&path).and_then(|mut stream| {
+        stream.set_write_timeout(Some(std::time::Duration::from_millis(200)))?;
+        stream.write_all(b"summon\n")
+    });
+    if let Err(e) = asked {
+        tracing::warn!("[desktop] can't ask the compositor for the panel ({e}); toggling the Command Center");
+        spawn_reaped(command_center_toggle());
+    }
 }
 
 /// `lntrn-command-center --toggle`, set up the way the compositor does it for

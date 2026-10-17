@@ -4,6 +4,7 @@ mod children;
 mod env;
 mod exit;
 mod log;
+mod panel;
 mod paths;
 mod procfs;
 mod sockets;
@@ -27,15 +28,16 @@ extern "C" fn handle_signal(_: i32) {
 /// foreground, so the process started here is the daemon itself: that is what
 /// gets restarted if it dies and stopped at logout.
 ///
-/// The Control Center (the bar) exits uncleanly when the compositor takes
-/// its surface away with its monitor, so it is started again too; its own
-/// restarts (a new primary monitor, Quick Kill) exec in place, keeping its
-/// pid.
+/// The panel, the Control Center or the Command Center, starts after them,
+/// whichever `[session] panel` chooses (`panel.rs`), and the other takes its
+/// place when that changes. The Control Center (the bar) exits uncleanly
+/// when the compositor takes its surface away with its monitor, so it is
+/// started again too; its own restarts (a new primary monitor, Quick Kill)
+/// exec in place, keeping its pid.
 const DAEMONS: &[(&str, &[&str])] = &[
     ("lntrn-desktop", &["--foreground"]),
     ("lntrn-portal", &[]),
     ("lntrn-notifyd", &[]),
-    ("lntrn-control-center", &[]),
 ];
 
 /// How long the compositor gets to open its Wayland socket. It does so first
@@ -154,6 +156,10 @@ fn main() {
         log(&format!("🏮 Starting {name}..."));
         children.start_daemon(name, args);
     }
+    let mut panel = panel::Follow::new(panel::config_path());
+    let (name, args) = panel.panel.daemon();
+    log(&format!("🏮 Starting {name} (the panel)..."));
+    children.start_daemon(name, args);
 
     // Run XDG autostart entries
     autostart::run(&mut children);
@@ -171,10 +177,27 @@ fn main() {
             break;
         }
         children.restart_due(Instant::now());
+        if let Some(chosen) = panel.changed() {
+            switch_panel(&mut children, chosen);
+        }
         std::thread::sleep(Duration::from_millis(250));
     }
 
     shut_down(&mut children);
+}
+
+/// System Settings chose the other panel: stop the one running (and any
+/// copy of it the session didn't start, such as a Command Center a Super tap
+/// started before it was supervised), then start the chosen one.
+fn switch_panel(children: &mut Children, chosen: panel::Panel) {
+    let (old, _) = chosen.other().daemon();
+    let (new, args) = chosen.daemon();
+    log(&format!("🏮 The panel is now {new}: stopping {old}"));
+    children.stop_daemon(old, DAEMON_GRACE);
+    if procfs::terminate_named(old, DAEMON_GRACE) > 0 {
+        log(&format!("🏮 Stopped a {old} the session hadn't started"));
+    }
+    children.start_daemon(new, args);
 }
 
 /// Whether to go on waiting for the compositor to come up: it is still

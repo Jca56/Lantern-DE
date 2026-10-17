@@ -3,7 +3,8 @@
 //! or fullscreen window shows on our monitor (`covered:<output>:<0|1>`),
 //! so the bar docks, every open window (`win:` / `win-gone:`), for the
 //! dock, and each monitor's workspaces (`state:<output>:<active>:<ids>`),
-//! for the tray's number. Out go the dock's commands: activate, minimize
+//! for the tray's number, and a Super tap's `launcher:toggle`, to open or
+//! close the launcher. Out go the dock's commands: activate, minimize
 //! or close a window, the tray's turn to the next workspace,
 //! where its icons are (minimizing flies a window into its app's icon),
 //! and which windows its previews want live thumbnails of. The thread
@@ -69,6 +70,8 @@ pub struct Link {
 
 struct Shared {
     covered: AtomicBool,
+    /// A Super tap asked for the launcher, and it hasn't been seen to.
+    launcher: AtomicBool,
     /// Our monitor's workspaces (any one's, while we don't know ours).
     workspaces: Mutex<Option<Workspaces>>,
     /// Oldest first.
@@ -89,6 +92,7 @@ impl Link {
     pub fn new() -> Link {
         let shared = Shared {
             covered: AtomicBool::new(false),
+            launcher: AtomicBool::new(false),
             workspaces: Mutex::new(None),
             windows: Mutex::new(Vec::new()),
             revision: AtomicU64::new(0),
@@ -131,6 +135,12 @@ impl Link {
     /// Whether a maximized or fullscreen window shows on our monitor.
     pub fn covered(&self) -> bool {
         self.shared.covered.load(Ordering::Acquire)
+    }
+
+    /// Whether a Super tap asked for the launcher since this was last
+    /// asked.
+    pub fn take_launcher(&self) -> bool {
+        self.shared.launcher.swap(false, Ordering::AcqRel)
     }
 
     /// Our monitor's workspaces, once the compositor has said.
@@ -203,6 +213,11 @@ impl Shared {
         let mut outputs: HashMap<String, bool> = HashMap::new();
         for line in BufReader::new(stream).lines() {
             let Ok(line) = line else { break };
+            if line.trim() == "launcher:toggle" {
+                self.launcher.store(true, Ordering::Release);
+                waker.wake();
+                continue;
+            }
             if let Some((name, on)) = parse_covered(&line) {
                 outputs.insert(name.to_owned(), on);
                 let now = ours(&outputs, output);

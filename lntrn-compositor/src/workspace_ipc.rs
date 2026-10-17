@@ -11,12 +11,17 @@
 //!                                 # flags any of m(inimized) a(ctive)
 //!                                 # x (maximized) f(ullscreen), or `-`
 //!   `win-gone:<id>`               # a window closed
+//!   `launcher:toggle`             # a Super tap (or the hot edge, or
+//!                                 # `summon`) with the Control Center as
+//!                                 # the panel: open or close its launcher
 //!
 //!   # Bar → Compositor:
 //!   `switch:<output>:<target>`    # switch active WS
 //!   `move:<output>:<target>`      # move focused window to WS (stay on current)
 //!   `cycle:<output>:<direction>`  # direction = -1 or 1, cycles populated WSes
 //!   `activate:<id>`               # show and focus a window, wherever it is
+//!   `summon`                      # what a Super tap does: the panel the
+//!                                 # session runs (`[session] panel`)
 //!   `minimize:<id>` / `close:<id>`
 //!   `icons:<namespace>\t<app_id> <x> <y> <w> <h>\t…`  # where each app's
 //!                                 # icon is on the layer surface called
@@ -75,6 +80,8 @@ pub enum IpcCommand {
     Close(u64),
     Icons { namespace: String, icons: Vec<(String, Rectangle<i32, Logical>)> },
     Thumbs { namespace: String, slots: Vec<DockThumb> },
+    /// What a Super tap does (lntrn-desktop's hub asks for it).
+    Summon,
 }
 
 /// A window's live thumbnail over a dock's surface, in its logical pixels.
@@ -280,6 +287,9 @@ impl WorkspaceIpc {
 }
 
 fn parse_command(msg: &str) -> Option<IpcCommand> {
+    if msg.trim() == "summon" {
+        return Some(IpcCommand::Summon);
+    }
     if let Some(cmd) = parse_window_command(msg) {
         return Some(cmd);
     }
@@ -432,5 +442,6 @@ mod tests {
         assert_eq!((slots[1].id, slots[1].close), (8, None));
         // The old commands still read.
         assert!(matches!(parse_command("switch:DP-1:3"), Some(IpcCommand::Switch { target: 3, .. })));
+        assert!(matches!(parse_command("summon"), Some(IpcCommand::Summon)));
     }
 }

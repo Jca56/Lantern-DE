@@ -29,6 +29,9 @@ struct Daemon {
     restart: Option<(Instant, Exit)>,
     /// Its log has been started for this session; later starts add to it.
     log_started: bool,
+    /// Being stopped on purpose (the other panel was chosen): its end is
+    /// not a death, and it is not started again.
+    retiring: bool,
 }
 
 pub struct Children {
@@ -91,8 +94,22 @@ impl Children {
             backoff: Backoff::default(),
             restart: None,
             log_started: false,
+            retiring: false,
         });
         self.spawn_daemon(self.daemons.len() - 1);
+    }
+
+    /// Stop the daemon started as `name` for good: ask it to quit, kill it
+    /// if it hasn't within `grace`, and forget it.
+    pub fn stop_daemon(&mut self, name: &str, grace: Duration) {
+        let mut pids = Vec::new();
+        for daemon in self.daemons.iter_mut().filter(|d| d.name == name) {
+            daemon.retiring = true;
+            daemon.restart = None;
+            pids.extend(daemon.pid);
+        }
+        self.stop(&pids, grace);
+        self.daemons.retain(|d| !(d.name == name && d.retiring));
     }
 
     fn spawn_daemon(&mut self, index: usize) {
@@ -148,6 +165,10 @@ impl Children {
             daemon.pid = None;
             daemon.restart = None;
             if self.stopping {
+                return;
+            }
+            if daemon.retiring {
+                log(&format!("🏮 Stopped {} (pid {pid})", daemon.name));
                 return;
             }
             // Said plainly, with no verdict yet: at logout the daemons lose
@@ -289,6 +310,7 @@ mod tests {
             backoff: Backoff::default(),
             restart: None,
             log_started: false,
+            retiring: false,
         });
         children
     }
@@ -334,6 +356,15 @@ mod tests {
         children.stopping = true;
         children.ended(4242, SEGV, Instant::now());
         assert_eq!(children.daemons[0].restart, None);
+    }
+
+    #[test]
+    fn a_daemon_stopped_on_purpose_is_not_a_death() {
+        let dir = TestDir::new("retire");
+        let mut children = with_daemon(&dir, 4242);
+        children.daemons[0].retiring = true;
+        children.ended(4242, Exit::Signal(Signal::SIGTERM, false), Instant::now());
+        assert_eq!((children.daemons[0].pid, children.daemons[0].restart), (None, None));
     }
 
     #[test]
@@ -407,6 +438,14 @@ mod tests {
         children.start_daemon("sh", &["-c", "trap '' TERM; while :; do sleep 0.05; done"]);
         assert!(children.daemons.iter().all(|d| d.pid.is_some()));
         std::thread::sleep(Duration::from_millis(200));
+
+        // One of them stopped on its own, for good: the other runs on.
+        children.start_daemon("sleep", &["31"]);
+        children.stop_daemon("sleep", Duration::from_millis(300));
+        assert_eq!(children.daemons.len(), 1, "both sleeps are gone, the sh is not");
+        assert!(children.daemons[0].pid.is_some());
+        children.restart_due(Instant::now() + Duration::from_secs(60));
+        assert_eq!(children.daemons.len(), 1, "nothing came back");
 
         let began = Instant::now();
         children.stop_daemons(Duration::from_millis(300));
