@@ -440,7 +440,7 @@ pub fn render_surface(
     // ── Command Center thumbnail pre-computation ─────────────────────
     // (cc_thumbs.poll + focus_at draining already ran above so we can
     //  re-borrow state immutably here.)
-    let cc_slots_and_windows: Vec<(crate::cc_thumbs::ThumbSlot, Window)> = {
+    let mut cc_slots_and_windows: Vec<(crate::cc_thumbs::ThumbSlot, Window)> = {
         let slots = state.cc_thumbs.slots();
         // Only on the Command Center's own output. The slots are positions
         // on its surface; drawn in every output's pass they put a second
@@ -484,6 +484,10 @@ pub fn render_surface(
                 .collect()
         }
     };
+
+    // A dock's previews take the same path: live windows drawn over its
+    // own surface (`dock_link.rs`).
+    cc_slots_and_windows.extend(state.dock_thumb_slots(&output));
 
     // Decay cursor spin-to-grow scale each frame (must be before udev borrow)
     state.cursor.tick_spin_decay();
@@ -1696,7 +1700,7 @@ pub fn render_surface(
                         glyph_pos,
                         &state.cc_thumbs.x_glyph,
                         Some(switcher_fade),
-                        None,
+                        Some(crate::cc_thumbs::x_glyph_src()),
                         Some(glyph_dst),
                         kind,
                     )
@@ -1945,12 +1949,12 @@ pub fn render_surface(
         // Close button overlays — pushed FIRST so they end up at lower
         // indices in `elements`, which means they sit in FRONT of the
         // thumbnails (Smithay's front-most-first order).
-        let close_buttons: Vec<(crate::cc_thumbs::CloseBtn, bool)> = cc_slots_and_windows
+        let close_buttons: Vec<crate::cc_thumbs::CloseBtn> = cc_slots_and_windows
             .iter()
-            .filter_map(|(s, _)| s.close.map(|c| (c, c.hovered)))
+            .filter_map(|(s, _)| s.close)
             .collect();
         if !close_buttons.is_empty() {
-            let first_size = close_buttons[0].0.rect.size;
+            let first_size = close_buttons[0].rect.size;
             state
                 .cc_thumbs
                 .close_bg_idle
@@ -1959,11 +1963,15 @@ pub fn render_surface(
                 .cc_thumbs
                 .close_bg_hover
                 .resize((first_size.w, first_size.h));
+            state
+                .cc_thumbs
+                .close_bg_red_hover
+                .resize((first_size.w, first_size.h));
             // Glyph displays at ~58% of the bg size so it has a little
             // breathing room around it.
             let glyph_inset = (first_size.w as f32 * 0.21).round() as i32;
 
-            for (close, hovered) in &close_buttons {
+            for close in &close_buttons {
                 let phys =
                     |x: i32, y: i32| -> smithay::utils::Point<i32, smithay::utils::Physical> {
                         (
@@ -1974,10 +1982,12 @@ pub fn render_surface(
                     };
                 let scale = smithay::utils::Scale::from(output_scale);
                 let kind = smithay::backend::renderer::element::Kind::Unspecified;
-                let bg_buf = if *hovered {
-                    &state.cc_thumbs.close_bg_hover
-                } else {
-                    &state.cc_thumbs.close_bg_idle
+                // The Command Center's goes red under the pointer; a dock's is
+                // red already, and brighter there.
+                let bg_buf = match (close.red, close.hovered) {
+                    (true, true) => &state.cc_thumbs.close_bg_red_hover,
+                    (true, false) | (false, true) => &state.cc_thumbs.close_bg_hover,
+                    (false, false) => &state.cc_thumbs.close_bg_idle,
                 };
 
                 // X glyph (front-most) — bitmap so the strokes can be
@@ -1997,7 +2007,7 @@ pub fn render_surface(
                         glyph_phys_pos,
                         &state.cc_thumbs.x_glyph,
                         None,
-                        None,
+                        Some(crate::cc_thumbs::x_glyph_src()),
                         Some(glyph_dst),
                         kind,
                     )

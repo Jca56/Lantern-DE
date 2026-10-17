@@ -68,11 +68,16 @@ pub struct ThumbSlot {
 pub struct CloseBtn {
     pub rect: Rectangle<i32, Logical>,
     pub hovered: bool,
+    /// A dock's: red even at rest, brighter under the pointer (the
+    /// Command Center's is dark until hovered).
+    pub red: bool,
 }
 
 // ── Close-button visual constants ──────────────────────────────────────────
 
 pub const CLOSE_BG_IDLE: [f32; 4] = [0.0, 0.0, 0.0, 0.60];
+/// A red close button under the pointer.
+pub const CLOSE_BG_RED_HOVER: [f32; 4] = [0.96, 0.33, 0.30, 1.0];
 pub const CLOSE_BG_HOVER: [f32; 4] = [0.85, 0.20, 0.20, 0.95];
 /// Source size (logical px) for the pre-rendered X glyph. The actual
 /// display size is set per close button via the dst parameter.
@@ -80,6 +85,13 @@ pub const X_GLYPH_SIZE: usize = 32;
 
 /// Build a `MemoryRenderBuffer` containing a white anti-aliased X glyph
 /// at `size × size` pixels with stroke `thickness`.
+/// The whole of the X glyph, to draw it from: given a size and no source,
+/// a memory buffer's element crops the buffer to that size instead of
+/// scaling it, which showed only the glyph's top left (an arrow, ↘).
+pub fn x_glyph_src() -> Rectangle<f64, Logical> {
+    Rectangle::from_size((X_GLYPH_SIZE as f64, X_GLYPH_SIZE as f64).into())
+}
+
 fn build_x_glyph(size: usize, thickness: f32) -> MemoryRenderBuffer {
     let mut pixels = vec![0u8; size * size * 4];
     let max = size as f32 - 1.0;
@@ -139,6 +151,7 @@ pub struct CcThumbnails {
     /// as needed per close button.
     pub close_bg_idle: SolidColorBuffer,
     pub close_bg_hover: SolidColorBuffer,
+    pub close_bg_red_hover: SolidColorBuffer,
     /// Pre-rendered X glyph (white pixels with anti-aliased diagonal
     /// strokes) drawn on top of the close-button bg. SolidColor
     /// rectangles are axis-aligned, so a real "X" needs a bitmap.
@@ -177,6 +190,7 @@ impl CcThumbnails {
             pending_type: Vec::new(),
             close_bg_idle: SolidColorBuffer::new((1, 1), CLOSE_BG_IDLE),
             close_bg_hover: SolidColorBuffer::new((1, 1), CLOSE_BG_HOVER),
+            close_bg_red_hover: SolidColorBuffer::new((1, 1), CLOSE_BG_RED_HOVER),
             x_glyph: build_x_glyph(X_GLYPH_SIZE, 2.0),
         }
     }
@@ -355,6 +369,7 @@ fn parse_thumb(rest: &str) -> Option<ThumbSlot> {
         Some(CloseBtn {
             rect: Rectangle::new((cx, cy).into(), (cw, ch).into()),
             hovered: hovered != 0,
+            red: false,
         })
     })();
     Some(ThumbSlot {

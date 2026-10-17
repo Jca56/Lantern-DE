@@ -1,36 +1,42 @@
 //! The app as the shell sees it: the bar, filling a layer surface of its
-//! own, and the launcher's menu, in a second one while it is up. It
-//! follows `lantern.toml` as it changes: the look and the shape at once, a
-//! new primary monitor by starting over on it (a surface can't change
-//! monitors). It docks while the compositor says a window fills its
-//! monitor, and floats again when none does; with auto hide it also slides
-//! out of sight and back (`hide`). Every frame works out the surface the
-//! bar wants (its height, the space it keeps from windows) and asks the
-//! compositor only when that changed.
+//! own, and the overlay, a second one over its monitor while something is
+//! up there: the launcher's menu, or the dock's card or menu (`overlay`).
+//! It follows `lantern.toml` as it changes: the look and the shape at
+//! once, a new primary monitor by starting over on it (a surface can't
+//! change monitors). It docks while the compositor says a window fills
+//! its monitor, and floats again when none does; with auto hide it also
+//! slides out of sight and back (`hide`). Every frame works out the
+//! surface the bar wants (its height, the space it keeps from windows) and
+//! asks the compositor only when that changed.
+
+mod actions;
+mod overlay;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use lntrn_app::lntrn_render::{Gpu, Images};
 use lntrn_app::{AppHost, Waker};
-use lntrn_core::{log_info, log_warn};
+use lntrn_apps::Icons;
+use lntrn_core::log_info;
 use lntrn_math::{Rect, Vec2};
-use lntrn_props::Value;
-use lntrn_ui::{Action, AreaCx, ContextMenu, Host, HostCx, Item, LayerConfig, NewWindow, Shell, ShellRequest, Ui};
+use lntrn_ui::{Action, AreaCx, Host, HostCx, LayerConfig, Shell, ShellRequest, Ui};
 
 use crate::bar::{self, Look};
 use crate::clock;
-use crate::dock;
+use crate::compositor::Link;
+use crate::dock::{self, Dock, Press};
 use crate::hide::{self, Reveal};
-use crate::launcher::{self, Launcher, Outcome, Place};
+use crate::launcher::{self, Launcher};
 use crate::morph::{Glide, Morph};
 use crate::settings::{self, Settings};
 
 pub const APP_ID: &str = "lntrn-control-center";
-
-/// The app menu's rows, as actions.
-const OPEN: &str = "launcher.open";
-const FAVORITE: &str = "launcher.favorite";
+/// Pixels an icon is rendered at: sharp at the launcher's list and the
+/// dock on a dense screen.
+const ICON_PX: u32 = 96;
+/// Between the dock and the launcher's button or the clock, logical.
+const DOCK_CLEAR: f64 = 16.0;
 
 /// Set when the loop ends only to start over: on another monitor, or
 /// Quick Kill's fresh start.
@@ -52,8 +58,8 @@ pub fn taken_away() -> bool {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Editor {
     Bar,
-    /// The launcher's menu, in a window of its own.
-    Launcher,
+    /// The overlay, in a window of its own.
+    Overlay,
 }
 
 const EDITORS: [Editor; 1] = [Editor::Bar];
@@ -66,8 +72,9 @@ pub struct App {
     output: Option<String>,
     /// Raised by the watcher thread when `lantern.toml` changes.
     changed: Arc<AtomicBool>,
-    /// Kept by the dock thread: whether a window fills our monitor.
-    covered: Arc<AtomicBool>,
+    /// The line to the compositor: whether to dock, the open windows, and
+    /// the dock's commands.
+    link: Link,
     /// Whether the bar is docked, or on its way there.
     docked: bool,
     morph: Morph,
@@ -78,7 +85,14 @@ pub struct App {
     /// Where the surface last took input, in physical pixels.
     region: Option<Vec<Rect>>,
     launcher: Launcher,
-    /// The loop's: closing the menu wakes the bar, so its button goes dark.
+    dock: Dock,
+    /// Every app's picture, the launcher's and the dock's alike.
+    icons: Icons,
+    overlay: overlay::Overlay,
+    /// The dock's icons as the compositor was last told them, with the
+    /// connection it was told on (a new one forgets them).
+    icons_sent: Option<(u64, String)>,
+    /// The loop's: what one window changes, the other is woken to show.
     waker: Option<Waker>,
 }
 
@@ -87,7 +101,8 @@ impl App {
         let look = Look::of(&settings.desktop);
         // As `main` makes the surface.
         let sent = bar::layer(settings.shape, false, output.as_deref());
-        Self { settings, look, output, changed: Arc::new(AtomicBool::new(false)), covered: Arc::new(AtomicBool::new(false)), docked: false, morph: Morph::at(false), reveal: Reveal::new(), sent, region: None, launcher: Launcher::new(), waker: None }
+        let dock = Dock::new(lntrn_apps::installed());
+        Self { settings, look, output, changed: Arc::new(AtomicBool::new(false)), link: Link::new(), docked: false, morph: Morph::at(false), reveal: Reveal::new(), sent, region: None, launcher: Launcher::new(), dock, icons: Icons::new(ICON_PX), overlay: overlay::Overlay::default(), icons_sent: None, waker: None }
     }
 
     /// Head for docked or floating when the compositor's word changed. The
@@ -95,8 +110,8 @@ impl App {
     /// windows fill or give way while the plate glides to meet them:
     /// docking as long as the window's own maximize glide, floating again
     /// quickly, at once under Reduce Motion.
-    fn dock(&mut self, now: f64, reduce_motion: bool) {
-        let docked = self.covered.load(Ordering::Acquire);
+    fn follow_cover(&mut self, now: f64, reduce_motion: bool) {
+        let docked = self.link.covered();
         if docked == self.docked {
             return;
         }
@@ -118,14 +133,15 @@ impl App {
     }
 
     /// The bar's own surface: the plate, the launcher's button at its
-    /// left, the clock at its right; out of sight, nothing but the strip
-    /// along the bottom edge that brings it back.
+    /// left, the clock at its right, the dock between; out of sight,
+    /// nothing but the strip along the bottom edge that brings it back.
     fn bar(&mut self, ui: &mut Ui, cx: &mut AreaCx<()>) -> bool {
         let restyled = self.follow(cx);
         let now = ui.now();
         let (m, surface, shape, hide) = (ui.m, ui.clip(), self.settings.shape, self.settings.hide);
-        self.dock(now, ui.state.reduce_motion);
-        let want = !hide.auto() || ui.state.pointer_in_window || self.launcher.open;
+        self.follow_cover(now, ui.state.reduce_motion);
+        self.dock.refresh(&self.link);
+        let want = !hide.auto() || ui.state.pointer_in_window || self.overlay.open;
         let grown = hide::grown(surface, m);
         if let Some(wait) = self.reveal.step(now, want, grown, hide.glide(ui.state.reduce_motion), hide.delay) {
             ui.state.request_redraw_after(wait);
@@ -139,7 +155,8 @@ impl App {
         // All of it up, how far the plate's top is from the bottom edge;
         // the windows give way to as much of that as shows.
         let travel = surface.max.y - plate.rect.min.y;
-        let zone = hide::zone(shown, travel / bar::per_logical(surface, m, shape), bar::zone(shape, self.docked));
+        let per = bar::per_logical(surface, m, shape);
+        let zone = hide::zone(shown, travel / per, bar::zone(shape, self.docked));
         let plate = plate.lowered(((1.0 - shown) * travel).round());
         self.set_layer(bar::layer_with(shape, self.docked, self.output.as_deref(), self.reveal.full(), zone), cx);
         // Clicks off the plate go to whatever is under it; with auto hide,
@@ -160,64 +177,91 @@ impl App {
             self.region = Some(region);
         }
         if shown <= 0.0 {
+            self.dock.away();
             return restyled;
         }
         bar::draw(ui, self.look, plate);
-        let (clicked, _) = launcher::button(ui, plate.rect, self.look.plate, self.launcher.open);
+        let (clicked, button) = launcher::button(ui, plate.rect, self.look.plate, self.launcher.open);
         if clicked && !self.launcher.open {
-            self.launcher.open();
-            cx.request(ShellRequest::OpenWindow(NewWindow::single("Launcher", "Launcher").layer(Launcher::layer(self.output.as_deref()))));
-            // Again, with the button lit.
-            cx.rebuild();
+            self.open_launcher(cx);
         }
-        if let Some(now) = clock::Local::now() {
-            clock::draw(ui, plate.rect, self.settings.clock, &now);
-        }
+        let clock = clock::Local::now().map(|now| clock::draw(ui, plate.rect, self.settings.clock, &now));
         if let Some(soon) = clock::redraw_after(self.settings.clock) {
             ui.state.request_redraw_after(soon);
+        }
+        // The dock, between the button and the clock.
+        let popup = self.dock.popup.clone();
+        let clear = m.px(DOCK_CLEAR);
+        let right = clock.map_or(plate.rect.max.x, |c| c.min.x) - clear;
+        let span = Rect::new(Vec2::new(button.max.x + clear, plate.rect.min.y), Vec2::new(right, plate.rect.max.y));
+        if let Some(press) = dock::draw(&mut self.dock, ui, &mut self.icons, span, plate.rect, self.look.plate, now) {
+            self.press(press);
+        }
+        // No card under the launcher's menu.
+        if self.launcher.open {
+            self.dock.close_popup();
+        } else if let Some(wait) = self.dock.step(now) {
+            ui.state.request_redraw_after(wait);
+        }
+        self.tell_icons(per);
+        if self.dock.popup != popup {
+            self.popup_changed(cx);
         }
         restyled
     }
 
-    /// The launcher's menu, above the bar's left end wherever the bar is.
-    fn menu(&mut self, ui: &mut Ui, cx: &mut AreaCx<()>) {
-        let shape = self.settings.shape;
-        let place = if self.docked { Place { left: 8.0, clear: f64::from(shape.height) } } else { Place { left: f64::from(shape.sides.max(8)), clear: f64::from(shape.height + shape.below) } };
-        let close = match launcher::menu(&mut self.launcher, ui, place, self.look) {
-            Outcome::Stay => false,
-            Outcome::Close => true,
-            Outcome::Launch(command) => {
-                launch(&command);
-                true
+    /// What a press on the dock asks for.
+    fn press(&mut self, press: Press) {
+        match press {
+            Press::Launch(command) => actions::launch(&command),
+            Press::Activate(id) => {
+                self.link.send(&format!("activate:{id}"));
+                self.dock.close_popup();
             }
-            Outcome::Menu(index) => {
-                if let Some(app) = self.launcher.app(index) {
-                    let menu = app_menu(app, self.launcher.is_favorite(&app.id), ui.state.pointer);
-                    cx.request(ShellRequest::ContextMenu(Box::new(menu)));
-                }
-                false
-            }
-            Outcome::Power(action) => {
-                action.run();
-                true
-            }
-            Outcome::QuickKill => {
-                log_info!("{APP_ID}: Quick Kill: starting over");
-                RESTART.store(true, Ordering::Release);
-                cx.request(ShellRequest::Quit);
-                false
-            }
-        };
-        if close {
-            self.close_launcher();
-            cx.request(ShellRequest::CloseWindow);
+            Press::Minimize(id) => self.link.send(&format!("minimize:{id}")),
+            Press::Card(key) => self.dock.open_card(&key),
+            Press::Menu(key) => self.dock.open_menu(&key),
         }
     }
 
-    /// The menu is going: the bar, which isn't drawing, is woken to put
-    /// its button out.
-    fn close_launcher(&mut self) {
-        self.launcher.close();
+    /// Tell the compositor where the dock's icons are, when that changed
+    /// or it hasn't been told on this connection.
+    fn tell_icons(&mut self, per: f64) {
+        let line = self.dock.icons_line(bar::NAMESPACE, per);
+        let told = (self.link.connection(), line);
+        if self.icons_sent.as_ref() != Some(&told) {
+            self.link.send(&told.1);
+            self.icons_sent = Some(told);
+        }
+    }
+
+    /// The dock's card or menu came or went: the overlay opens for it (or
+    /// closes itself, woken), and the bar shows the icon lit or not.
+    fn popup_changed(&mut self, cx: &mut AreaCx<()>) {
+        if self.dock.popup.is_some() {
+            self.open_overlay(cx);
+        }
+        self.wake();
+    }
+
+    fn open_launcher(&mut self, cx: &mut AreaCx<()>) {
+        let apps = lntrn_apps::installed();
+        self.dock.set_apps(apps.clone());
+        self.dock.close_popup();
+        self.launcher.open(apps);
+        self.open_overlay(cx);
+        // Again, with the button lit.
+        cx.rebuild();
+    }
+
+    /// The line to the compositor, for the tests to talk on.
+    #[cfg(test)]
+    pub fn link(&self) -> &Link {
+        &self.link
+    }
+
+    /// Wake the loop, so every window draws what changed.
+    fn wake(&self) {
         if let Some(waker) = &self.waker {
             waker.wake();
         }
@@ -261,7 +305,7 @@ impl Host for App {
     fn editor_label(&self, editor: Editor) -> &str {
         match editor {
             Editor::Bar => "Bar",
-            Editor::Launcher => "Launcher",
+            Editor::Overlay => "Overlay",
         }
     }
 
@@ -272,7 +316,7 @@ impl Host for App {
     fn editor_from_id(&self, id: &str) -> Option<Editor> {
         match id {
             "Bar" => Some(Editor::Bar),
-            "Launcher" => Some(Editor::Launcher),
+            "Overlay" => Some(Editor::Overlay),
             _ => None,
         }
     }
@@ -292,71 +336,45 @@ impl Host for App {
     fn draw_body(&mut self, editor: Editor, ui: &mut Ui, cx: &mut AreaCx<()>) -> bool {
         match editor {
             Editor::Bar => self.bar(ui, cx),
-            Editor::Launcher => {
-                self.menu(ui, cx);
+            Editor::Overlay => {
+                self.overlay_frame(ui, cx);
                 false
             }
         }
     }
 
-    /// A row of an app's menu.
+    /// A row of a menu: the launcher's or the dock's.
     fn run(&mut self, action: &Action, cx: &mut HostCx) {
-        match (action.id.as_str(), action.arg("app"), action.arg("command")) {
-            (OPEN, _, Some(Value::Str(command))) => {
-                launch(command);
-                cx.request(ShellRequest::CloseWindow);
-            }
-            (FAVORITE, Some(Value::Str(id)), _) => {
-                self.launcher.toggle_favorite(id);
-                cx.rebuild();
-            }
-            _ => {}
-        }
+        self.act(action, cx);
     }
 
-    /// The menu's window going (the compositor took it away, say) leaves
-    /// the launcher closed. The bar's going is the compositor taking its
-    /// surface away (its monitor went): it quits, as any main window's
-    /// does, and `main` says why as it exits.
+    /// The overlay's window going (we closed it, or the compositor took it
+    /// away) leaves nothing up in it. The bar's going is the compositor
+    /// taking its surface away (its monitor went): it quits, as any main
+    /// window's does, and `main` says why as it exits.
     fn close_requested(&mut self, main: bool, _cx: &mut HostCx) -> bool {
         if main {
             TAKEN.store(true, Ordering::Release);
         } else {
-            self.close_launcher();
+            self.overlay_closed();
         }
         true
     }
-}
-
-/// Start an app with its desktop entry's `command`.
-fn launch(command: &str) {
-    match lntrn_apps::launch::run(command) {
-        Ok(()) => log_info!("launcher: started {command}"),
-        Err(e) => log_warn!("launcher: {command}: {e}"),
-    }
-}
-
-/// What can be done with `app`: the menu a right-click on it opens at
-/// `at`, under its name.
-fn app_menu(app: &lntrn_apps::App, favorite: bool, at: Vec2) -> ContextMenu {
-    let star = if favorite { "Remove from Favorites" } else { "Add to Favorites" };
-    ContextMenu::new(&app.name, at).tab(
-        "App",
-        vec![Item::action("Open", Action::new(OPEN).with("command", Value::Str(app.command.clone()))), Item::action(star, Action::new(FAVORITE).with("app", Value::Str(app.id.clone())))],
-    )
 }
 
 impl AppHost for App {
     fn waker(&mut self, waker: Waker) {
         settings::watch(self.changed.clone(), waker.clone());
         clock::watch(waker.clone());
-        self.launcher.icons.set_waker(waker.clone());
-        self.waker = Some(waker.clone());
-        dock::watch(self.output.clone(), self.covered.clone(), waker);
+        self.icons.set_waker(waker.clone());
+        self.link.start(self.output.clone(), waker.clone());
+        self.waker = Some(waker);
     }
 
-    /// Icons the launcher's thread rendered go up to the GPU.
-    fn after_rebuild(&mut self, gpu: &Gpu, images: &mut Images, _shell: &mut Shell<Self>) -> bool {
-        self.launcher.icons.upload(gpu, images)
+    /// Icons the icon thread rendered go up to the GPU; after the
+    /// overlay's rebuild, a dock menu that went takes the overlay with it.
+    fn after_rebuild(&mut self, gpu: &Gpu, images: &mut Images, shell: &mut Shell<Self>) -> bool {
+        let again = shell.title.is_some() && self.after_overlay(shell);
+        self.icons.upload(gpu, images) || again
     }
 }

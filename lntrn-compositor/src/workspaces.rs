@@ -1008,8 +1008,12 @@ impl Lantern {
         let (commands, new_client) = self.workspace_ipc.poll();
         if new_client {
             self.broadcast_workspace_state();
+            self.broadcast_windows(true);
         }
         for cmd in commands {
+            if self.window_command(&cmd) {
+                continue;
+            }
             match cmd {
                 crate::workspace_ipc::IpcCommand::Switch { output, target } => {
                     self.switch_workspace_on(&output, target);
@@ -1048,6 +1052,8 @@ impl Lantern {
                     let target = self.workspaces.neighbor_id(&output, direction);
                     self.switch_workspace_on(&output, target);
                 }
+                // The window commands, done above.
+                _ => {}
             }
         }
         for (id, fd) in self.workspace_ipc.take_new_clients() {

@@ -96,3 +96,39 @@ fn auto_hide_slides_away_to_the_strip_and_back_with_the_windows_giving_way() {
     assert_eq!(at(&mut h, &mut shell, &mut app, 5.0), None);
 }
 
+/// The dock as the live bar runs it, the compositor's window feed fed by
+/// hand: apps with no desktop entry, so this machine's installed apps
+/// don't matter.
+#[test]
+fn the_dock_lights_running_apps_and_a_click_minimizes_focuses_or_shows_them_all() {
+    let (mut h, mut shell, mut app) = bar_at();
+    app.link().feed("win:1\t-\ttest-app-a\tFirst");
+    app.link().feed("win:2\t-\ttest-app-a\tSecond");
+    app.link().feed("win:3\ta\ttest-app-b\tFocused");
+    h.shell_settle(&mut shell, &mut app, 4);
+    let face = |h: &Harness, key: &str| h.rect_of(in_body(h, |b| b.with("dock").with(key))).expect("a face on the dock");
+    let (a, b) = (face(&h, "test-app-a"), face(&h, "test-app-b"));
+    assert!(a.max.x <= b.min.x, "in the order their first windows opened");
+    let sent = app.link().take_sent();
+    assert!(sent.iter().any(|l| l.starts_with("icons:lntrn-control-center\ttest-app-a ")), "the compositor learns where the icons are: {sent:?}");
+    let click = |h: &mut Harness, shell: &mut Shell<App>, app: &mut App, at: Vec2| {
+        h.move_to(at);
+        h.press();
+        h.shell_frame(shell, app);
+        h.release();
+        h.shell_settle(shell, app, 4);
+    };
+    // The focused app's one window: minimized.
+    click(&mut h, &mut shell, &mut app, b.center());
+    assert!(app.link().take_sent().contains(&"minimize:3".to_owned()));
+    // An app with two windows: its card, in the overlay.
+    click(&mut h, &mut shell, &mut app, a.center());
+    assert_eq!(shell.take_new_windows().len(), 1, "the overlay opens for the card");
+    // Its windows gone, the app leaves the dock.
+    app.link().feed("win-gone:1");
+    app.link().feed("win-gone:2");
+    h.shell_settle(&mut shell, &mut app, 4);
+    assert!(h.rect_of(in_body(&h, |b| b.with("dock").with("test-app-b"))).is_some());
+    assert!((0..8).all(|area| h.rect_of(WidgetId::ROOT.with_u64(area).with("body").with("dock").with("test-app-a")).is_none()));
+}
+

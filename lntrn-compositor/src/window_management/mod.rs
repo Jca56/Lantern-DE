@@ -9,6 +9,7 @@ mod alt_tab;
 mod axis_resize;
 mod close_pending;
 mod covered;
+mod dock_link;
 mod focus;
 mod fullscreen;
 mod half_pose;

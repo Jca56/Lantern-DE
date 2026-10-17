@@ -476,6 +476,7 @@ pub fn init_udev(
             state.layer_surfaces.retain(|ls| ls.alive());
             state.check_exclusive_zone_change();
         }
+        state.flush_window_feed();
         state.popups.cleanup();
         state.tick_audio_repeat();
         let flush_start = if state.debug_counters.enabled {

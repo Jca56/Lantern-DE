@@ -98,7 +98,7 @@ impl Lantern {
             .element_location(&window)
             .unwrap_or_default();
         let source_rect = Rectangle::new(location, window.geometry().size);
-        let target_rect = self.minimize_target_for(&window);
+        let target_rect = self.minimize_icon_target(&window);
 
         // Start the animation; the window stays mapped and renders during
         // the anim. `finish_minimize_animation` does the actual unmap when
@@ -297,7 +297,7 @@ impl Lantern {
         // Start the unminimize animation: emerge from the tray icon rect and
         // grow into the restored position.
         let source_rect = Rectangle::new(location, entry.window.geometry().size);
-        let target_rect = self.minimize_target_for(&entry.window);
+        let target_rect = self.minimize_icon_target(&entry.window);
         self.minimize_anim
             .start_unminimize(&entry.surface, source_rect, target_rect);
         self.schedule_render();

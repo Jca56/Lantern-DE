@@ -5,16 +5,20 @@
 //!
 //! ## Layout
 //!
-//! - `app.rs` — the [`lntrn_ui::Host`]: one editor, the bar, following
-//!   `lantern.toml` as it changes.
+//! - `app/` — the [`lntrn_ui::Host`]: the bar, following `lantern.toml`
+//!   as it changes, and the overlay above it for the launcher's menu and
+//!   the dock's cards and menus.
 //! - `bar.rs` — where the bar sits (its layer surface, its monitor) and
 //!   how it is painted, floating or docked.
 //! - `clock.rs` — the time and date at its right end, and the thread
 //!   that turns the minute.
 //! - `launcher/` — the app launcher: its button at the bar's left end and
 //!   the menu it opens above the bar.
-//! - `dock.rs` — when to dock: the compositor's word on whether a window
-//!   fills our monitor, read on a thread of its own.
+//! - `dock/` — the dock in the middle: pinned and running apps, their
+//!   cards with live thumbnails, their menus.
+//! - `compositor.rs` — the line to the compositor: whether a window fills
+//!   our monitor (to dock), the open windows, and the dock's commands.
+//! - `idlist.rs` — the favorites' and the pins' files.
 //! - `hide.rs` — auto hide: sliding out of sight and back, the windows
 //!   giving way to as much of the bar as shows.
 //! - `morph.rs` — the plate's glides: floating and docked, hidden and
@@ -29,8 +33,10 @@
 mod app;
 mod bar;
 mod clock;
+mod compositor;
 mod dock;
 mod hide;
+mod idlist;
 mod instance;
 mod launcher;
 mod morph;

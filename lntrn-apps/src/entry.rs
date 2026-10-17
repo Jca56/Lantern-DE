@@ -31,6 +31,9 @@ pub struct App {
     pub command: String,
     /// An icon theme's name for its icon, or a picture's path.
     pub icon: String,
+    /// `StartupWMClass`: what its windows call themselves (their Wayland
+    /// app_id or X11 class) when that isn't its id; may be empty.
+    pub wm_class: String,
 }
 
 /// Every app a launcher would list, by name.
@@ -123,6 +126,7 @@ fn parse(text: &str, desktops: &[String]) -> Option<App> {
             "Exec" => exec = Some(unescape(value)),
             "TryExec" => try_exec = Some(unescape(value)),
             "Icon" => app.icon = unescape(value),
+            "StartupWMClass" => app.wm_class = unescape(value),
             "Terminal" => terminal = value == "true",
             _ => {}
         }
@@ -213,7 +217,8 @@ mod tests {
 
     #[test]
     fn a_desktop_file_says_what_a_launcher_needs() {
-        let app = here("[Desktop Entry]\nType=Application\nName=Web Browser\nName[de]=Internet\nGenericName=Browser\nComment=Browse the web\nKeywords=internet;www;\nCategories=Network;WebBrowser;\n# Exec=nope\nExec=firefox %u\nIcon=firefox\n\n[Desktop Action new-window]\nName=New Window\nExec=firefox --new-window\n").unwrap();
+        let app = here("[Desktop Entry]\nType=Application\nName=Web Browser\nName[de]=Internet\nGenericName=Browser\nComment=Browse the web\nKeywords=internet;www;\nCategories=Network;WebBrowser;\n# Exec=nope\nExec=firefox %u\nIcon=firefox\nStartupWMClass=Firefox\n\n[Desktop Action new-window]\nName=New Window\nExec=firefox --new-window\n").unwrap();
+        assert_eq!(app.wm_class, "Firefox");
         assert_eq!((app.name.as_str(), app.generic.as_str(), app.comment.as_str(), app.command.as_str(), app.icon.as_str()), ("Web Browser", "Browser", "Browse the web", "firefox", "firefox"));
         assert_eq!((app.keywords, app.categories), (vec!["internet".to_owned(), "www".to_owned()], vec!["Network".to_owned(), "WebBrowser".to_owned()]));
     }

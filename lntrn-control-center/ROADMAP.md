@@ -52,6 +52,30 @@ System Settings toggle picks which one the session uses.
 >   surface away (monitor gone) exits 75, so the session starts it again;
 >   its own restarts (new primary, Quick Kill) exec in place, same pid.
 
+> - **Dock (2026-10-16, Alva's answers):** middle of the bar; shows
+>   **every** window (all monitors, all workspaces; activating one switches
+>   to its workspace); **one icon per app** (a line under it while running,
+>   longer + accent when focused, a dot per extra window); click = start /
+>   focus / **minimize when already focused** / card when several windows;
+>   **pins stay in place** (drag to reorder), unpinned running apps follow
+>   in open order, no divider; **hover 0.4 s** shows a card above the icon
+>   (app name, per-window title + X + live thumbnail; click focuses);
+>   right-click: New Window (also middle-click), Pin/Unpin, Favorites,
+>   Close window(s); the launcher's menu can pin too. Pins **start empty**,
+>   `~/.lantern/config/control-center/dock.toml`.
+> - **Dock plumbing:** the compositor's workspace socket carries a window
+>   feed (`win:<id>\t<flags>\t<app_id>\t<title>`, `win-gone:<id>`, ids
+>   from its foreign-toplevel list) and takes `activate:`/`minimize:`/
+>   `close:<id>`, `icons:<ns>\t…` (minimize flies into the app's icon) and
+>   `thumbs:<ns>\t…` (live thumbnails over a layer surface, drawn by the
+>   Command Center's thumbnail path): `lntrn-compositor/src/
+>   window_management/dock_link.rs`. Windows find their app by desktop id,
+>   StartupWMClass (`lntrn-apps` `wm_class`), reverse-domain tail, icon,
+>   program. The card and menu live in the **overlay** (`app/overlay.rs`),
+>   one full-monitor surface shared with the launcher: a card takes the
+>   pointer over itself alone (input region from its first frame), a menu
+>   or the launcher take every click and the keyboard.
+
 ## Done
 
 - [x] Layer surface on the primary monitor, exclusive zone, floating plate
@@ -78,6 +102,8 @@ System Settings toggle picks which one the session uses.
       `ContextMenu`): Open, Add to / Remove from Favorites
 - [x] Quick Kill at the right of the power row: execs the newest build
 - [x] `clock_ampm` (Show AM/PM) in `[control_center]` and on the page
+- [x] Dock: pins + every open window, cards with live thumbnails, menus,
+      drag to reorder, minimize into the icon (see above)
 - [x] Search field keeps the keyboard after a group is clicked, and has a
       real ring (the bar's theme has `border_width` 0; LUI2 now draws no
       zero-width strokes at all)
@@ -87,8 +113,6 @@ System Settings toggle picks which one the session uses.
 Planned order (Alva, 2026-10-16): clock → app launcher (far left) → pins +
 open windows dock (middle).
 
-- [ ] Pins + open windows dock (middle): window feed per monitor/workspace
-      from the compositor (foreign-toplevel lacks both), app icons
 - [ ] System tray / quick toggles (audio, network, bluetooth, battery)
 
 ## Known gaps

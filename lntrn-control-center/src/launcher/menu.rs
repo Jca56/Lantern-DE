@@ -6,6 +6,7 @@
 //! and its own scroll, to keep that selection in view. A right-click on
 //! an app asks the app for its menu, which the shell draws over the panel.
 
+use lntrn_apps::Icons;
 use lntrn_math::{Rect, Vec2};
 use lntrn_text::TextStyle;
 use lntrn_ui::{FILL, Key, Metrics, Sense, Ui};
@@ -62,7 +63,7 @@ pub struct Place {
     pub clear: f64,
 }
 
-pub fn draw(l: &mut Launcher, ui: &mut Ui, place: Place, look: Look) -> Outcome {
+pub fn draw(l: &mut Launcher, icons: &mut Icons, ui: &mut Ui, place: Place, look: Look) -> Outcome {
     let m = ui.m;
     let surface = ui.clip();
     let w = m.px(PANEL_W).min(surface.width() - m.px(16.0));
@@ -113,7 +114,7 @@ pub fn draw(l: &mut Launcher, ui: &mut Ui, place: Place, look: Look) -> Outcome 
             let to = l.selected.saturating_add_signed(keys.step);
             (l.selected, l.reveal) = (to.min(shown.len().saturating_sub(1)), true);
         }
-        hit = list(l, ui, rect, &shown);
+        hit = list(l, icons, ui, rect, &shown);
         if keys.enter {
             hit = hit.or(shown.get(l.selected).copied().map(Hit::Launch));
         }
@@ -122,7 +123,7 @@ pub fn draw(l: &mut Launcher, ui: &mut Ui, place: Place, look: Look) -> Outcome 
     let row = child.alloc(Vec2::new(FILL, m.px(POWER_H)));
     // A power question takes the whole row.
     let (kill, row) = if l.confirm.is_none() { power::quick_kill(&mut child, row) } else { (false, row) };
-    let power = power::draw(&mut child, &mut l.icons, row, &mut l.confirm);
+    let power = power::draw(&mut child, icons, row, &mut l.confirm);
     child.finish();
 
     match (hit, power) {
@@ -206,7 +207,7 @@ fn sidebar(l: &mut Launcher, ui: &mut Ui, rect: Rect) {
 /// in view. Returns the app clicked or right-clicked, by index; a
 /// right-click puts the selection on its row too, so the row the menu is
 /// about stays lit under it.
-fn list(l: &mut Launcher, ui: &mut Ui, rect: Rect, shown: &[usize]) -> Option<Hit> {
+fn list(l: &mut Launcher, icons: &mut Icons, ui: &mut Ui, rect: Rect, shown: &[usize]) -> Option<Hit> {
     let m = ui.m;
     let row_h = m.px(ROW_H);
     let (ink, dim, accent) = (ui.theme.text, ui.theme.text_dim, ui.theme.accent);
@@ -260,7 +261,7 @@ fn list(l: &mut Launcher, ui: &mut Ui, rect: Rect, shown: &[usize]) -> Option<Hi
         }
         let app = &l.apps[i];
         let pic = Rect::from_min_size(Vec2::new(row.min.x + m.px(10.0), (row.center().y - icon * 0.5).round()), Vec2::new(icon, icon));
-        match l.icons.get(&app.icon) {
+        match icons.get(&app.icon) {
             Some(handle) => ui.draw.image(pic, handle, 0.0, lntrn_math::Color::WHITE),
             None => {
                 // A stand-in while the picture is on its way, or for an

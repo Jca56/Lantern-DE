@@ -2,6 +2,10 @@
 //!
 //! Allows external taskbars/docks to list open windows and request
 //! actions (activate, maximize, minimize, close, fullscreen).
+//!
+//! It is also the compositor's one list of open windows: each gets an id
+//! of its own here, stable for its life, which the workspace IPC's window
+//! feed (`window_management/dock_link.rs`) names it by.
 
 use smithay::reexports::wayland_server::{
     backend::{ClientId, GlobalId},
@@ -20,6 +24,8 @@ use crate::Lantern;
 /// Compositor-side state for a single foreign-toplevel handle.
 pub struct ForeignToplevelEntry {
     pub surface: WlSurface,
+    /// Never reused while the compositor runs.
+    pub id: u64,
     /// One protocol object per bound manager instance.
     instances: Vec<Weak<ZwlrForeignToplevelHandleV1>>,
     title: String,
@@ -71,6 +77,10 @@ pub struct ForeignToplevelManagerState {
     managers: Vec<ZwlrForeignToplevelManagerV1>,
     /// Active toplevel entries keyed by their wl_surface id.
     toplevels: Vec<ForeignToplevelEntry>,
+    /// The id the next toplevel gets.
+    next_id: u64,
+    /// Something in the list changed since `take_dirty`.
+    dirty: bool,
     dh: DisplayHandle,
 }
 
@@ -81,8 +91,40 @@ impl ForeignToplevelManagerState {
             global,
             managers: Vec::new(),
             toplevels: Vec::new(),
+            next_id: 1,
+            dirty: false,
             dh: dh.clone(),
         }
+    }
+
+    /// Whether the list changed since this was last asked, so the window
+    /// feed has something to send.
+    pub fn take_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.dirty)
+    }
+
+    /// Every open toplevel, oldest first: (id, app_id, title, states).
+    pub fn windows(&self) -> impl Iterator<Item = (u64, &str, &str, &[u32])> {
+        self.toplevels
+            .iter()
+            .filter(|e| !e.closed)
+            .map(|e| (e.id, e.app_id.as_str(), e.title.as_str(), e.states.as_slice()))
+    }
+
+    /// The surface of the toplevel with this id.
+    pub fn surface_of(&self, id: u64) -> Option<WlSurface> {
+        self.toplevels
+            .iter()
+            .find(|e| e.id == id && !e.closed)
+            .map(|e| e.surface.clone())
+    }
+
+    /// The app_id of the toplevel on this surface.
+    pub fn app_id_of(&self, surface: &WlSurface) -> Option<&str> {
+        self.toplevels
+            .iter()
+            .find(|e| e.surface == *surface && !e.closed)
+            .map(|e| e.app_id.as_str())
     }
 
     /// Announce a new toplevel to all bound clients.
@@ -116,8 +158,12 @@ impl ForeignToplevelManagerState {
             instances.push(handle.downgrade());
         }
 
+        let id = self.next_id;
+        self.next_id += 1;
+        self.dirty = true;
         self.toplevels.push(ForeignToplevelEntry {
             surface: surface.clone(),
+            id,
             instances,
             title: title.to_string(),
             app_id: app_id.to_string(),
@@ -130,6 +176,7 @@ impl ForeignToplevelManagerState {
     pub fn toplevel_closed(&mut self, surface: &WlSurface) {
         if let Some(entry) = self.toplevels.iter_mut().find(|e| e.surface == *surface) {
             entry.broadcast_closed();
+            self.dirty = true;
         }
         self.toplevels.retain(|e| e.surface != *surface);
     }
@@ -144,6 +191,7 @@ impl ForeignToplevelManagerState {
             if entry.title != title {
                 entry.title = title.to_string();
                 entry.broadcast_done();
+                self.dirty = true;
             }
         }
     }
@@ -158,6 +206,7 @@ impl ForeignToplevelManagerState {
             if entry.app_id != app_id {
                 entry.app_id = app_id.to_string();
                 entry.broadcast_done();
+                self.dirty = true;
             }
         }
     }
@@ -188,6 +237,7 @@ impl ForeignToplevelManagerState {
         for entry in &mut self.toplevels {
             if !entry.surface.is_alive() {
                 entry.broadcast_closed();
+                self.dirty = true;
             }
         }
         self.toplevels.retain(|e| e.surface.is_alive());
@@ -203,6 +253,7 @@ impl ForeignToplevelManagerState {
             if entry.states != new_states {
                 entry.states = new_states;
                 entry.broadcast_done();
+                self.dirty = true;
             }
         }
     }
@@ -304,11 +355,7 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, WlSurface, Lantern> for Lantern {
         match request {
             zwlr_foreign_toplevel_handle_v1::Request::Activate { seat: _ } => {
                 tracing::info!("Foreign toplevel: activate requested");
-                if let Some(window) = state.find_mapped_window(surface) {
-                    state.focus_window(&window, serial);
-                } else if let Some(window) = state.restore_minimized_by_surface(surface) {
-                    state.focus_window(&window, serial);
-                }
+                state.activate_surface(surface);
             }
             zwlr_foreign_toplevel_handle_v1::Request::SetMaximized => {
                 tracing::info!("Foreign toplevel: set_maximized requested");
@@ -330,18 +377,7 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, WlSurface, Lantern> for Lantern {
             }
             zwlr_foreign_toplevel_handle_v1::Request::Close => {
                 tracing::info!("Foreign toplevel: close requested");
-                // If the window is currently minimized, restore it first
-                // so its client mainloop has frame callbacks/configure
-                // events to wake on. Otherwise GTK/Qt clients tend to
-                // queue the close event without acting until something
-                // else nudges them — manifesting as "X did nothing until
-                // I unminimized the window first".
-                let window = state
-                    .find_mapped_window(surface)
-                    .or_else(|| state.restore_minimized_by_surface(surface));
-                if let Some(window) = window {
-                    crate::window_ext::WindowExt::request_close(&window);
-                }
+                state.close_surface(surface);
             }
             zwlr_foreign_toplevel_handle_v1::Request::SetFullscreen { output: _ } => {
                 // No fullscreen support yet, treat as maximize.

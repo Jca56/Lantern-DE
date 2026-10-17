@@ -2,16 +2,29 @@
 //! keyed and clicked the way a hand would, on apps of our own rather than
 //! this machine's.
 
-use lntrn_apps::{App, Group};
+use std::cell::RefCell;
+
+use lntrn_apps::{App, Group, Icons};
 use lntrn_kit::desktop::Desktop;
 use lntrn_math::Vec2;
 use lntrn_ui::testing::Harness;
-use lntrn_ui::{Key, WidgetId};
+use lntrn_ui::{Key, Ui, WidgetId};
 
-use super::{Favorites, Launcher, Outcome, Place, PowerAction, View, menu};
+use super::{Launcher, Outcome, Place, PowerAction, View, menu};
+use crate::idlist::IdList;
 use crate::bar::{self, Look};
 
 const PLACE: Place = Place { left: 16.0, clear: 72.0 };
+
+thread_local! {
+    /// One icon cache a test, as the app has one.
+    static ICONS: RefCell<Icons> = RefCell::new(Icons::new(96));
+}
+
+/// One frame of the menu, as the app draws it.
+fn frame(l: &mut Launcher, ui: &mut Ui) -> Outcome {
+    ICONS.with_borrow_mut(|icons| menu(l, icons, ui, PLACE, Look::of(&Desktop::default())))
+}
 
 fn app(id: &str, name: &str, generic: &str, categories: &[&str]) -> App {
     App { id: id.into(), name: name.into(), generic: generic.into(), categories: categories.iter().map(|c| (*c).to_owned()).collect(), command: id.into(), ..App::default() }
@@ -32,7 +45,7 @@ fn open() -> (Harness, Launcher) {
 fn settle(h: &mut Harness, l: &mut Launcher) -> Outcome {
     let mut got = Outcome::Stay;
     h.settle(6, |ui| {
-        let out = menu(l, ui, PLACE, Look::of(&Desktop::default()));
+        let out = frame(l, ui);
         if out != Outcome::Stay {
             got = out;
         }
@@ -50,7 +63,7 @@ fn click(h: &mut Harness, l: &mut Launcher, id: WidgetId) -> Outcome {
     let at = h.rect_of(id).expect("laid out").center();
     let mut got = Outcome::Stay;
     h.click_at(at, |ui| {
-        let out = menu(l, ui, PLACE, Look::of(&Desktop::default()));
+        let out = frame(l, ui);
         if out != Outcome::Stay {
             got = out;
         }
@@ -117,7 +130,7 @@ fn a_group_shows_its_apps_and_a_click_off_the_panel_closes() {
     let steam = h.rect_of(panel(|p| p.with_index(1).with("app").with_index(2))).expect("Steam's row");
     let mut got = Outcome::Stay;
     h.click_at(steam.center(), |ui| {
-        let out = menu(&mut l, ui, PLACE, Look::of(&Desktop::default()));
+        let out = frame(&mut l, ui);
         if out != Outcome::Stay {
             got = out;
         }
@@ -148,7 +161,7 @@ fn it_opens_on_the_favorites_in_their_order_with_a_hint_when_there_are_none() {
     assert_eq!((l.view, l.shown()), (View::Favorites, vec![]));
     assert_eq!(settle(&mut h, &mut l), Outcome::Stay);
     // An app uninstalled since is left out; the rest keep the list's order.
-    l.favorites = Favorites::in_memory(&["steam", "gone-app", "lntrn-code"]);
+    l.favorites = IdList::in_memory(&["steam", "gone-app", "lntrn-code"]);
     assert_eq!(l.shown(), vec![2, 0]);
     pick(&mut h, &mut l, "All apps");
     assert_eq!(l.shown(), vec![0, 1, 2]);

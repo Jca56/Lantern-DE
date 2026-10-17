@@ -381,6 +381,7 @@ pub fn init_winit(
                     state.space.refresh();
                     state.popups.cleanup();
                     state.check_exclusive_zone_change();
+                    state.flush_window_feed();
 
                     let _ = state.display_handle.flush_clients();
                     state.record_render(frame_callback_count);

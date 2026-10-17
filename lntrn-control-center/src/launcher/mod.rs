@@ -2,32 +2,27 @@
 //! it opens above the bar the way KDE's Kickoff does: a search field, your
 //! favorites, all apps and their groups down the left, the apps beside
 //! them (right-click one for what can be done with it), and the power
-//! buttons along the bottom. A menu can't open inside the bar, so it is a layer
-//! surface of its own over the whole monitor, see-through but for its
-//! panel, taking the keyboard so typing searches at once; a click
-//! anywhere off the panel closes it, as Escape does and starting an app.
+//! buttons along the bottom. A menu can't open inside the bar, so it is
+//! drawn in the overlay (`app::overlay`), a surface over the whole monitor,
+//! see-through but for its panel, taking the keyboard so typing searches
+//! at once; a click anywhere off the panel closes it, as Escape does and
+//! starting an app.
 
 mod button;
-mod favorites;
 mod find;
 mod menu;
 mod power;
 #[cfg(test)]
 mod tests;
 
-use lntrn_apps::{App, Group, Icons};
-use lntrn_ui::{Anchor, KeyboardMode, LayerConfig};
+use lntrn_apps::{App, Group};
 
 pub use button::button;
-pub use favorites::Favorites;
 pub use menu::{Outcome, Place, draw as menu};
 pub use power::Action as PowerAction;
 
-/// What the compositor knows the menu's surface as.
-const NAMESPACE: &str = "lntrn-control-center-launcher";
-/// Pixels an icon is rendered at: sharp at the list's size on a dense
-/// screen.
-const ICON_PX: u32 = 96;
+use crate::idlist::{self, IdList};
+
 
 /// What the list shows when nothing is being searched for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,7 +51,7 @@ pub struct Launcher {
     /// The groups some app is in, in [`Group::ALL`]'s order.
     groups: Vec<Group>,
     view: View,
-    favorites: Favorites,
+    favorites: IdList,
     query: String,
     /// The row the keyboard is on, among those showing.
     selected: usize,
@@ -66,19 +61,19 @@ pub struct Launcher {
     reveal: bool,
     /// A power action waiting for its confirmation.
     confirm: Option<PowerAction>,
-    pub icons: Icons,
 }
 
 impl Launcher {
     pub fn new() -> Self {
-        Self { open: false, apps: Vec::new(), app_groups: Vec::new(), groups: Vec::new(), view: View::Favorites, favorites: Favorites::default(), query: String::new(), selected: 0, scroll: 0.0, reveal: false, confirm: None, icons: Icons::new(ICON_PX) }
+        Self { open: false, apps: Vec::new(), app_groups: Vec::new(), groups: Vec::new(), view: View::Favorites, favorites: IdList::default(), query: String::new(), selected: 0, scroll: 0.0, reveal: false, confirm: None }
     }
 
-    /// Open the menu: the apps and favorites read afresh (one installed
-    /// or edited in since shows), on the favorites, from the top.
-    pub fn open(&mut self) {
-        self.favorites = Favorites::load();
-        self.load(lntrn_apps::installed());
+    /// Open the menu on `apps` (read afresh, so one installed since
+    /// shows) and the favorites as their file has them now, on the
+    /// favorites, from the top.
+    pub fn open(&mut self, apps: Vec<App>) {
+        self.favorites = IdList::load(idlist::FAVORITES);
+        self.load(apps);
     }
 
     /// Open the menu on `apps`.
@@ -97,20 +92,15 @@ impl Launcher {
         self.confirm = None;
     }
 
-    /// The menu's surface: the whole of the monitor called `output` (the
-    /// compositor's pick when `None`), over the bar and past the zones
-    /// windows are kept out of, taking the keyboard while it is up.
-    pub fn layer(output: Option<&str>) -> LayerConfig {
-        let cfg = LayerConfig::new(NAMESPACE, (0, 0)).anchor(Anchor::ALL).exclusive(-1).keyboard(KeyboardMode::Exclusive);
-        match output {
-            Some(name) => cfg.output(name),
-            None => cfg,
-        }
-    }
-
     /// The app at `index` in the list the menu was opened on.
     pub fn app(&self, index: usize) -> Option<&App> {
         self.apps.get(index)
+    }
+
+    /// Read the favorites afresh from their file, for a change made from
+    /// outside the menu (the dock's) while it isn't open.
+    pub fn reload_favorites(&mut self) {
+        self.favorites = IdList::load(idlist::FAVORITES);
     }
 
     pub fn is_favorite(&self, id: &str) -> bool {

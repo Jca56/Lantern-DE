@@ -8,7 +8,8 @@
 //! hours later). Now the window is only hidden while its answer is
 //! pending: frame callbacks keep flowing, a client that exits is reaped
 //! as usual, and one that stays and draws (a dialog) comes back so the
-//! user can see what it wants.
+//! user can see what it wants. A minimized window closed from a dock
+//! waits here too, never shown: it comes back only to ask something.
 
 use std::time::{Duration, Instant};
 
@@ -32,6 +33,9 @@ pub struct ClosePending {
     pub window: Window,
     /// Where it was, for the way back.
     pub location: Point<i32, Logical>,
+    /// The output a minimized one was on: it is in no workspace, so this
+    /// is where its way back starts.
+    pub output: Option<String>,
     pub sent_at: Instant,
     /// The client drew again after the close was sent.
     pub committed: bool,
@@ -63,10 +67,35 @@ impl Lantern {
             surface,
             window: window.clone(),
             location,
+            output: None,
             sent_at: Instant::now(),
             committed: false,
         });
         self.schedule_close_pending_check(COMMIT_GRACE);
+    }
+
+    /// Ask a minimized window's client to close without showing it first
+    /// (restored to be closed, it popped up only to shrink away). It waits
+    /// with the other pending closes, its frame callbacks at full rate, as
+    /// some clients only act on a close in a frame of theirs. Returns
+    /// whether it was minimized.
+    pub fn close_minimized(&mut self, surface: &WlSurface) -> bool {
+        let Some(at) = self.minimized_windows.iter().position(|m| m.surface == *surface) else {
+            return false;
+        };
+        let entry = self.minimized_windows.remove(at);
+        entry.window.request_close();
+        self.close_pending.retain(|p| p.surface != *surface);
+        self.close_pending.push(ClosePending {
+            surface: entry.surface,
+            window: entry.window,
+            location: entry.location,
+            output: Some(entry.output),
+            sent_at: Instant::now(),
+            committed: false,
+        });
+        self.schedule_close_pending_check(COMMIT_GRACE);
+        true
     }
 
     /// A look at the pending closes after `delay`, on every output: a
@@ -108,8 +137,9 @@ impl Lantern {
                     surface: p.surface.clone(),
                     window: p.window.clone(),
                     location: p.location,
-                    // Hidden, not forgotten: its workspace still has it.
-                    output: self.workspaces.output_of(&p.surface).unwrap_or_default(),
+                    // Hidden, not forgotten: its workspace still has it, or
+                    // (minimized when closed) the output it was on.
+                    output: p.output.clone().or_else(|| self.workspaces.output_of(&p.surface)).unwrap_or_default(),
                 });
                 return false;
             }

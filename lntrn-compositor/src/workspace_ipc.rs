@@ -7,13 +7,29 @@
 //!   `covered:<output>:<0|1>`      # 1 while a maximized or fullscreen window
 //!                                 # shows on the output's active workspace
 //!                                 # (a floating bar docks under one)
+//!   `win:<id>\t<flags>\t<app_id>\t<title>`  # a window opened or changed;
+//!                                 # flags any of m(inimized) a(ctive)
+//!                                 # x (maximized) f(ullscreen), or `-`
+//!   `win-gone:<id>`               # a window closed
 //!
 //!   # Bar → Compositor:
 //!   `switch:<output>:<target>`    # switch active WS
 //!   `move:<output>:<target>`      # move focused window to WS (stay on current)
 //!   `cycle:<output>:<direction>`  # direction = -1 or 1, cycles populated WSes
+//!   `activate:<id>`               # show and focus a window, wherever it is
+//!   `minimize:<id>` / `close:<id>`
+//!   `icons:<namespace>\t<app_id> <x> <y> <w> <h>\t…`  # where each app's
+//!                                 # icon is on the layer surface called
+//!                                 # <namespace> (its logical px): minimizing
+//!                                 # flies a window into its app's icon
+//!   `thumbs:<namespace>\t<id> <x> <y> <w> <h>[ <cx> <cy> <cw> <ch> <0|1>]\t…`
+//!                                 # live thumbnails of windows, drawn over
+//!                                 # that surface, each with a red close
+//!                                 # button where asked (lit while hovered);
+//!                                 # none listed clears them
 //!
-//! Multiple bars may connect simultaneously (multi-monitor).
+//! Multiple bars may connect simultaneously (multi-monitor). Window ids and
+//! the feed: `window_management/dock_link.rs`.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, ErrorKind, Write};
@@ -21,6 +37,8 @@ use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
+
+use smithay::utils::{Logical, Rectangle};
 
 /// Read SO_PEERCRED on a stream socket. Returns the peer's uid, or
 /// `None` if the lookup fails (treat as untrusted).
@@ -52,6 +70,20 @@ pub enum IpcCommand {
     Switch { output: String, target: u32 },
     Move { output: String, target: u32 },
     Cycle { output: String, direction: i32 },
+    Activate(u64),
+    Minimize(u64),
+    Close(u64),
+    Icons { namespace: String, icons: Vec<(String, Rectangle<i32, Logical>)> },
+    Thumbs { namespace: String, slots: Vec<DockThumb> },
+}
+
+/// A window's live thumbnail over a dock's surface, in its logical pixels.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DockThumb {
+    pub id: u64,
+    pub rect: Rectangle<i32, Logical>,
+    /// Its close button, and whether the pointer is on it.
+    pub close: Option<(Rectangle<i32, Logical>, bool)>,
 }
 
 pub struct WorkspaceIpc {
@@ -64,6 +96,12 @@ pub struct WorkspaceIpc {
     /// What clients were last told each output's `covered` is, so only a
     /// change goes out (see `window_management/covered.rs`).
     pub covered: HashMap<String, bool>,
+    /// The `win:` line clients were last told for each window id.
+    pub windows: HashMap<u64, String>,
+    /// Each layer namespace's app icons: app_id → rect on that surface.
+    pub icons: HashMap<String, HashMap<String, Rectangle<i32, Logical>>>,
+    /// Each layer namespace's thumbnail slots.
+    pub thumbs: HashMap<String, Vec<DockThumb>>,
 }
 
 struct ClientConn {
@@ -100,6 +138,9 @@ impl WorkspaceIpc {
             next_client_id: 1,
             new_clients: Vec::new(),
             covered: HashMap::new(),
+            windows: HashMap::new(),
+            icons: HashMap::new(),
+            thumbs: HashMap::new(),
         }
     }
 
@@ -239,6 +280,9 @@ impl WorkspaceIpc {
 }
 
 fn parse_command(msg: &str) -> Option<IpcCommand> {
+    if let Some(cmd) = parse_window_command(msg) {
+        return Some(cmd);
+    }
     let parts: Vec<&str> = msg.splitn(3, ':').collect();
     if parts.len() != 3 {
         return None;
@@ -269,6 +313,75 @@ fn parse_command(msg: &str) -> Option<IpcCommand> {
     }
 }
 
+/// The window commands: by id, or a namespace's icons or thumbnails.
+fn parse_window_command(msg: &str) -> Option<IpcCommand> {
+    let (verb, rest) = msg.split_once(':')?;
+    let id = || rest.trim().parse::<u64>().ok();
+    match verb {
+        "activate" => id().map(IpcCommand::Activate),
+        "minimize" => id().map(IpcCommand::Minimize),
+        "close" => id().map(IpcCommand::Close),
+        "icons" => {
+            let (namespace, records) = records(rest)?;
+            let icons = records.into_iter().map(|(name, rect)| (name.to_string(), rect)).collect();
+            Some(IpcCommand::Icons { namespace, icons })
+        }
+        "thumbs" => {
+            let mut fields = rest.split('\t');
+            let namespace = fields.next().filter(|n| !n.is_empty())?.to_string();
+            let slots = fields.filter_map(dock_thumb).collect();
+            Some(IpcCommand::Thumbs { namespace, slots })
+        }
+        _ => None,
+    }
+}
+
+/// `<namespace>\t<key> <x> <y> <w> <h>\t…`: the namespace, and each
+/// well-formed record's key and rect.
+fn records(rest: &str) -> Option<(String, Vec<(&str, Rectangle<i32, Logical>)>)> {
+    let mut fields = rest.split('\t');
+    let namespace = fields.next().filter(|n| !n.is_empty())?.to_string();
+    let parsed = fields
+        .filter_map(|record| {
+            let mut p = record.split_whitespace();
+            let key = p.next()?;
+            let mut n = || p.next()?.parse::<i32>().ok();
+            let (x, y, w, h) = (n()?, n()?, n()?, n()?);
+            Some((key, Rectangle::new((x, y).into(), (w.max(1), h.max(1)).into())))
+        })
+        .collect();
+    Some((namespace, parsed))
+}
+
+/// `<id> <x> <y> <w> <h>`, then optionally its close button's
+/// `<cx> <cy> <cw> <ch> <0|1>`.
+fn dock_thumb(record: &str) -> Option<DockThumb> {
+    let n: Vec<&str> = record.split_whitespace().collect();
+    let int = |i: usize| n.get(i)?.parse::<i32>().ok();
+    let rect = |at: usize| Some(Rectangle::new((int(at)?, int(at + 1)?).into(), (int(at + 2)?.max(1), int(at + 3)?.max(1)).into()));
+    let close = (n.len() >= 10).then(|| Some((rect(5)?, n[9] == "1"))).flatten();
+    Some(DockThumb { id: n.first()?.parse().ok()?, rect: rect(1)?, close })
+}
+
+/// A window's feed line: `win:<id>\t<flags>\t<app_id>\t<title>`. Tabs and
+/// line breaks in the names would break the line, so they go as spaces.
+pub fn format_window_line(id: u64, states: &[u32], app_id: &str, title: &str) -> String {
+    // zwlr_foreign_toplevel_handle_v1's state numbers.
+    let letters: String = states
+        .iter()
+        .filter_map(|s| match s {
+            0 => Some('x'),
+            1 => Some('m'),
+            2 => Some('a'),
+            3 => Some('f'),
+            _ => None,
+        })
+        .collect();
+    let flags = if letters.is_empty() { "-".to_string() } else { letters };
+    let clean = |s: &str| s.replace(['\t', '\n', '\r'], " ");
+    format!("win:{id}\t{flags}\t{}\t{}", clean(app_id), clean(title))
+}
+
 /// Format a cover line for broadcast: `covered:<output>:<0|1>`.
 pub fn format_covered_line(output: &str, covered: bool) -> String {
     format!("covered:{output}:{}", u8::from(covered))
@@ -289,4 +402,35 @@ pub fn format_state_line(output: &str, active: u32, ids: &[u32]) -> String {
         line.push_str(&id.to_string());
     }
     line
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_lines_say_the_state_and_keep_to_one_line() {
+        assert_eq!(format_window_line(7, &[2, 0], "firefox", "GitHub"), "win:7\tax\tfirefox\tGitHub");
+        assert_eq!(format_window_line(3, &[], "foot", "a\tb\nc"), "win:3\t-\tfoot\ta b c");
+    }
+
+    #[test]
+    fn window_commands_parse_and_bad_records_are_skipped() {
+        assert!(matches!(parse_command("activate:12"), Some(IpcCommand::Activate(12))));
+        assert!(matches!(parse_command("close: 4"), Some(IpcCommand::Close(4))));
+        assert!(parse_command("minimize:x").is_none());
+        let Some(IpcCommand::Icons { namespace, icons }) = parse_command("icons:lntrn-control-center\tfirefox 10 20 56 56\tbroken 1 2\tfoot 70 20 56 56") else {
+            panic!("icons");
+        };
+        assert_eq!(namespace, "lntrn-control-center");
+        assert_eq!(icons.iter().map(|(a, r)| (a.as_str(), r.loc.x)).collect::<Vec<_>>(), vec![("firefox", 10), ("foot", 70)]);
+        let Some(IpcCommand::Thumbs { slots, .. }) = parse_command("thumbs:preview") else { panic!("thumbs") };
+        assert!(slots.is_empty(), "none listed clears them");
+        let Some(IpcCommand::Thumbs { slots, .. }) = parse_command("thumbs:preview\t7 10 20 400 213 374 26 30 30 1\t8 420 20 400 213\tjunk") else { panic!("thumbs") };
+        assert_eq!(slots.len(), 2);
+        assert_eq!(slots[0].close, Some((Rectangle::new((374, 26).into(), (30, 30).into()), true)));
+        assert_eq!((slots[1].id, slots[1].close), (8, None));
+        // The old commands still read.
+        assert!(matches!(parse_command("switch:DP-1:3"), Some(IpcCommand::Switch { target: 3, .. })));
+    }
 }
