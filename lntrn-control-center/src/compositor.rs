@@ -1,8 +1,10 @@
 //! The bar's line to the compositor: its workspace socket, read on a
 //! thread of its own and written from the UI. In come whether a maximized
 //! or fullscreen window shows on our monitor (`covered:<output>:<0|1>`),
-//! so the bar docks, and every open window (`win:` / `win-gone:`), for the
-//! dock. Out go the dock's commands: activate, minimize or close a window,
+//! so the bar docks, every open window (`win:` / `win-gone:`), for the
+//! dock, and each monitor's workspaces (`state:<output>:<active>:<ids>`),
+//! for the tray's number. Out go the dock's commands: activate, minimize
+//! or close a window, the tray's turn to the next workspace,
 //! where its icons are (minimizing flies a window into its app's icon),
 //! and which windows its previews want live thumbnails of. The thread
 //! wakes the loop when something it read changed.
@@ -48,6 +50,17 @@ pub struct Window {
     pub active: bool,
 }
 
+/// A monitor's workspaces, as the compositor tells them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Workspaces {
+    /// The monitor's name (`DP-1`): what commands about it say.
+    pub output: String,
+    /// The one showing.
+    pub active: u32,
+    /// The ones with windows, and the one showing, ascending.
+    pub ids: Vec<u32>,
+}
+
 /// The line to the compositor, shared by the UI and its reading thread.
 #[derive(Clone)]
 pub struct Link {
@@ -56,6 +69,8 @@ pub struct Link {
 
 struct Shared {
     covered: AtomicBool,
+    /// Our monitor's workspaces (any one's, while we don't know ours).
+    workspaces: Mutex<Option<Workspaces>>,
     /// Oldest first.
     windows: Mutex<Vec<Window>>,
     /// Bumped whenever `windows` changes.
@@ -74,6 +89,7 @@ impl Link {
     pub fn new() -> Link {
         let shared = Shared {
             covered: AtomicBool::new(false),
+            workspaces: Mutex::new(None),
             windows: Mutex::new(Vec::new()),
             revision: AtomicU64::new(0),
             writer: Mutex::new(None),
@@ -115,6 +131,11 @@ impl Link {
     /// Whether a maximized or fullscreen window shows on our monitor.
     pub fn covered(&self) -> bool {
         self.shared.covered.load(Ordering::Acquire)
+    }
+
+    /// Our monitor's workspaces, once the compositor has said.
+    pub fn workspaces(&self) -> Option<Workspaces> {
+        self.shared.workspaces.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
     /// Bumped whenever the windows change.
@@ -172,6 +193,7 @@ impl Shared {
     /// The compositor went: no windows, nothing to write to.
     fn hung_up(&self) {
         *self.writer.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        *self.workspaces.lock().unwrap_or_else(PoisonError::into_inner) = None;
         self.windows.lock().unwrap_or_else(PoisonError::into_inner).clear();
         self.revision.fetch_add(1, Ordering::AcqRel);
     }
@@ -185,6 +207,19 @@ impl Shared {
                 outputs.insert(name.to_owned(), on);
                 let now = ours(&outputs, output);
                 if self.covered.swap(now, Ordering::AcqRel) != now {
+                    waker.wake();
+                }
+                continue;
+            }
+            if let Some(ws) = parse_state(&line) {
+                // Ours, or the first heard of while we don't know ours.
+                let mut shown = self.workspaces.lock().unwrap_or_else(PoisonError::into_inner);
+                let take = match output {
+                    Some(name) => ws.output == name,
+                    None => shown.as_ref().is_none_or(|s| s.output == ws.output),
+                };
+                if take && shown.as_ref() != Some(&ws) {
+                    *shown = Some(ws);
                     waker.wake();
                 }
                 continue;
@@ -228,6 +263,15 @@ fn parse_covered(line: &str) -> Option<(&str, bool)> {
     (!name.is_empty()).then_some((name, on))
 }
 
+/// A `state:<output>:<active>:<id>,<id>…` line; `None` for any other.
+fn parse_state(line: &str) -> Option<Workspaces> {
+    let (output, rest) = line.strip_prefix("state:")?.split_once(':')?;
+    let (active, ids) = rest.split_once(':')?;
+    let ids = ids.split(',').filter(|id| !id.is_empty()).map(|id| id.trim().parse().ok()).collect::<Option<Vec<u32>>>()?;
+    let active = active.trim().parse().ok()?;
+    (!output.is_empty()).then(|| Workspaces { output: output.to_owned(), active, ids })
+}
+
 /// A `win:<id>\t<flags>\t<app_id>\t<title>` line; `None` for any other.
 fn parse_window(line: &str) -> Option<Window> {
     let mut fields = line.strip_prefix("win:")?.splitn(4, '\t');
@@ -260,6 +304,16 @@ mod tests {
         assert_eq!(parse_covered("covered:DP-1:yes"), None);
         assert_eq!(parse_covered("covered::1"), None);
         assert_eq!(parse_covered("covered:DP-1"), None);
+    }
+
+    #[test]
+    fn workspace_lines_read_as_workspaces() {
+        assert_eq!(parse_state("state:DP-1:3:1,3,5"), Some(Workspaces { output: "DP-1".into(), active: 3, ids: vec![1, 3, 5] }));
+        assert_eq!(parse_state("state:HDMI-A-1:1:"), Some(Workspaces { output: "HDMI-A-1".into(), active: 1, ids: vec![] }));
+        assert_eq!(parse_state("state:DP-1:x:1"), None);
+        assert_eq!(parse_state("state:DP-1:1:1,y"), None);
+        assert_eq!(parse_state("covered:DP-1:1"), None);
+        assert_eq!(parse_state("state::1:1"), None);
     }
 
     #[test]

@@ -2502,6 +2502,8 @@ dependencies = [
  "lntrn-kit",
  "lntrn-math",
  "lntrn-props",
+ "lntrn-status",
+ "lntrn-svg",
  "lntrn-sys",
  "lntrn-text 0.2.0",
  "lntrn-ui 0.2.0",
@@ -2889,6 +2891,13 @@ dependencies = [
  "lntrn-theme",
  "lntrn-ui 0.1.0",
  "winit",
+]
+
+[[package]]
+name = "lntrn-status"
+version = "0.1.0"
+dependencies = [
+ "lntrn-dbus",
 ]
 
 [[package]]

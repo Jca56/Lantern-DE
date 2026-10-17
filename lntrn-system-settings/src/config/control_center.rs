@@ -2,7 +2,8 @@
 //! the screen, which reads these keys as they change: its shape (it
 //! floats this far from the screen's edges, and docks full width and
 //! square while a window is maximized or full screen on its monitor),
-//! whether it hides out of sight between uses, and what its clock shows.
+//! whether it hides out of sight between uses, what its clock shows, and
+//! which items its system tray shows.
 
 use lntrn_props::props;
 
@@ -48,6 +49,17 @@ props! {
         pub auto_hide_delay_ms: i64 = 500 => { id: 11, hard: 0..=3000 },
         /// How long its slide out of sight, or back, takes.
         pub auto_hide_slide_ms: i64 = 250 => { id: 12, hard: 0..=1000 },
+        /// The tray's items, each shown unless switched off (and only
+        /// where the machine has it: no battery on a desktop).
+        pub tray_battery: bool = true => { id: 13 },
+        /// The percent beside the battery.
+        pub tray_battery_percent: bool = true => { id: 14 },
+        pub tray_wifi: bool = true => { id: 15 },
+        pub tray_bluetooth: bool = true => { id: 16 },
+        pub tray_audio: bool = true => { id: 17 },
+        pub tray_brightness: bool = true => { id: 18 },
+        pub tray_workspace: bool = true => { id: 19 },
+        pub tray_game_mode: bool = true => { id: 20 },
     }
 }
 

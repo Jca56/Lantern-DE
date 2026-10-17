@@ -28,6 +28,12 @@ pub fn has_battery() -> bool {
     })
 }
 
+/// True if the machine has a backlight to set (a laptop's screen).
+pub fn has_backlight() -> bool {
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    *CACHE.get_or_init(|| std::fs::read_dir("/sys/class/backlight").map(|mut d| d.next().is_some()).unwrap_or(false))
+}
+
 /// True if the machine has a lid switch.
 pub fn has_lid() -> bool {
     static CACHE: OnceLock<bool> = OnceLock::new();

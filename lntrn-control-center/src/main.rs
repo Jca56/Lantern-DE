@@ -12,12 +12,17 @@
 //!   how it is painted, floating or docked.
 //! - `clock.rs` — the time and date at its right end, and the thread
 //!   that turns the minute.
+//! - `tray/` — the system tray before the clock: battery, WiFi,
+//!   Bluetooth, sound, brightness, the workspace's number and Game Mode,
+//!   and their popups (`lntrn-status` keeps them current).
+//! - `game_mode.rs` — the line to the compositor's Game Mode.
 //! - `launcher/` — the app launcher: its button at the bar's left end and
 //!   the menu it opens above the bar.
 //! - `dock/` — the dock in the middle: pinned and running apps, their
 //!   cards with live thumbnails, their menus.
 //! - `compositor.rs` — the line to the compositor: whether a window fills
-//!   our monitor (to dock), the open windows, and the dock's commands.
+//!   our monitor (to dock), the open windows, our monitor's workspaces,
+//!   and the dock's and the tray's commands.
 //! - `idlist.rs` — the favorites' and the pins' files.
 //! - `hide.rs` — auto hide: sliding out of sight and back, the windows
 //!   giving way to as much of the bar as shows.
@@ -35,6 +40,7 @@ mod bar;
 mod clock;
 mod compositor;
 mod dock;
+mod game_mode;
 mod hide;
 mod idlist;
 mod instance;
@@ -43,6 +49,7 @@ mod morph;
 mod settings;
 #[cfg(test)]
 mod smoke;
+mod tray;
 
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;

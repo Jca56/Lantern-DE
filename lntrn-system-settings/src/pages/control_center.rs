@@ -1,14 +1,15 @@
 //! The Control Center page: the bar along the bottom of the screen, its
 //! height, corners and gaps, over the bottom of a screen with the bar
 //! drawn on it at its real size (the middle of the screen left out), then
-//! whether it hides between uses, and what its clock shows. The bar reads
-//! `[control_center]` as it changes.
+//! whether it hides between uses, what its clock shows, and which items its
+//! system tray shows. The bar reads `[control_center]` as it changes.
 
 use lntrn_math::{Color, Rect, Vec2};
 use lntrn_ui::Ui;
 
 use crate::config::{CC_DATE_STYLES, CC_GAPS_BELOW, CC_GAPS_SIDES, CC_HEIGHTS, CC_HIDE_DELAYS, CC_RADII, CC_SLIDES, CC_VISIBILITIES, Config};
 use crate::kit::{self, look, pixels};
+use crate::machine;
 
 /// The preview's height, logical: the tallest bar on its biggest gap with
 /// room above, so dragging a slider never moves the sliders under it.
@@ -93,5 +94,25 @@ pub fn draw(cfg: &mut Config, ui: &mut Ui) -> bool {
             changed = true;
         }
     });
+
+    kit::caption(ui, "System Tray");
+    kit::card(ui, "tray", |c| {
+        // A desktop has no battery or backlight to show.
+        if machine::has_battery() {
+            changed |= c.switch("Battery", "Its charge, and a click for the details.", &mut cc.tray_battery);
+            if cc.tray_battery {
+                changed |= c.switch("Battery percent", "The number beside the battery.", &mut cc.tray_battery_percent);
+            }
+        }
+        changed |= c.switch("WiFi", "Networks, and joining one.", &mut cc.tray_wifi);
+        changed |= c.switch("Bluetooth", "Connecting paired devices.", &mut cc.tray_bluetooth);
+        changed |= c.switch("Sound", "The volume and the outputs. The wheel turns it up and down, a middle click mutes.", &mut cc.tray_audio);
+        if machine::has_backlight() {
+            changed |= c.switch("Brightness", "The screen's. The wheel turns it up and down.", &mut cc.tray_brightness);
+        }
+        changed |= c.switch("Workspace number", "A click goes to the next workspace, the wheel goes through them.", &mut cc.tray_workspace);
+        changed |= c.switch("Game Mode", "Native resolution for games, as Super+G toggles it.", &mut cc.tray_game_mode);
+    });
+    kit::note(ui, "Each shows where the machine has it. Hold Alt over one in the bar to read what it says.");
     changed
 }

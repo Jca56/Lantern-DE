@@ -360,6 +360,7 @@ mod tests {
         assert_eq!((key("height"), key("corner_radius"), key("gap_below"), key("gap_sides")), (Some(90), Some(16), Some(8), Some(120)));
         let flag = |k: &str| doc.path(&format!("control_center.{k}")).and_then(Doc::as_bool);
         assert_eq!((flag("clock_24h"), flag("clock_seconds"), flag("clock_date")), (Some(false), Some(false), Some(true)));
+        assert_eq!((flag("tray_wifi"), flag("tray_battery_percent"), flag("tray_game_mode")), (Some(true), Some(true), Some(true)), "the tray's items, all on");
         cfg.control_center.clock_date_style = "sideways".into();
         cfg.save_to(&path).unwrap();
         assert_eq!(read_existing(&path).unwrap().path("control_center.clock_date_style").and_then(Doc::as_str), Some("short"));

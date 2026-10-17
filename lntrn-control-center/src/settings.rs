@@ -1,5 +1,6 @@
 //! What the bar takes from `lantern.toml`: the desktop's look (through
-//! `lntrn-kit`), its own shape, clock and auto hide (`[control_center]`),
+//! `lntrn-kit`), its own shape, clock, auto hide and tray
+//! (`[control_center]`),
 //! the primary monitor
 //! it lives on, and how windows glide (which docking keeps step with). A
 //! thread watches the file and wakes the loop when it changes, so a bar
@@ -20,6 +21,7 @@ use crate::bar::Shape;
 use crate::clock::{ClockOptions, DateStyle};
 use crate::hide::{HideOptions, Visibility};
 use crate::morph::Glide;
+use crate::tray::TrayOptions;
 /// How long a burst of writes to the file is let settle before it is read.
 const SETTLE: Duration = Duration::from_millis(100);
 
@@ -35,6 +37,8 @@ pub struct Settings {
     /// `[control_center]`'s `visibility` and `auto_hide_*` keys: whether
     /// it hides, and how.
     pub hide: HideOptions,
+    /// `[control_center]`'s `tray_*` keys: which of the tray's items show.
+    pub tray: TrayOptions,
     /// The monitor `[[monitors]]` marks `primary`, by its connector name
     /// (`DP-1`), unless it is switched off.
     pub primary: Option<String>,
@@ -62,7 +66,7 @@ impl Settings {
     }
 
     pub fn from_doc(doc: &Doc) -> Settings {
-        Settings { desktop: Desktop::from_doc(doc), shape: shape(doc), clock: clock(doc), hide: hide(doc), primary: primary(doc), dock_glide: dock_glide(doc) }
+        Settings { desktop: Desktop::from_doc(doc), shape: shape(doc), clock: clock(doc), hide: hide(doc), tray: tray(doc), primary: primary(doc), dock_glide: dock_glide(doc) }
     }
 }
 
@@ -92,6 +96,22 @@ fn hide(doc: &Doc) -> HideOptions {
         visibility: key("visibility").and_then(Doc::as_str).map_or(Visibility::Always, Visibility::from_word),
         delay: seconds("auto_hide_delay_ms", d.delay, HideOptions::DELAYS_MS),
         slide: seconds("auto_hide_slide_ms", d.slide, HideOptions::SLIDES_MS),
+    }
+}
+
+/// `[control_center]`'s `tray_*` switches; on unless set off.
+fn tray(doc: &Doc) -> TrayOptions {
+    let d = TrayOptions::default();
+    let on = |k: &str, or: bool| doc.path(&format!("control_center.tray_{k}")).and_then(Doc::as_bool).unwrap_or(or);
+    TrayOptions {
+        battery: on("battery", d.battery),
+        battery_percent: on("battery_percent", d.battery_percent),
+        wifi: on("wifi", d.wifi),
+        bluetooth: on("bluetooth", d.bluetooth),
+        audio: on("audio", d.audio),
+        brightness: on("brightness", d.brightness),
+        workspace: on("workspace", d.workspace),
+        game_mode: on("game_mode", d.game_mode),
     }
 }
 
@@ -193,6 +213,13 @@ mod tests {
         assert_eq!(set, HideOptions { visibility: Visibility::AutoHide, delay: 1.2, slide: 0.4 });
         let odd = parse("[control_center]\nvisibility = \"?\"\nauto_hide_delay_ms = -5\nauto_hide_slide_ms = 99999\n").hide;
         assert_eq!(odd, HideOptions { visibility: Visibility::Always, delay: 0.0, slide: 1.0 });
+    }
+
+    #[test]
+    fn the_tray_shows_what_system_settings_left_on() {
+        assert_eq!(Settings::default().tray, TrayOptions::default());
+        let set = parse("[control_center]\ntray_wifi = false\ntray_battery_percent = false\ntray_game_mode = \"no\"\n").tray;
+        assert_eq!(set, TrayOptions { wifi: false, battery_percent: false, ..TrayOptions::default() }, "a word isn't a switch");
     }
 
     #[test]

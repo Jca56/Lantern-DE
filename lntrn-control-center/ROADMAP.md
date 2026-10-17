@@ -76,6 +76,29 @@ System Settings toggle picks which one the session uses.
 >   pointer over itself alone (input region from its first frame), a menu
 >   or the launcher take every click and the keyboard.
 
+> - **System tray (2026-10-17, Alva's answers):** before the clock, left
+>   to right battery (icon + percent), WiFi, Bluetooth, sound, brightness,
+>   workspace number, Game Mode; each shows only where the machine has it,
+>   and System Settings' System Tray card turns each off (`[control_center]`
+>   `tray_*`). Icons are our own SVGs (`tray/glyphs.rs`) rendered by
+>   lntrn-svg at their exact pixel size. **Own popup per icon** in the
+>   overlay (battery details + charge limit, WiFi switch + networks, BT
+>   switch + paired devices, volume + outputs, brightness); the overlay
+>   takes every click but the bar's plate, so the bar's other items and
+>   wheel work while one is up. Wheel: volume and brightness in the keys'
+>   5% steps (with the OSD), workspaces; middle click mutes. **Core now,
+>   setup next pass:** joining a network iwd doesn't know the password of
+>   and pairing new BT devices stay in the Command Center (they need
+>   agents, and CC holds the desktop's BlueZ agents while both run).
+> - **lntrn-status (2026-10-17):** the shared crate the tray reads (in the
+>   workspace, like lntrn-apps), a thread per subsystem, waking the loop
+>   only on a change: battery from sysfs on kernel uevents, backlight from
+>   sysfs (logind's SetBrightness as a fallback), audio by `wpctl` with
+>   `pactl subscribe` saying when (no polling), WiFi from iwd and Bluetooth
+>   from BlueZ on our own lntrn-dbus, following their signals, never
+>   auto-starting iwd. lntrn-dbus gained 16-bit/double decoding,
+>   `FLAG_NO_AUTO_START`, and guards against messages cut short.
+
 ## Done
 
 - [x] Layer surface on the primary monitor, exclusive zone, floating plate
@@ -107,13 +130,21 @@ System Settings toggle picks which one the session uses.
 - [x] Search field keeps the keyboard after a group is clicked, and has a
       real ring (the bar's theme has `border_width` 0; LUI2 now draws no
       zero-width strokes at all)
+- [x] System tray: battery, WiFi, Bluetooth, sound, brightness,
+      workspace number, Game Mode, their popups, wheel shortcuts, and the
+      System Tray card in System Settings (see above)
 
 ## Next (ideas, unordered)
 
 Planned order (Alva, 2026-10-16): clock → app launcher (far left) → pins +
 open windows dock (middle).
 
-- [ ] System tray / quick toggles (audio, network, bluetooth, battery)
+- [ ] Tray, next pass: WiFi password entry (an iwd agent), Bluetooth
+      pairing (an agent, once CC's can be shared or handed over)
+- [ ] Mini system monitors: CPU (gold), GPU (green), RAM (blue), opening
+      lntrn-system-monitor (Notes.md)
+- [ ] SNI app icons (Steam & co.): the Command Center owns the watcher
+      while both run
 
 ## Known gaps
 

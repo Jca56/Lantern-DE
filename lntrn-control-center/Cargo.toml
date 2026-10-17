@@ -18,5 +18,7 @@ lntrn-props = { path = "../../lantern-ui-2/crates/lntrn-props" }
 lntrn-data = { path = "../../lantern-ui-2/crates/lntrn-data" }
 lntrn-sys = { path = "../../lantern-ui-2/crates/lntrn-sys" }
 lntrn-text = { path = "../../lantern-ui-2/crates/lntrn-text" }
+lntrn-svg = { path = "../../lantern-ui-2/crates/lntrn-svg" }
 lntrn-kit = { path = "../lntrn-kit" }
 lntrn-apps = { path = "../lntrn-apps" }
+lntrn-status = { path = "../lntrn-status" }

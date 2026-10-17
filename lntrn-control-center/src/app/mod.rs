@@ -1,6 +1,7 @@
 //! The app as the shell sees it: the bar, filling a layer surface of its
 //! own, and the overlay, a second one over its monitor while something is
-//! up there: the launcher's menu, or the dock's card or menu (`overlay`).
+//! up there: the launcher's menu, the dock's card or menu, or a tray
+//! item's popup (`overlay`).
 //! It follows `lantern.toml` as it changes: the look and the shape at
 //! once, a new primary monitor by starting over on it (a surface can't
 //! change monitors). It docks while the compositor says a window fills
@@ -30,13 +31,16 @@ use crate::hide::{self, Reveal};
 use crate::launcher::{self, Launcher};
 use crate::morph::{Glide, Morph};
 use crate::settings::{self, Settings};
+use crate::tray::{self, Tray, TrayPress};
 
 pub const APP_ID: &str = "lntrn-control-center";
 /// Pixels an icon is rendered at: sharp at the launcher's list and the
 /// dock on a dense screen.
 const ICON_PX: u32 = 96;
-/// Between the dock and the launcher's button or the clock, logical.
+/// Between the dock and the launcher's button or the tray, logical.
 const DOCK_CLEAR: f64 = 16.0;
+/// Between the tray and the clock, logical.
+const TRAY_CLEAR: f64 = 10.0;
 
 /// Set when the loop ends only to start over: on another monitor, or
 /// Quick Kill's fresh start.
@@ -89,6 +93,8 @@ pub struct App {
     /// Every app's picture, the launcher's and the dock's alike.
     icons: Icons,
     overlay: overlay::Overlay,
+    /// The system tray before the clock, and its popups.
+    tray: Tray,
     /// The dock's icons as the compositor was last told them, with the
     /// connection it was told on (a new one forgets them).
     icons_sent: Option<(u64, String)>,
@@ -102,7 +108,7 @@ impl App {
         // As `main` makes the surface.
         let sent = bar::layer(settings.shape, false, output.as_deref());
         let dock = Dock::new(lntrn_apps::installed());
-        Self { settings, look, output, changed: Arc::new(AtomicBool::new(false)), link: Link::new(), docked: false, morph: Morph::at(false), reveal: Reveal::new(), sent, region: None, launcher: Launcher::new(), dock, icons: Icons::new(ICON_PX), overlay: overlay::Overlay::default(), icons_sent: None, waker: None }
+        Self { settings, look, output, changed: Arc::new(AtomicBool::new(false)), link: Link::new(), docked: false, morph: Morph::at(false), reveal: Reveal::new(), sent, region: None, launcher: Launcher::new(), dock, icons: Icons::new(ICON_PX), overlay: overlay::Overlay::default(), tray: Tray::default(), icons_sent: None, waker: None }
     }
 
     /// Head for docked or floating when the compositor's word changed. The
@@ -133,7 +139,8 @@ impl App {
     }
 
     /// The bar's own surface: the plate, the launcher's button at its
-    /// left, the clock at its right, the dock between; out of sight,
+    /// left, the clock at its right with the tray before it, the dock
+    /// between; out of sight,
     /// nothing but the strip along the bottom edge that brings it back.
     fn bar(&mut self, ui: &mut Ui, cx: &mut AreaCx<()>) -> bool {
         let restyled = self.follow(cx);
@@ -189,16 +196,26 @@ impl App {
         if let Some(soon) = clock::redraw_after(self.settings.clock) {
             ui.state.request_redraw_after(soon);
         }
-        // The dock, between the button and the clock.
+        // The tray, before the clock.
+        let tray_right = clock.map_or(plate.rect.max.x - m.px(TRAY_CLEAR), |c| c.min.x - m.px(TRAY_CLEAR));
+        let tray = tray::draw(&mut self.tray, ui, plate.rect, tray_right, self.look.plate, self.settings.tray, &self.link);
+        let tray_was = self.tray.popup;
+        match tray.press {
+            Some(TrayPress::Toggle(item)) => self.tray.toggle(item),
+            // A press anywhere else on the bar puts the popup away.
+            None if ui.state.pressed && !tray.pressed => self.tray.close(),
+            None => {}
+        }
+        // The dock, between the button and the tray.
         let popup = self.dock.popup.clone();
         let clear = m.px(DOCK_CLEAR);
-        let right = clock.map_or(plate.rect.max.x, |c| c.min.x) - clear;
+        let right = tray.rect.min.x - clear;
         let span = Rect::new(Vec2::new(button.max.x + clear, plate.rect.min.y), Vec2::new(right, plate.rect.max.y));
         if let Some(press) = dock::draw(&mut self.dock, ui, &mut self.icons, span, plate.rect, self.look.plate, now) {
             self.press(press);
         }
-        // No card under the launcher's menu.
-        if self.launcher.open {
+        // No card under the launcher's menu or a tray popup.
+        if self.launcher.open || self.tray.popup.is_some() {
             self.dock.close_popup();
         } else if let Some(wait) = self.dock.step(now) {
             ui.state.request_redraw_after(wait);
@@ -206,6 +223,12 @@ impl App {
         self.tell_icons(per);
         if self.dock.popup != popup {
             self.popup_changed(cx);
+        }
+        if self.tray.popup != tray_was {
+            if self.tray.popup.is_some() {
+                self.open_overlay(cx);
+            }
+            self.wake();
         }
         restyled
     }
@@ -248,6 +271,7 @@ impl App {
         let apps = lntrn_apps::installed();
         self.dock.set_apps(apps.clone());
         self.dock.close_popup();
+        self.tray.close();
         self.launcher.open(apps);
         self.open_overlay(cx);
         // Again, with the button lit.
@@ -289,6 +313,7 @@ impl App {
         if restyled {
             cx.prefs.theme = theme;
         }
+        self.tray.follow(new.tray);
         self.settings = new;
         restyled
     }
@@ -368,6 +393,7 @@ impl AppHost for App {
         clock::watch(waker.clone());
         self.icons.set_waker(waker.clone());
         self.link.start(self.output.clone(), waker.clone());
+        self.tray.start(waker.clone(), self.settings.tray);
         self.waker = Some(waker);
     }
 
@@ -375,6 +401,7 @@ impl AppHost for App {
     /// overlay's rebuild, a dock menu that went takes the overlay with it.
     fn after_rebuild(&mut self, gpu: &Gpu, images: &mut Images, shell: &mut Shell<Self>) -> bool {
         let again = shell.title.is_some() && self.after_overlay(shell);
-        self.icons.upload(gpu, images) || again
+        let glyphs = self.tray.glyphs.upload(gpu, images);
+        self.icons.upload(gpu, images) || glyphs || again
     }
 }

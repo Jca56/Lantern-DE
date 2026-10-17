@@ -1,10 +1,12 @@
 //! The overlay: a layer surface over the bar's whole monitor, open while
-//! something is up above the bar (the launcher's menu, or the dock's card
-//! or menu) and closed as soon as nothing is. What is up decides how it
-//! takes input: the launcher and a menu take the keyboard and every click
-//! (a click off them puts them away); a card takes the pointer over itself
-//! alone, from the overlay's first frame on, so the bar under it never
-//! loses the pointer resting on its icon.
+//! something is up above the bar (the launcher's menu, the dock's card or
+//! menu, a tray item's popup) and closed as soon as nothing is. What is up
+//! decides how it takes input: the launcher and a menu take the keyboard
+//! and every click (a click off them puts them away); a card takes the
+//! pointer over itself alone, from the overlay's first frame on, so the
+//! bar under it never loses the pointer resting on its icon; a tray popup
+//! takes the keyboard (Escape) and every click but the bar's own, so the
+//! bar's other items and its wheel still work while it is up.
 
 use std::sync::atomic::Ordering;
 
@@ -15,6 +17,7 @@ use lntrn_ui::{Anchor, AreaCx, KeyboardMode, LayerConfig, NewWindow, Shell, Shel
 use super::{APP_ID, App, RESTART, actions};
 use crate::dock::{self, CardPress, Entry, Popup, Thumb};
 use crate::launcher::{self, Outcome, Place};
+use crate::tray::{self, Item};
 
 /// What the compositor knows the overlay's surface as.
 pub const NAMESPACE: &str = "lntrn-control-center-overlay";
@@ -66,16 +69,18 @@ impl App {
         self.overlay.closing = false;
         self.launcher.close();
         self.dock.close_popup();
+        self.tray.close();
         self.tell_thumbs(Vec::new(), 1.0);
         // The bar, which may not be drawing, puts its lit icon out.
         self.wake();
     }
 
     /// How the overlay takes the keyboard for what is up: the launcher's
-    /// search and a menu's Escape want it; a card leaves it where it is.
+    /// search, a menu's and a tray popup's Escape want it; a card leaves it
+    /// where it is.
     fn keyboard(&self) -> KeyboardMode {
-        match (&self.dock.popup, self.launcher.open) {
-            (_, true) | (Some(Popup::Menu { .. }), _) => KeyboardMode::Exclusive,
+        match (&self.dock.popup, self.launcher.open, self.tray.popup) {
+            (_, true, _) | (Some(Popup::Menu { .. }), _, _) | (_, _, Some(_)) => KeyboardMode::Exclusive,
             _ => KeyboardMode::None,
         }
     }
@@ -102,6 +107,9 @@ impl App {
             self.tell_thumbs(Vec::new(), 1.0);
             self.launcher_frame(ui, cx);
             None
+        } else if let Some(item) = self.tray.popup {
+            self.tell_thumbs(Vec::new(), 1.0);
+            Some(self.tray_frame(ui, item))
         } else {
             match self.dock.popup.clone() {
                 Some(Popup::Card(key)) => self.card_frame(ui, &key),
@@ -118,7 +126,7 @@ impl App {
         if self.dock.popup != popup {
             self.wake();
         }
-        if !self.launcher.open && self.dock.popup.is_none() {
+        if !self.launcher.open && self.dock.popup.is_none() && self.tray.popup.is_none() {
             self.overlay.closing = true;
             self.tell_thumbs(Vec::new(), 1.0);
             cx.request(ShellRequest::CloseWindow);
@@ -180,6 +188,36 @@ impl App {
             self.launcher.close();
             self.wake();
         }
+    }
+
+    /// A tray item's popup above its face. Returns where the overlay takes
+    /// the pointer: everywhere but the bar's plate, which stays the bar's.
+    fn tray_frame(&mut self, ui: &mut Ui, item: Item) -> Vec<Rect> {
+        let (m, surface) = (ui.m, ui.clip());
+        let x = self.tray.face(item).map_or(surface.max.x - m.px(240.0), |face| face.center().x);
+        let frame = tray::popup::Frame { x, bottom: surface.max.y - m.px(self.place().clear + ABOVE_BAR), look: self.look };
+        if tray::popup::draw(&mut self.tray, ui, item, &frame).is_none() {
+            self.tray.close();
+            self.wake();
+        }
+        self.off_plate(surface, m.scale)
+    }
+
+    /// The overlay's `surface` less the bar's plate as it sits now (`per`
+    /// pixels a logical one): up to four rects round it.
+    fn off_plate(&self, surface: Rect, per: f64) -> Vec<Rect> {
+        let shape = self.settings.shape;
+        let px = |v: u32| (f64::from(v) * per).round();
+        let (left, right, top, bottom) = if self.docked {
+            (surface.min.x, surface.max.x, surface.max.y - px(shape.height), surface.max.y)
+        } else {
+            (surface.min.x + px(shape.sides), surface.max.x - px(shape.sides), surface.max.y - px(shape.height + shape.below), surface.max.y - px(shape.below))
+        };
+        let rect = |x0: f64, y0: f64, x1: f64, y1: f64| Rect::new(Vec2::new(x0, y0), Vec2::new(x1, y1));
+        [rect(surface.min.x, surface.min.y, surface.max.x, top), rect(surface.min.x, top, left, surface.max.y), rect(right, top, surface.max.x, surface.max.y), rect(left, bottom, right, surface.max.y)]
+            .into_iter()
+            .filter(|r| r.width() > 0.0 && r.height() > 0.0)
+            .collect()
     }
 
     /// An app's card above its icon. Returns where the overlay takes the
