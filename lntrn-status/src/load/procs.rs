@@ -1,6 +1,7 @@
 //! The processes: every numbered folder in `/proc`, read each look for
 //! what changes (processor time, memory) and once for what doesn't (its
-//! name, its command line, whose it is).
+//! name, its command line, whose it is); and the programs working
+//! hardest, each program's processes counted together.
 
 use std::collections::HashMap;
 use std::fs;
@@ -8,7 +9,7 @@ use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::sync::Arc;
 
-use crate::ffi;
+use crate::sys;
 
 /// The kernel's mark, in a process's flags, for a thread of its own.
 const PF_KTHREAD: u64 = 0x0020_0000;
@@ -190,7 +191,7 @@ impl ProcSampler {
     /// process's own are a share of.
     pub fn sample(&mut self, machine_ticks: u64) -> Vec<Proc> {
         let Ok(dir) = fs::read_dir("/proc") else { return Vec::new() };
-        let page = ffi::page_size();
+        let page = sys::page_size();
         let mut text = std::mem::take(&mut self.text);
         let mut procs = Vec::with_capacity(self.known.len() + 16);
         for entry in dir.flatten() {
@@ -224,6 +225,26 @@ impl ProcSampler {
         }
         procs
     }
+}
+
+/// The `n` programs using the most processor time and the `n` holding
+/// the most memory, each program's processes (a browser's dozens)
+/// counted as one, the kernel's own threads left out.
+pub fn top(procs: &[Proc], n: usize) -> (Vec<(Arc<str>, f32)>, Vec<(Arc<str>, u64)>) {
+    let mut programs: HashMap<&Arc<str>, (f32, u64)> = HashMap::new();
+    for p in procs.iter().filter(|p| !p.kernel) {
+        let sum = programs.entry(&p.app).or_default();
+        sum.0 += p.cpu;
+        sum.1 += p.memory;
+    }
+    let mut cpu: Vec<(Arc<str>, f32)> = programs.iter().map(|(app, s)| ((*app).clone(), s.0)).collect();
+    // Busiest first; a tie goes by name, so the list holds still.
+    cpu.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    cpu.truncate(n);
+    let mut memory: Vec<(Arc<str>, u64)> = programs.into_iter().map(|(app, s)| (app.clone(), s.1)).collect();
+    memory.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    memory.truncate(n);
+    (cpu, memory)
 }
 
 /// When process `pid` started, if it is still there: what a process
@@ -284,6 +305,16 @@ mod tests {
         // Someone else's: the file it runs can't be read.
         assert_eq!(app_name("sshd", "", false), "sshd");
         assert_eq!(app_name("kworker/3:1-events", "", true), "kworker");
+    }
+
+    #[test]
+    fn the_top_programs_count_their_processes_together() {
+        let proc = |pid: u32, app: &str, cpu: f32, memory: u64, kernel: bool| Proc { pid, parent: 1, name: Arc::from(app), app: Arc::from(app), command: Arc::from(""), user: Arc::from("alva"), kernel, threads: 1, cpu, memory, started: 0 };
+        let procs = [proc(1, "firefox", 5.0, 300, false), proc(2, "firefox", 7.0, 500, false), proc(3, "code", 10.0, 900, false), proc(4, "kworker", 50.0, 0, true), proc(5, "zsh", 0.0, 10, false)];
+        let (cpu, memory) = top(&procs, 2);
+        assert_eq!(cpu.iter().map(|(a, c)| (&**a, *c)).collect::<Vec<_>>(), [("firefox", 12.0), ("code", 10.0)], "the kernel's threads are no program");
+        assert_eq!(memory.iter().map(|(a, m)| (&**a, *m)).collect::<Vec<_>>(), [("code", 900), ("firefox", 800)]);
+        assert_eq!(top(&[], 5), (Vec::new(), Vec::new()));
     }
 
     #[test]

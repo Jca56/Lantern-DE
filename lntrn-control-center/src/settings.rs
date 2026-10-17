@@ -1,6 +1,6 @@
 //! What the bar takes from `lantern.toml`: the desktop's look (through
-//! `lntrn-kit`), its own shape, clock, auto hide and tray
-//! (`[control_center]`),
+//! `lntrn-kit`), its own shape, clock, calendar, auto hide, tray and mini
+//! monitors (`[control_center]`),
 //! the primary monitor
 //! it lives on, and how windows glide (which docking keeps step with). A
 //! thread watches the file and wakes the loop when it changes, so a bar
@@ -18,8 +18,10 @@ use lntrn_kit::desktop::{self, Desktop};
 use lntrn_sys::watch::{Event, EventKind, Watcher};
 
 use crate::bar::Shape;
+use crate::calendar::{CalendarOptions, WeekStart};
 use crate::clock::{ClockOptions, DateStyle};
 use crate::hide::{HideOptions, Visibility};
+use crate::monitors::{Kind, MonitorOptions};
 use crate::morph::Glide;
 use crate::tray::{Item, TrayOptions};
 /// How long a burst of writes to the file is let settle before it is read.
@@ -34,12 +36,18 @@ pub struct Settings {
     pub shape: Shape,
     /// `[control_center]`'s `clock_*` keys: what the clock shows.
     pub clock: ClockOptions,
+    /// `[control_center]`'s `calendar_*` keys: the week's first day, and
+    /// the dot by the clock.
+    pub calendar: CalendarOptions,
     /// `[control_center]`'s `visibility` and `auto_hide_*` keys: whether
     /// it hides, and how.
     pub hide: HideOptions,
     /// `[control_center]`'s `tray_*` keys: which of the tray's items show,
     /// and in what order.
     pub tray: TrayOptions,
+    /// `[control_center]`'s `monitor_*` keys: which mini monitors show, in
+    /// what order, how often they look and how far back they graph.
+    pub monitors: MonitorOptions,
     /// The monitor `[[monitors]]` marks `primary`, by its connector name
     /// (`DP-1`), unless it is switched off.
     pub primary: Option<String>,
@@ -67,7 +75,7 @@ impl Settings {
     }
 
     pub fn from_doc(doc: &Doc) -> Settings {
-        Settings { desktop: Desktop::from_doc(doc), shape: shape(doc), clock: clock(doc), hide: hide(doc), tray: tray(doc), primary: primary(doc), dock_glide: dock_glide(doc) }
+        Settings { desktop: Desktop::from_doc(doc), shape: shape(doc), clock: clock(doc), calendar: calendar(doc), hide: hide(doc), tray: tray(doc), monitors: monitors(doc), primary: primary(doc), dock_glide: dock_glide(doc) }
     }
 }
 
@@ -85,6 +93,13 @@ fn clock(doc: &Doc) -> ClockOptions {
     let key = |k: &str| doc.path(&format!("control_center.clock_{k}"));
     let flag = |k: &str, or: bool| key(k).and_then(Doc::as_bool).unwrap_or(or);
     ClockOptions { hour24: flag("24h", d.hour24), seconds: flag("seconds", d.seconds), ampm: flag("ampm", d.ampm), date: flag("date", d.date), style: key("date_style").and_then(Doc::as_str).map_or(d.style, DateStyle::from_word) }
+}
+
+/// `[control_center]`'s `calendar_*` keys; the default for any missing.
+fn calendar(doc: &Doc) -> CalendarOptions {
+    let d = CalendarOptions::default();
+    let key = |k: &str| doc.path(&format!("control_center.calendar_{k}"));
+    CalendarOptions { week_start: key("week_start").and_then(Doc::as_str).map_or(d.week_start, WeekStart::from_word), dot: key("dot").and_then(Doc::as_bool).unwrap_or(d.dot) }
 }
 
 /// `[control_center]`'s `visibility`, and the auto hide timings in
@@ -118,6 +133,24 @@ fn tray(doc: &Doc) -> TrayOptions {
         workspace: on("workspace", d.workspace),
         game_mode: on("game_mode", d.game_mode),
         order: key("order").and_then(Doc::as_list).map_or(d.order, |words| Item::ordered(words.iter().filter_map(Doc::as_str))),
+    }
+}
+
+/// `[control_center]`'s `monitor_*` keys: each monitor on unless set off,
+/// `monitor_order` left to right (the rest after the ones it names), and
+/// the beat and span held to their ranges.
+fn monitors(doc: &Doc) -> MonitorOptions {
+    let d = MonitorOptions::default();
+    let key = |k: &str| doc.path(&format!("control_center.monitor_{k}"));
+    let on = |k: &str, or: bool| key(k).and_then(Doc::as_bool).unwrap_or(or);
+    let held = |k: &str, or: u32, (lo, hi): (u32, u32)| key(k).and_then(Doc::as_i64).map_or(or, |v| v.clamp(i64::from(lo), i64::from(hi)) as u32);
+    MonitorOptions {
+        cpu: on("cpu", d.cpu),
+        gpu: on("gpu", d.gpu),
+        ram: on("ram", d.ram),
+        order: key("order").and_then(Doc::as_list).map_or(d.order, |words| Kind::ordered(words.iter().filter_map(Doc::as_str))),
+        interval_ms: held("interval_ms", d.interval_ms, MonitorOptions::INTERVALS_MS),
+        span_s: held("span_s", d.span_s, MonitorOptions::SPANS_S),
     }
 }
 
@@ -168,7 +201,7 @@ pub fn watch(changed: Arc<AtomicBool>, waker: Waker) {
 }
 
 /// Whether any of `events` is about the file at `path`.
-fn touches(events: &[Event], path: &Path) -> bool {
+pub(crate) fn touches(events: &[Event], path: &Path) -> bool {
     events.iter().any(|e| e.path == path || e.kind == EventKind::Overflow || matches!(&e.kind, EventKind::Renamed { from } if from == path))
 }
 
@@ -213,6 +246,14 @@ mod tests {
     }
 
     #[test]
+    fn the_calendar_is_what_system_settings_chose() {
+        assert_eq!(Settings::default().calendar, CalendarOptions { week_start: WeekStart::Sunday, dot: true });
+        let set = parse("[control_center]\ncalendar_week_start = \"monday\"\ncalendar_dot = false\n").calendar;
+        assert_eq!(set, CalendarOptions { week_start: WeekStart::Monday, dot: false });
+        assert_eq!(parse("[control_center]\ncalendar_week_start = \"friday\"\ncalendar_dot = \"no\"\n").calendar, CalendarOptions::default());
+    }
+
+    #[test]
     fn auto_hide_is_what_system_settings_chose_held_to_its_ranges() {
         assert_eq!(Settings::default().hide, HideOptions::default());
         let set = parse("[control_center]\nvisibility = \"auto_hide\"\nauto_hide_delay_ms = 1200\nauto_hide_slide_ms = 400\n").hide;
@@ -241,6 +282,15 @@ mod tests {
         assert_eq!(order("[\"workspace\", \"clock\", \"audio\", \"workspace\"]"), [Apps, Battery, Wifi, Bluetooth, Workspace, Audio, Brightness, GameMode]);
         assert_eq!(order("\"wifi\""), Item::ALL, "not a list");
         assert_eq!(Settings::default().tray.order, Item::ALL);
+    }
+
+    #[test]
+    fn the_mini_monitors_are_what_system_settings_chose() {
+        assert_eq!(Settings::default().monitors, MonitorOptions::default());
+        let set = parse("[control_center]\nmonitor_gpu = false\nmonitor_order = [\"ram\", \"cpu\"]\nmonitor_interval_ms = 500\nmonitor_span_s = 120\n").monitors;
+        assert_eq!(set, MonitorOptions { gpu: false, order: [Kind::Ram, Kind::Cpu, Kind::Gpu], interval_ms: 500, span_s: 120, ..MonitorOptions::default() });
+        let odd = parse("[control_center]\nmonitor_cpu = \"no\"\nmonitor_interval_ms = 1\nmonitor_span_s = 99999\n").monitors;
+        assert_eq!(odd, MonitorOptions { interval_ms: 250, span_s: 600, ..MonitorOptions::default() }, "a word isn't a switch");
     }
 
     #[test]

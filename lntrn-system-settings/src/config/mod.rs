@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 
 pub use appearance::{Appearance, GRADIENT_STOPS, WindowManager, Windows};
-pub use control_center::{CC_DATE_STYLES, CC_GAPS_BELOW, CC_GAPS_SIDES, CC_HEIGHTS, CC_HIDE_DELAYS, CC_RADII, CC_SLIDES, CC_VISIBILITIES, ControlCenter};
+pub use control_center::{CC_DATE_STYLES, CC_GAPS_BELOW, CC_GAPS_SIDES, CC_HEIGHTS, CC_HIDE_DELAYS, CC_MONITOR_RATES, CC_MONITOR_SPANS, CC_RADII, CC_SLIDES, CC_VISIBILITIES, CC_WEEK_STARTS, ControlCenter};
 use lntrn_data::{Doc, from_doc, to_doc, toml};
 use lntrn_props::Reflect;
 pub use monitors::Monitor;
@@ -390,6 +390,22 @@ mod tests {
         assert_eq!(order(&cfg), "apps battery wifi bluetooth audio brightness workspace game_mode");
         let words: Vec<String> = read_existing(&path).unwrap().path("control_center.tray_order").and_then(Doc::as_list).unwrap().iter().filter_map(Doc::as_str).map(str::to_owned).collect();
         assert_eq!(words, cfg.control_center.tray_order);
+        // The mini monitors: all on, every one once, and a beat and a span
+        // the page offers.
+        assert_eq!((flag("monitor_cpu"), flag("monitor_gpu"), flag("monitor_ram")), (Some(true), Some(true), Some(true)));
+        assert_eq!((key("monitor_interval_ms"), key("monitor_span_s")), (Some(1000), Some(60)));
+        cfg.control_center.monitor_order = ["ram", "disk", "ram"].map(str::to_owned).to_vec();
+        (cfg.control_center.monitor_interval_ms, cfg.control_center.monitor_span_s) = (700, 100);
+        cfg.save_to(&path).unwrap();
+        assert_eq!(cfg.control_center.monitor_order.join(" "), "ram cpu gpu");
+        assert_eq!((cfg.control_center.monitor_interval_ms, cfg.control_center.monitor_span_s), (500, 120), "the nearest the page offers");
+        // The calendar: weeks from Sunday and the dot, and a word the bar
+        // doesn't know put back.
+        assert_eq!(read_existing(&path).unwrap().path("control_center.calendar_week_start").and_then(Doc::as_str), Some("sunday"));
+        assert_eq!(flag("calendar_dot"), Some(true));
+        cfg.control_center.calendar_week_start = "friday".into();
+        cfg.save_to(&path).unwrap();
+        assert_eq!(cfg.control_center.calendar_week_start, "sunday");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

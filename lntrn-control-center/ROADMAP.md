@@ -166,6 +166,64 @@ System Settings toggle picks which one the session uses.
 >   `lntrn-kit`'s `Card::reorder` (and `Card::nested`), for anything else
 >   that wants one.
 
+> - **Mini monitors (2026-10-17, Alva's answers):** after the launcher's
+>   button, CPU (gold), GPU (green), RAM (blue): each a face with its load
+>   graphed behind its numbers (load %, temperature in green/amber/red;
+>   load, temperature and `2.0/12GB` of video memory; load and
+>   `2.8/32GB`), as wide as its widest numbers so the dock never shifts,
+>   one line on a short bar. Totals read as sold (31.0 GiB shows 32). A
+>   click opens a **popup** in the overlay (not the System Monitor): a big
+>   graph (hover says that moment's load and how long ago), the readings
+>   big; CPU: model, clock + governor, load averages + uptime, busiest
+>   programs; GPU: name + driver, VRAM and power meters, fans, clocks;
+>   RAM: used/cache/free bar with legend, swap, programs holding the most.
+>   Each ends in **Open System Monitor**: brings an open one forward, else
+>   starts `lntrn-sysmon --page cpu|gpu|memory` (sysmon gained `--page`).
+>   System Settings' Mini Monitors card: a switch each, drag order,
+>   update every 0.5/1/2 s, graphs over 30 s/1 min/2 min
+>   (`[control_center] monitor_cpu/gpu/ram`, `monitor_order`,
+>   `monitor_interval_ms`, `monitor_span_s`).
+> - **Sampling (2026-10-17):** sysmon's CPU, memory, GPU (NVML) and
+>   process samplers moved into `lntrn-status`'s `load` module, and sysmon
+>   uses them from there: one copy. `Load` is the bar's thread (one look a
+>   beat, waking the loop); the processes are walked only while the CPU or
+>   RAM popup is up. CPU temperature from the processor's hwmon chip
+>   (Tdie/Tctl/Package id 0). A graphics card that is runtime-suspended is
+>   never asked anything (it would wake); the bar also lets an idle card
+>   that may sleep (`power/control` auto, not `boot_vga`) rest, looking
+>   only every 30 s and letting NVML go between, so a laptop's dGPU can
+>   fall asleep. The GPU monitor shows only where a card says how busy it
+>   is (not on an Intel-only machine).
+
+> - **Calendar (2026-10-17, Alva's answers):** the clock is its face: lit
+>   under the pointer, a click opens a **popup** in the overlay (the time
+>   big, the whole date, the month in six weeks from the week's first day
+>   with today ringed and each day's events as dots in their colours,
+>   `‹ ›`/the wheel/Page Up and Down turning it, Today coming back; the
+>   picked day's events under it, title and when). `+ New event`, a double
+>   click on a day, or Enter open the **form in the month's place**: title
+>   (focused, Enter keeps it), date, all day, start and end (`−`/`+` and the
+>   wheel step a quarter hour, a click types `3pm`/`15:30`; the end follows
+>   the start), repeat (never, daily, weekly, monthly, yearly), a
+>   **reminder per event** (none, at start, 5/10/15/30 min, 1 hour, 1 day
+>   before; all day: the morning of or the day before, at 9 AM), six
+>   colours, notes. A click on an event changes it; Delete asks first, and
+>   of a repeating one "this day" (a `skip` date) or every day. Resting the
+>   pointer on the clock 0.5 s shows a **card** (the whole date, the rest
+>   of today; it takes no input), and a dot before the clock says today has
+>   events still to come. **Events are the bar's own** (not the Command
+>   Center's): `~/.lantern/config/control-center/calendar.toml`, one
+>   `[[event]]` each, edited by hand and followed live (inotify).
+>   **Reminders** are a thread of their own (the clock's real-time minute
+>   sleep, so on time after a suspend), said with `notify-send -a Calendar`;
+>   one missed while the bar was down or the machine slept is said when it's
+>   back if its event isn't over, never twice (`calendar-reminded` keeps
+>   where it looked to). System Settings' Calendar card: weeks start on
+>   Sunday or Monday, the dot on or off (`[control_center]`
+>   `calendar_week_start`, `calendar_dot`). Not yet: events over several
+>   days, changing one day of a repeating event, an end date for repeats,
+>   `.ics` import/export.
+
 ## Done
 
 - [x] Layer surface on the primary monitor, exclusive zone, floating plate
@@ -200,6 +258,11 @@ System Settings toggle picks which one the session uses.
 - [x] System tray: battery, WiFi, Bluetooth, sound, brightness,
       workspace number, Game Mode, their popups, wheel shortcuts, and the
       System Tray card in System Settings (see above)
+- [x] Mini monitors: CPU, GPU, RAM, their popups, the Mini Monitors card
+      in System Settings (see above)
+- [x] Calendar behind the clock: month popup, events with times, repeats,
+      reminders and colours, the clock's card and dot, the Calendar card
+      in System Settings (see above)
 
 ## Next (ideas, unordered)
 
@@ -208,8 +271,6 @@ open windows dock (middle).
 
 - [x] Tray: WiFi password entry, hidden networks, Forget (see above)
 - [x] Tray: Bluetooth pairing (both ways), Forget, files (see above)
-- [ ] Mini system monitors: CPU (gold), GPU (green), RAM (blue), opening
-      lntrn-system-monitor (Notes.md)
 - [x] SNI app icons (Steam & co.), see above
 
 ## Known gaps

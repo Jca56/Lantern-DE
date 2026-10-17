@@ -74,6 +74,7 @@ pub fn frame() -> Frame {
         gpus: vec![Gpu {
             name: "NVIDIA GeForce RTX 3080 Ti".to_owned(),
             driver: "nvidia 615.71.09".to_owned(),
+            asleep: false,
             usage: Some(12.0),
             memory: Some((3 * GIB, 12 * GIB)),
             celsius: Some(48.0),

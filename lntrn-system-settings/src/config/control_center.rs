@@ -2,8 +2,11 @@
 //! the screen, which reads these keys as they change: its shape (it
 //! floats this far from the screen's edges, and docks full width and
 //! square while a window is maximized or full screen on its monitor),
-//! whether it hides out of sight between uses, what its clock shows, and
-//! which items its system tray shows, in what order.
+//! whether it hides out of sight between uses, what its clock shows,
+//! which day its calendar's weeks start on and whether a dot by the clock
+//! says today has events to come, which items its system tray shows, in what order, and which mini
+//! monitors it shows, in what order, how often they look and how far
+//! back they graph.
 
 use lntrn_props::props;
 
@@ -21,9 +24,20 @@ pub const CC_VISIBILITIES: [(&str, &str); 2] = [("always", "Always shown"), ("au
 /// The clock's date styles: the word stored, and how the page shows it
 /// (by example, as the bar writes it).
 pub const CC_DATE_STYLES: [(&str, &str); 4] = [("short", "Thu, Oct 16"), ("numeric", "10/16/2026"), ("long", "Thursday, October 16"), ("with_year", "Oct 16, 2026")];
+/// The day the calendar's weeks start on: the word stored, and how the
+/// page shows it (the bar's `WeekStart`).
+pub const CC_WEEK_STARTS: [(&str, &str); 2] = [("sunday", "Sunday"), ("monday", "Monday")];
 /// The tray's items as `tray_order` names them, in the order they start
 /// in, left to right (the bar's `Item`).
 pub const CC_TRAY_ITEMS: [&str; 8] = ["apps", "battery", "wifi", "bluetooth", "audio", "brightness", "workspace", "game_mode"];
+/// The mini monitors as `monitor_order` names them, left to right as they
+/// start (the bar's `Kind`).
+pub const CC_MONITORS: [&str; 3] = ["cpu", "gpu", "ram"];
+/// How often the mini monitors look, in milliseconds, and how the page
+/// says it.
+pub const CC_MONITOR_RATES: [(i64, &str); 3] = [(500, "Every half second"), (1000, "Every second"), (2000, "Every 2 seconds")];
+/// How far back their graphs go, in seconds, and how the page says it.
+pub const CC_MONITOR_SPANS: [(i64, &str); 3] = [(30, "30 seconds"), (60, "1 minute"), (120, "2 minutes")];
 
 props! {
     /// The bar's size and where it floats, in logical pixels, whether it
@@ -67,6 +81,21 @@ props! {
         pub tray_game_mode: bool = true => { id: 20 },
         /// The tray's items left to right, each of [`CC_TRAY_ITEMS`] once.
         pub tray_order: Vec<String> = CC_TRAY_ITEMS.map(str::to_owned).to_vec() => { id: 21 },
+        /// The mini monitors, each shown unless switched off (the GPU's
+        /// only where a graphics card says how busy it is).
+        pub monitor_cpu: bool = true => { id: 23 },
+        pub monitor_gpu: bool = true => { id: 24 },
+        pub monitor_ram: bool = true => { id: 25 },
+        /// The mini monitors left to right, each of [`CC_MONITORS`] once.
+        pub monitor_order: Vec<String> = CC_MONITORS.map(str::to_owned).to_vec() => { id: 26 },
+        /// Between their looks: one of [`CC_MONITOR_RATES`]'.
+        pub monitor_interval_ms: i64 = 1000 => { id: 27, hard: 250..=5000 },
+        /// How far back their graphs go: one of [`CC_MONITOR_SPANS`]'.
+        pub monitor_span_s: i64 = 60 => { id: 28, hard: 10..=600 },
+        /// One of [`CC_WEEK_STARTS`]' words.
+        pub calendar_week_start: String = "sunday".to_owned() => { id: 29 },
+        /// A dot by the clock while today has events still to come.
+        pub calendar_dot: bool = true => { id: 30 },
     }
 }
 
@@ -85,6 +114,9 @@ impl ControlCenter {
         if !CC_DATE_STYLES.iter().any(|(word, _)| *word == self.clock_date_style) {
             self.clock_date_style = "short".to_owned();
         }
+        if !CC_WEEK_STARTS.iter().any(|(word, _)| *word == self.calendar_week_start) {
+            self.calendar_week_start = "sunday".to_owned();
+        }
         // Every item once, where it was put: a word that isn't one goes,
         // and one left out (new since the order was saved) goes right after
         // the last of those it comes after where it starts (first, when
@@ -102,5 +134,26 @@ impl ControlCenter {
             }
         }
         self.tray_order = order;
+        self.monitor_order = each_once(&self.monitor_order, &CC_MONITORS);
+        self.monitor_interval_ms = nearest(self.monitor_interval_ms, &CC_MONITOR_RATES);
+        self.monitor_span_s = nearest(self.monitor_span_s, &CC_MONITOR_SPANS);
     }
+}
+
+/// Every one of `all` once, where `order` put it: a word that isn't one
+/// goes, and one left out goes at the end.
+fn each_once(order: &[String], all: &[&str]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(all.len());
+    for word in order.iter().map(String::as_str).chain(all.iter().copied()) {
+        if all.contains(&word) && !out.iter().any(|w| w == word) {
+            out.push(word.to_owned());
+        }
+    }
+    out
+}
+
+/// The choice nearest `v`, so a hand-edited value shows as one the page
+/// offers.
+fn nearest(v: i64, choices: &[(i64, &str)]) -> i64 {
+    choices.iter().map(|(c, _)| *c).min_by_key(|c| (c - v).abs()).unwrap_or(v)
 }

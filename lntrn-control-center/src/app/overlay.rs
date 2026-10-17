@@ -1,12 +1,14 @@
 //! The overlay: a layer surface over the bar's whole monitor, open while
 //! something is up above the bar (the launcher's menu, the dock's card or
-//! menu, a tray item's popup) and closed as soon as nothing is. What is up
-//! decides how it takes input: the launcher and a menu take the keyboard
-//! and every click (a click off them puts them away); a card takes the
-//! pointer over itself alone, from the overlay's first frame on, so the
-//! bar under it never loses the pointer resting on its icon; a tray popup
-//! takes the keyboard (Escape) and every click but the bar's own, so the
-//! bar's other items and its wheel still work while it is up.
+//! menu, a tray item's, a mini monitor's or the calendar's popup, the
+//! clock's card) and closed as soon as nothing is. What is up decides how
+//! it takes input: the launcher and a menu take the keyboard and every
+//! click (a click off them puts them away); a dock card takes the pointer
+//! over itself alone, from the overlay's first frame on, so the bar under
+//! it never loses the pointer resting on its icon, and the clock's card
+//! takes none at all; a tray, monitor or calendar popup takes the keyboard
+//! and every click but the bar's own, so the bar's other items and its
+//! wheel still work while it is up.
 
 use std::sync::atomic::Ordering;
 
@@ -15,9 +17,12 @@ use lntrn_math::{Rect, Vec2};
 use lntrn_ui::{Anchor, AreaCx, KeyboardMode, LayerConfig, NewWindow, Shell, ShellRequest, Ui};
 
 use super::{APP_ID, App, RESTART, actions};
+use crate::calendar;
+use crate::clock;
 use crate::dock::{self, CardPress, Entry, Popup, Thumb};
 use crate::glass;
 use crate::launcher::{self, Outcome, Place};
+use crate::monitors::{self, Kind};
 use crate::tray::{self, Item};
 
 /// What the compositor knows the overlay's surface as.
@@ -26,6 +31,8 @@ pub const NAMESPACE: &str = "lntrn-control-center-overlay";
 const ABOVE_BAR: f64 = 10.0;
 /// How long an app's menu is waited for.
 const APP_MENU_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+/// What the System Monitor's windows call themselves.
+const SYSMON: &str = "lntrn-sysmon";
 
 /// The overlay's window, as the app keeps track of it.
 #[derive(Default)]
@@ -73,17 +80,21 @@ impl App {
         self.launcher.close();
         self.dock.close_popup();
         self.tray.close();
+        self.monitors.close();
+        self.calendar.close();
+        self.calendar.tip = false;
         self.tell_thumbs(Vec::new(), 1.0);
         // The bar, which may not be drawing, puts its lit icon out.
         self.wake();
     }
 
     /// How the overlay takes the keyboard for what is up: the launcher's
-    /// search, a menu's and a tray popup's Escape want it; a card leaves it
-    /// where it is.
+    /// search, a menu's, a tray or monitor popup's Escape and the
+    /// calendar's typing want it; a card leaves it where it is.
     fn keyboard(&self) -> KeyboardMode {
-        match (&self.dock.popup, self.launcher.open, self.tray.popup) {
-            (_, true, _) | (Some(Popup::Menu { .. }), _, _) | (_, _, Some(_)) => KeyboardMode::Exclusive,
+        let popup = self.tray.popup.is_some() || self.monitors.popup.is_some() || self.calendar.popup;
+        match (&self.dock.popup, self.launcher.open, popup) {
+            (_, true, _) | (Some(Popup::Menu { .. }), _, _) | (_, _, true) => KeyboardMode::Exclusive,
             _ if self.tray.app_menu.is_some() => KeyboardMode::Exclusive,
             _ => KeyboardMode::None,
         }
@@ -120,6 +131,12 @@ impl App {
             self.tell_thumbs(Vec::new(), 1.0);
             self.app_menu_frame(ui, cx);
             None
+        } else if let Some(kind) = self.monitors.popup {
+            self.tell_thumbs(Vec::new(), 1.0);
+            Some(self.monitor_frame(ui, kind))
+        } else if self.calendar.up() {
+            self.tell_thumbs(Vec::new(), 1.0);
+            Some(self.calendar_frame(ui))
         } else {
             match self.dock.popup.clone() {
                 Some(Popup::Card(key)) => self.card_frame(ui, &key),
@@ -139,7 +156,7 @@ impl App {
         // The panels painted see-through: the compositor blurs behind them.
         let panes = glass::take();
         self.told.tell(&self.link, "overlay blur", glass::line(NAMESPACE, &panes, Vec2::splat(ui.m.scale)));
-        if !self.launcher.open && self.dock.popup.is_none() && self.tray.popup.is_none() && self.tray.app_menu.is_none() {
+        if !self.launcher.open && self.dock.popup.is_none() && self.tray.popup.is_none() && self.tray.app_menu.is_none() && self.monitors.popup.is_none() && !self.calendar.up() {
             self.overlay.closing = true;
             self.told.tell(&self.link, "overlay blur", glass::line(NAMESPACE, &[], Vec2::splat(1.0)));
             self.tell_thumbs(Vec::new(), 1.0);
@@ -249,6 +266,64 @@ impl App {
             self.wake();
         }
         self.off_plate(surface, m.scale)
+    }
+
+    /// A mini monitor's popup above its face. Returns where the overlay
+    /// takes the pointer: everywhere but the bar's plate, as a tray
+    /// popup's does.
+    fn monitor_frame(&mut self, ui: &mut Ui, kind: Kind) -> Vec<Rect> {
+        let (m, surface) = (ui.m, ui.clip());
+        let x = self.monitors.face(kind).map_or(surface.min.x + m.px(240.0), |face| face.center().x);
+        let frame = tray::popup::Frame { x, bottom: surface.max.y - m.px(self.place().clear + ABOVE_BAR), look: self.look };
+        let popup = monitors::popup::draw(&self.monitors, ui, kind, &frame);
+        if popup.sysmon {
+            self.open_sysmon(kind);
+        }
+        if popup.panel.is_none() || popup.sysmon {
+            self.monitors.close();
+            self.wake();
+        }
+        self.off_plate(surface, m.scale)
+    }
+
+    /// The calendar's popup above the clock, or the clock's card. Returns
+    /// where the overlay takes the pointer: the popup's, everywhere but
+    /// the bar's plate, as a tray popup's does; the card's, nowhere.
+    fn calendar_frame(&mut self, ui: &mut Ui) -> Vec<Rect> {
+        let (m, surface) = (ui.m, ui.clip());
+        let x = self.calendar.face().map_or(surface.max.x - m.px(240.0), |face| face.center().x);
+        let frame = tray::popup::Frame { x, bottom: surface.max.y - m.px(self.place().clear + ABOVE_BAR), look: self.look };
+        if !self.calendar.popup {
+            calendar::face::tip(&self.calendar, ui, &frame, self.settings.clock);
+            return Vec::new();
+        }
+        let was = self.calendar.revision();
+        if calendar::popup::draw(&mut self.calendar, ui, &frame, self.settings.clock).is_none() {
+            self.calendar.close();
+            self.wake();
+        }
+        // The bar's dot shows the change.
+        if self.calendar.revision() != was {
+            self.wake();
+        }
+        // Its clock turns over, and its day at midnight.
+        if let Some(soon) = clock::redraw_after(self.settings.clock) {
+            ui.state.request_redraw_after(soon);
+        }
+        self.off_plate(surface, m.scale)
+    }
+
+    /// The System Monitor: brought forward where it is open (its newest
+    /// window), else started on `kind`'s page.
+    fn open_sysmon(&self, kind: Kind) {
+        match self.link.windows().into_iter().filter(|w| w.app_id == SYSMON).max_by_key(|w| w.id) {
+            Some(window) => self.link.send(&format!("activate:{}", window.id)),
+            None => {
+                if let Err(e) = lntrn_apps::launch::run_args(SYSMON, &["--page", kind.page()]) {
+                    lntrn_core::log_warn!("{SYSMON}: {e}");
+                }
+            }
+        }
     }
 
     /// The overlay's `surface` less the bar's plate as it sits now (`per`

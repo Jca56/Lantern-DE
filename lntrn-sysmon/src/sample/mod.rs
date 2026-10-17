@@ -3,22 +3,19 @@
 //! everything the window shows, as of that moment, with the history
 //! that led to it. Each part has a module of its own; the parsing in
 //! them is plain functions over text, so it is tested without a machine
-//! in any particular state.
+//! in any particular state. The processors, the memory, the graphics
+//! cards and the processes are `lntrn-status`'s, which the Control
+//! Center's mini monitors read too.
 
-pub mod cpu;
 pub mod disk;
 #[cfg(test)]
 pub mod fixture;
-pub mod gpu;
-pub mod mem;
 pub mod net;
-mod nvml;
-pub mod procs;
 pub mod sensors;
 pub mod system;
 
-use std::fs;
-use std::str::FromStr;
+pub use lntrn_status::load::{cpu, gpu, mem, procs, read, read_number};
+
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -36,21 +33,7 @@ pub const HISTORY: usize = 120;
 
 /// Add `v` to the end of a history, dropping its oldest once it is full.
 pub fn push(history: &mut Vec<f32>, v: f32) {
-    if history.len() >= HISTORY {
-        history.remove(0);
-    }
-    history.push(if v.is_finite() { v } else { 0.0 });
-}
-
-/// A small file's text without the space around it. `None` when it
-/// can't be read.
-pub fn read(path: &str) -> Option<String> {
-    fs::read_to_string(path).ok().map(|s| s.trim().to_owned())
-}
-
-/// A file that holds one number.
-pub fn read_number<T: FromStr>(path: &str) -> Option<T> {
-    fs::read_to_string(path).ok()?.trim().parse().ok()
+    lntrn_status::load::push(history, v, HISTORY);
 }
 
 /// The machine at one moment.
@@ -91,17 +74,6 @@ impl Frame {
     }
 }
 
-/// The first number of `/proc/uptime`.
-fn uptime() -> f64 {
-    read("/proc/uptime").and_then(|s| s.split_ascii_whitespace().next()?.parse().ok()).unwrap_or(0.0)
-}
-
-/// The first three numbers of `/proc/loadavg`.
-pub fn parse_load(text: &str) -> [f32; 3] {
-    let mut n = text.split_ascii_whitespace().map(|f| f.parse().unwrap_or(0.0));
-    [n.next().unwrap_or(0.0), n.next().unwrap_or(0.0), n.next().unwrap_or(0.0)]
-}
-
 pub struct Sampler {
     facts: Arc<Facts>,
     seq: u64,
@@ -119,7 +91,7 @@ impl Sampler {
     /// Learn what the machine is and take the first readings of
     /// everything that is measured as a change since the last one.
     pub fn new() -> Self {
-        let mut s = Self { facts: Arc::new(Facts::gather()), seq: 0, last: Instant::now(), cpu: CpuSampler::new(), mem: MemSampler::default(), gpu: GpuSampler::new(), disk: DiskSampler::default(), net: NetSampler::default(), sensors: SensorSampler::default(), procs: ProcSampler::new() };
+        let mut s = Self { facts: Arc::new(Facts::gather()), seq: 0, last: Instant::now(), cpu: CpuSampler::new(HISTORY), mem: MemSampler::new(HISTORY), gpu: GpuSampler::new(HISTORY), disk: DiskSampler::default(), net: NetSampler::default(), sensors: SensorSampler::default(), procs: ProcSampler::new() };
         // Counters only: these histories start at the first real look.
         s.procs.sample(0);
         s.disk.prime();
@@ -138,8 +110,8 @@ impl Sampler {
             seq: self.seq,
             interval,
             facts: self.facts.clone(),
-            uptime: uptime(),
-            load: parse_load(&fs::read_to_string("/proc/loadavg").unwrap_or_default()),
+            uptime: lntrn_status::load::uptime(),
+            load: lntrn_status::load::load_average(),
             cpu,
             mem: self.mem.sample(),
             gpus: self.gpu.sample(),
@@ -165,8 +137,6 @@ mod tests {
         assert_eq!((h[0], h[HISTORY - 1]), (5.0, (HISTORY + 4) as f32));
         push(&mut h, f32::NAN);
         assert_eq!(h[HISTORY - 1], 0.0);
-        assert_eq!(parse_load("1.20 0.98 0.75 2/1833 205268\n"), [1.20, 0.98, 0.75]);
-        assert_eq!(parse_load(""), [0.0; 3]);
     }
 
     #[test]

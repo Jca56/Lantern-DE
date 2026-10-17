@@ -1,7 +1,7 @@
 //! The app as the shell sees it: the bar, filling a layer surface of its
 //! own, and the overlay, a second one over its monitor while something is
-//! up there: the launcher's menu, the dock's card or menu, or a tray
-//! item's popup (`overlay`).
+//! up there: the launcher's menu, the dock's card or menu, a tray item's
+//! or a mini monitor's popup, or the calendar's popup or card (`overlay`).
 //! It follows `lantern.toml` as it changes: the look and the shape at
 //! once, a new primary monitor by starting over on it (a surface can't
 //! change monitors). It docks while the compositor says a window fills
@@ -24,12 +24,14 @@ use lntrn_math::{Rect, Vec2};
 use lntrn_ui::{Action, AreaCx, Host, HostCx, LayerConfig, Shell, ShellRequest, Ui};
 
 use crate::bar::{self, Look};
+use crate::calendar::{self, Calendar};
 use crate::clock;
 use crate::compositor::{Link, Told};
 use crate::glass;
 use crate::dock::{self, Dock, Press};
 use crate::hide::{self, Reveal};
 use crate::launcher::{self, Launcher};
+use crate::monitors::{self, Monitors};
 use crate::morph::{Glide, Morph};
 use crate::settings::{self, Settings};
 use crate::tray::{self, Tray, TrayPress};
@@ -42,6 +44,8 @@ const ICON_PX: u32 = 96;
 const DOCK_CLEAR: f64 = 16.0;
 /// Between the tray and the clock, logical.
 const TRAY_CLEAR: f64 = 10.0;
+/// Between the launcher's button and the mini monitors, logical.
+const MONITORS_CLEAR: f64 = 6.0;
 
 /// Set when the loop ends only to start over: on another monitor, or
 /// Quick Kill's fresh start.
@@ -96,6 +100,10 @@ pub struct App {
     overlay: overlay::Overlay,
     /// The system tray before the clock, and its popups.
     tray: Tray,
+    /// The mini monitors after the launcher's button, and their popups.
+    monitors: Monitors,
+    /// The calendar behind the clock, its popup and its card.
+    calendar: Calendar,
     /// The dock's icons as the compositor was last told them, with the
     /// connection it was told on (a new one forgets them).
     icons_sent: Option<(u64, String)>,
@@ -112,7 +120,9 @@ impl App {
         // As `main` makes the surface.
         let sent = bar::layer(settings.shape, false, output.as_deref());
         let dock = Dock::new(lntrn_apps::installed());
-        Self { settings, look, output, changed: Arc::new(AtomicBool::new(false)), link: Link::new(), docked: false, morph: Morph::at(false), reveal: Reveal::new(), sent, region: None, launcher: Launcher::new(), dock, icons: Icons::new(ICON_PX), overlay: overlay::Overlay::default(), tray: Tray::default(), icons_sent: None, told: Told::default(), waker: None }
+        let mut calendar = Calendar::default();
+        calendar.follow(settings.calendar);
+        Self { settings, look, output, changed: Arc::new(AtomicBool::new(false)), link: Link::new(), docked: false, morph: Morph::at(false), reveal: Reveal::new(), sent, region: None, launcher: Launcher::new(), dock, icons: Icons::new(ICON_PX), overlay: overlay::Overlay::default(), tray: Tray::default(), monitors: Monitors::default(), calendar, icons_sent: None, told: Told::default(), waker: None }
     }
 
     /// Head for docked or floating when the compositor's word changed. The
@@ -143,9 +153,9 @@ impl App {
     }
 
     /// The bar's own surface: the plate, the launcher's button at its
-    /// left, the clock at its right with the tray before it, the dock
-    /// between; out of sight,
-    /// nothing but the strip along the bottom edge that brings it back.
+    /// left with the mini monitors after it, the clock (the calendar's
+    /// face) at its right with the tray before it, the dock between; out of sight, nothing but the
+    /// strip along the bottom edge that brings it back.
     fn bar(&mut self, ui: &mut Ui, cx: &mut AreaCx<()>) -> bool {
         let restyled = self.follow(cx);
         let now = ui.now();
@@ -219,12 +229,31 @@ impl App {
         if clicked && !self.launcher.open {
             self.open_launcher(cx);
         }
-        let clock = clock::Local::now().map(|now| clock::draw(ui, plate.rect, self.settings.clock, &now));
+        // The mini monitors, after the button.
+        let monitors = monitors::draw(&mut self.monitors, ui, plate.rect, button.max.x + m.px(MONITORS_CLEAR), self.look.plate);
+        let monitor_was = self.monitors.popup;
+        match monitors.press {
+            Some(kind) => self.monitors.toggle(kind),
+            // A press anywhere else on the bar puts the popup away.
+            None if ui.state.pressed && !monitors.pressed => self.monitors.close(),
+            None => {}
+        }
+        let left = if monitors.rect.width() > 0.0 { monitors.rect.max.x } else { button.max.x };
+        // The clock, the calendar's face: a click opens its popup, a press
+        // anywhere else on the bar puts it away.
+        let busy = self.launcher.open || self.tray.popup.is_some() || self.tray.app_menu.is_some() || self.monitors.popup.is_some() || self.dock.popup.is_some();
+        let calendar_was = (self.calendar.popup, self.calendar.tip);
+        let clock = calendar::face::draw(&mut self.calendar, ui, plate.rect, self.settings.clock, busy, self.look.plate);
+        if clock.clicked {
+            self.calendar.toggle();
+        } else if ui.state.pressed && !clock.pressed {
+            self.calendar.close();
+        }
         if let Some(soon) = clock::redraw_after(self.settings.clock) {
             ui.state.request_redraw_after(soon);
         }
         // The tray, before the clock.
-        let tray_right = clock.map_or(plate.rect.max.x - m.px(TRAY_CLEAR), |c| c.min.x - m.px(TRAY_CLEAR));
+        let tray_right = clock.rect.min.x - m.px(TRAY_CLEAR);
         let tray = tray::draw(&mut self.tray, ui, plate.rect, tray_right, self.look.plate, self.settings.tray, &self.link, &mut self.icons);
         let tray_was = self.tray.popup;
         match tray.press {
@@ -239,16 +268,16 @@ impl App {
             None if ui.state.pressed && !tray.pressed => self.tray.close(),
             None => {}
         }
-        // The dock, between the button and the tray.
+        // The dock, between the monitors and the tray.
         let popup = self.dock.popup.clone();
         let clear = m.px(DOCK_CLEAR);
         let right = tray.rect.min.x - clear;
-        let span = Rect::new(Vec2::new(button.max.x + clear, plate.rect.min.y), Vec2::new(right, plate.rect.max.y));
+        let span = Rect::new(Vec2::new(left + clear, plate.rect.min.y), Vec2::new(right, plate.rect.max.y));
         if let Some(press) = dock::draw(&mut self.dock, ui, &mut self.icons, span, plate.rect, self.look.plate, now) {
             self.press(press);
         }
-        // No card under the launcher's menu or a tray popup.
-        if self.launcher.open || self.tray.popup.is_some() {
+        // No card under the launcher's menu or another popup.
+        if self.launcher.open || self.tray.popup.is_some() || self.monitors.popup.is_some() || self.calendar.up() {
             self.dock.close_popup();
         } else if let Some(wait) = self.dock.step(now) {
             ui.state.request_redraw_after(wait);
@@ -257,8 +286,8 @@ impl App {
         if self.dock.popup != popup {
             self.popup_changed(cx);
         }
-        if self.tray.popup != tray_was {
-            if self.tray.popup.is_some() {
+        if self.tray.popup != tray_was || self.monitors.popup != monitor_was || (self.calendar.popup, self.calendar.tip) != calendar_was {
+            if self.tray.popup.is_some() || self.monitors.popup.is_some() || self.calendar.up() {
                 self.open_overlay(cx);
             }
             self.wake();
@@ -305,6 +334,8 @@ impl App {
         self.dock.set_apps(apps.clone());
         self.dock.close_popup();
         self.tray.close();
+        self.monitors.close();
+        self.calendar.close();
         self.launcher.open(apps);
         self.open_overlay(cx);
         // Again, with the button lit.
@@ -347,6 +378,8 @@ impl App {
             cx.prefs.theme = theme;
         }
         self.tray.follow(new.tray);
+        self.monitors.follow(new.monitors);
+        self.calendar.follow(new.calendar);
         self.settings = new;
         restyled
     }
@@ -427,6 +460,8 @@ impl AppHost for App {
         self.icons.set_waker(waker.clone());
         self.link.start(self.output.clone(), waker.clone());
         self.tray.start(waker.clone(), self.settings.tray);
+        self.monitors.start(waker.clone(), self.settings.monitors);
+        self.calendar.start(waker.clone());
         self.waker = Some(waker);
     }
 

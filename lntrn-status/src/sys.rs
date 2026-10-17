@@ -1,9 +1,10 @@
 //! The libc calls std doesn't wrap, declared here as the rest of Lantern
 //! declares them (no libc crate): waiting on several descriptors at once,
-//! a bell another thread rings to wake a waiting one, and the kernel's
-//! netlink broadcasts (device events, network links coming and going).
+//! a bell another thread rings to wake a waiting one, the kernel's
+//! netlink broadcasts (device events, network links coming and going),
+//! and how big a page of memory is.
 
-use std::ffi::{CString, c_char, c_int, c_ulong, c_void};
+use std::ffi::{CString, c_char, c_int, c_long, c_ulong, c_void};
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::path::Path;
@@ -47,6 +48,16 @@ unsafe extern "C" {
     fn bind(fd: c_int, addr: *const SockAddrNl, len: u32) -> c_int;
     fn access(path: *const c_char, mode: c_int) -> c_int;
     fn prctl(option: c_int, arg: c_ulong, ...) -> c_int;
+    fn sysconf(name: c_int) -> c_long;
+}
+
+const SC_PAGESIZE: c_int = 30;
+
+/// Bytes in a page of memory.
+pub fn page_size() -> u64 {
+    static SIZE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    // SAFETY: sysconf only reads its argument.
+    *SIZE.get_or_init(|| u64::try_from(unsafe { sysconf(SC_PAGESIZE) }).ok().filter(|n| *n > 0).unwrap_or(4096))
 }
 
 const PR_SET_PDEATHSIG: c_int = 1;

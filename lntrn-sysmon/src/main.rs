@@ -1,5 +1,7 @@
 //! Lantern System Monitor: what the machine is doing, on Lantern UI 2
-//! with `lntrn-kit`'s look.
+//! with `lntrn-kit`'s look. `--page <id>` opens it on a page (`cpu`,
+//! `memory`, `gpu`, ...: `nav.rs`), as the Control Center's mini monitors
+//! do.
 //!
 //! ## Layout
 //!
@@ -37,13 +39,24 @@ use lntrn_app::{AppConfig, run};
 use lntrn_ui::Shell;
 
 use crate::app::{APP_ID, App, Editor};
+use crate::nav::Page;
 use crate::settings::Settings;
 use crate::worker::Link;
+
+/// The page `--page <id>` (or `--page=<id>`) names, if it names one.
+fn page_asked(args: &[String]) -> Option<Page> {
+    let at = args.iter().position(|a| a == "--page" || a.starts_with("--page="))?;
+    let id = args[at].strip_prefix("--page=").or_else(|| args.get(at + 1).map(String::as_str))?;
+    Page::from_id(id)
+}
 
 fn main() {
     lntrn_kit::startup::log_panics(APP_ID);
     let settings = Settings::load();
-    let app = App::new(Link::spawn(settings.interval), settings);
+    let mut app = App::new(Link::spawn(settings.interval), settings);
+    if let Some(page) = page_asked(&std::env::args().collect::<Vec<_>>()) {
+        app.page = page;
+    }
     let desktop = app.desktop().clone();
     let config = AppConfig {
         title: "System Monitor".into(),
@@ -58,4 +71,19 @@ fn main() {
     };
     run(config, app, Shell::new(Editor::Monitor));
     std::process::exit(0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_page_is_asked_for_either_way_and_nonsense_is_passed_over() {
+        let args = |list: &[&str]| list.iter().map(|a| (*a).to_owned()).collect::<Vec<_>>();
+        assert_eq!(page_asked(&args(&["lntrn-sysmon", "--page", "gpu"])), Some(Page::Gpu));
+        assert_eq!(page_asked(&args(&["lntrn-sysmon", "--page=memory"])), Some(Page::Memory));
+        assert_eq!(page_asked(&args(&["lntrn-sysmon", "--page"])), None);
+        assert_eq!(page_asked(&args(&["lntrn-sysmon", "--page", "nope"])), None);
+        assert_eq!(page_asked(&args(&["lntrn-sysmon"])), None);
+    }
 }

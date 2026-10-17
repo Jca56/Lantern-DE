@@ -1,9 +1,9 @@
 //! What the machine is, which doesn't change while it runs: its name,
 //! what it runs, what is in it. Gathered once, when the sampler starts.
 
-use std::collections::BTreeSet;
 use std::fs;
 
+use super::cpu::{cpu_counts, cpu_model};
 use super::read;
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -30,35 +30,6 @@ pub struct Facts {
 /// (either kind: Gentoo writes single ones).
 pub fn os_release(text: &str, key: &str) -> Option<String> {
     text.lines().find_map(|l| l.strip_prefix(key)?.strip_prefix('=')).map(|v| v.trim().trim_matches(['"', '\'']).to_owned()).filter(|v| !v.is_empty())
-}
-
-/// A processor's name as `/proc/cpuinfo` has it, without the trademark
-/// signs and the clock speed it is sold at.
-pub fn cpu_model(cpuinfo: &str) -> String {
-    let raw = cpuinfo.lines().find(|l| l.starts_with("model name")).and_then(|l| l.split_once(':')).map(|(_, v)| v.trim()).unwrap_or("");
-    let name = raw.replace("(R)", "").replace("(TM)", "").replace("(tm)", "").replace(" CPU", "").replace(" Processor", "");
-    let name = name.split(" @ ").next().unwrap_or("");
-    name.split_ascii_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// How many cores and threads `/proc/cpuinfo` lists. Cores are told
-/// apart by which package and which core in it a thread sits on; a
-/// kernel that doesn't say gets zero cores.
-pub fn cpu_counts(cpuinfo: &str) -> (usize, usize) {
-    let mut cores = BTreeSet::new();
-    let (mut threads, mut package) = (0, "");
-    for line in cpuinfo.lines() {
-        let Some((key, value)) = line.split_once(':') else { continue };
-        match key.trim() {
-            "processor" => threads += 1,
-            "physical id" => package = value.trim(),
-            "core id" => {
-                cores.insert((package, value.trim()));
-            }
-            _ => {}
-        }
-    }
-    (cores.len(), threads)
 }
 
 /// A mainboard's maker without the company suffixes, then its model.
@@ -138,18 +109,6 @@ mod tests {
         // `NAME` is not the end of `PRETTY_NAME`, and nothing is nothing.
         assert_eq!(os_release(gentoo, "NAME").as_deref(), Some("Gentoo"));
         assert_eq!(os_release("PRETTY_NAME=\n", "PRETTY_NAME"), None);
-    }
-
-    #[test]
-    fn a_processor_is_named_plainly_and_its_cores_are_counted_once() {
-        assert_eq!(cpu_model("model name\t: Intel(R) Core(TM) i7-14700K\n"), "Intel Core i7-14700K");
-        assert_eq!(cpu_model("model name\t: Intel(R) Core(TM) i5-8250U CPU @ 1.60GHz\n"), "Intel Core i5-8250U");
-        assert_eq!(cpu_model("model name\t: AMD Ryzen 7 5800X 8-Core Processor\n"), "AMD Ryzen 7 5800X 8-Core");
-        assert_eq!(cpu_model(""), "");
-        // Two threads on core 0, one on core 1, and core 0 of a second package.
-        let info = "processor: 0\nphysical id: 0\ncore id: 0\n\nprocessor: 1\nphysical id: 0\ncore id: 0\n\nprocessor: 2\nphysical id: 0\ncore id: 1\n\nprocessor: 3\nphysical id: 1\ncore id: 0\n";
-        assert_eq!(cpu_counts(info), (3, 4));
-        assert_eq!(cpu_counts("processor: 0\nprocessor: 1\n"), (0, 2));
     }
 
     #[test]

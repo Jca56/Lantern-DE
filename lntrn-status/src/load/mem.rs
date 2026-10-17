@@ -2,7 +2,7 @@
 
 use std::fs;
 
-use super::push;
+use super::{push, trim};
 
 /// Everything in bytes.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -75,18 +75,31 @@ pub fn parse_meminfo(text: &str) -> Mem {
     mem
 }
 
-#[derive(Default)]
 pub struct MemSampler {
     history: Vec<f32>,
     swap_history: Vec<f32>,
+    /// How many looks the histories keep.
+    cap: usize,
 }
 
 impl MemSampler {
+    /// Its histories keep the last `cap` looks.
+    pub fn new(cap: usize) -> Self {
+        Self { history: Vec::new(), swap_history: Vec::new(), cap }
+    }
+
+    /// Keep `cap` looks from now on.
+    pub fn set_cap(&mut self, cap: usize) {
+        self.cap = cap;
+        trim(&mut self.history, cap);
+        trim(&mut self.swap_history, cap);
+    }
+
     pub fn sample(&mut self) -> Mem {
         let mut mem = parse_meminfo(&fs::read_to_string("/proc/meminfo").unwrap_or_default());
-        push(&mut self.history, mem.used_percent());
+        push(&mut self.history, mem.used_percent(), self.cap);
         if mem.swap_total > 0 {
-            push(&mut self.swap_history, mem.swap_percent());
+            push(&mut self.swap_history, mem.swap_percent(), self.cap);
         } else {
             self.swap_history.clear();
         }
@@ -123,5 +136,18 @@ mod tests {
         // there is: held to the total.
         assert_eq!(parse_meminfo("MemTotal: 100 kB\nMemFree: 40 kB\n").available, 40 * 1024);
         assert_eq!(parse_meminfo("MemTotal: 100 kB\nMemAvailable: 900 kB\n").used(), 0);
+    }
+
+    #[test]
+    fn this_machine_is_read_and_its_history_kept_to_its_cap() {
+        let mut s = MemSampler::new(2);
+        for _ in 0..3 {
+            s.sample();
+        }
+        let m = s.sample();
+        assert!(m.total > 0 && m.used() <= m.total);
+        assert_eq!(m.history.len(), 2);
+        s.set_cap(1);
+        assert_eq!(s.history.len(), 1);
     }
 }

@@ -20,13 +20,17 @@
 //!   and pairing new ones (the desktop's pairing agent asking the person
 //!   what pairing needs), forgetting old ones; files to and from them
 //!   through obexd on the session bus.
+//! - [`load`]: how hard the machine works: the processors and how hot
+//!   they run, the memory, the graphics cards, the busiest programs.
+//!   Samplers the System Monitor drives, and [`Load`], a thread looking
+//!   on a beat for a bar's mini monitors.
 //!
 //! Each `start` takes a [`Notify`], called from its thread whenever what
 //! it shows changed (never when it didn't), so a UI sleeps until then;
 //! `state` reads what it shows now. The D-Bus ones follow the daemons'
 //! own signals rather than asking over and over. No crate but ours: the
-//! bus is `lntrn-dbus`, and the few libc calls std doesn't wrap are
-//! declared in `sys`.
+//! bus is `lntrn-dbus`, NVIDIA's library is opened with `lntrn-sys`, and
+//! the few libc calls std doesn't wrap are declared in `sys`.
 
 pub mod apps;
 pub mod audio;
@@ -36,6 +40,7 @@ pub mod bluetooth;
 mod board;
 mod bus;
 mod level;
+pub mod load;
 pub mod secret;
 mod sys;
 pub mod wifi;
@@ -46,6 +51,7 @@ pub use backlight::{Backlight, BacklightState};
 pub use battery::{Battery, BatteryState};
 pub use bluetooth::{Bluetooth, BluetoothState};
 pub use board::Notify;
+pub use load::{Load, LoadOptions, LoadState};
 pub use wifi::{Wifi, WifiState};
 
 #[cfg(test)]

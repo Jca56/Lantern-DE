@@ -2,7 +2,8 @@
 //! driver keeps a card's load and memory out of sysfs, and this is where
 //! it says them. Opened at run time, so a machine without the driver
 //! simply has no cards here. Only readings are asked for: nothing in
-//! this file can change a card.
+//! this file can change a card. Each card's PCI address is learnt, so
+//! what sysfs says of it (whether it is asleep) is found.
 
 use std::ffi::{CStr, c_char, c_uint, c_void};
 
@@ -24,6 +25,20 @@ struct Utilization {
     memory: c_uint,
 }
 
+/// `nvmlPciInfo_t`, with room past its end in case a driver's is
+/// longer than its header says.
+#[repr(C)]
+struct PciInfo {
+    _bus_id_legacy: [c_char; 16],
+    domain: c_uint,
+    bus: c_uint,
+    device: c_uint,
+    _pci_device_id: c_uint,
+    _pci_subsystem_id: c_uint,
+    _bus_id: [c_char; 32],
+    _room: [u8; 64],
+}
+
 #[repr(C)]
 #[derive(Default)]
 struct MemoryInfo {
@@ -41,6 +56,7 @@ type FnDevNumber = unsafe extern "C" fn(Device, *mut c_uint) -> Status;
 type FnDevIndexed = unsafe extern "C" fn(Device, c_uint, *mut c_uint) -> Status;
 type FnDevUtilization = unsafe extern "C" fn(Device, *mut Utilization) -> Status;
 type FnDevMemory = unsafe extern "C" fn(Device, *mut MemoryInfo) -> Status;
+type FnDevPci = unsafe extern "C" fn(Device, *mut PciInfo) -> Status;
 
 /// What one card reads right now. Whatever it won't say is `None`.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -59,6 +75,9 @@ pub struct Reading {
 struct Card {
     device: Device,
     name: String,
+    /// Its PCI address as sysfs writes it: `0000:01:00.0`. Empty when
+    /// the driver won't say.
+    bus: String,
     fans: u32,
 }
 
@@ -104,6 +123,7 @@ impl Nvml {
             let temperature: FnDevIndexed = lib.symbol("nvmlDeviceGetTemperature")?;
             let driver_version: Option<FnText> = lib.symbol("nvmlSystemGetDriverVersion");
             let fan_count: Option<FnDevNumber> = lib.symbol("nvmlDeviceGetNumFans");
+            let pci: Option<FnDevPci> = lib.symbol("nvmlDeviceGetPciInfo_v3");
             // The kernel module isn't loaded, or there is no card.
             if init() != SUCCESS {
                 return None;
@@ -124,7 +144,14 @@ impl Nvml {
                 if fan_count.is_none_or(|f| f(device, &mut fans) != SUCCESS) {
                     fans = 0;
                 }
-                cards.push(Card { device, name: if named { text(&buf) } else { "NVIDIA graphics".to_owned() }, fans: fans.min(8) });
+                // SAFETY: a plain C struct, all zeroes valid, filled in or
+                // left alone.
+                let mut info: PciInfo = std::mem::zeroed();
+                let bus = match pci {
+                    Some(f) if f(device, &mut info) == SUCCESS => format!("{:04x}:{:02x}:{:02x}.0", info.domain & 0xffff, info.bus & 0xff, info.device & 0x1f),
+                    _ => String::new(),
+                };
+                cards.push(Card { device, name: if named { text(&buf) } else { "NVIDIA graphics".to_owned() }, bus, fans: fans.min(8) });
             }
             if cards.is_empty() {
                 shutdown();
@@ -156,6 +183,11 @@ impl Nvml {
     /// Each card's name, in the order [`Self::read`] counts them.
     pub fn names(&self) -> Vec<String> {
         self.cards.iter().map(|c| c.name.clone()).collect()
+    }
+
+    /// Each card's PCI address (`0000:01:00.0`), in the same order.
+    pub fn buses(&self) -> Vec<String> {
+        self.cards.iter().map(|c| c.bus.clone()).collect()
     }
 
     /// What card `index` reads now.
@@ -209,6 +241,7 @@ mod tests {
         // that isn't there has nothing to say.
         if let Some(nvml) = Nvml::open() {
             assert!(!nvml.names().is_empty());
+            assert!(nvml.buses().iter().all(|b| b.is_empty() || (b.len() == 12 && b.ends_with(".0"))), "{:?}", nvml.buses());
             assert_eq!(nvml.read(99), Reading::default());
             let r = nvml.read(0);
             assert!(r.usage.is_none_or(|u| (0.0..=100.0).contains(&u)));

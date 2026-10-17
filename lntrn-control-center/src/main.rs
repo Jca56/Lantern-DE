@@ -12,12 +12,18 @@
 //!   how it is painted, floating or docked.
 //! - `clock.rs` — the time and date at its right end, and the thread
 //!   that turns the minute.
+//! - `calendar/` — the clock as the calendar's face: its popup (the month,
+//!   the day's events, the form making them), the events' file, and the
+//!   thread saying their reminders.
 //! - `tray/` — the system tray before the clock: battery, WiFi,
 //!   Bluetooth, sound, brightness, the workspace's number and Game Mode,
 //!   and their popups (`lntrn-status` keeps them current).
 //! - `game_mode.rs` — the line to the compositor's Game Mode.
 //! - `launcher/` — the app launcher: its button at the bar's left end and
 //!   the menu it opens above the bar.
+//! - `monitors/` — the mini monitors after it: the processors, the
+//!   graphics card and the memory graphed, and their popups (`lntrn-status`
+//!   looks at the machine).
 //! - `dock/` — the dock in the middle: pinned and running apps, their
 //!   cards with live thumbnails, their menus.
 //! - `compositor.rs` — the line to the compositor: whether a window fills
@@ -41,6 +47,7 @@
 
 mod app;
 mod bar;
+mod calendar;
 mod clock;
 mod compositor;
 mod dock;
@@ -50,6 +57,7 @@ mod hide;
 mod idlist;
 mod instance;
 mod launcher;
+mod monitors;
 mod morph;
 mod settings;
 #[cfg(test)]

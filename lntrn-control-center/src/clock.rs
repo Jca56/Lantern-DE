@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use lntrn_app::Waker;
 use lntrn_core::log_warn;
-use lntrn_math::{Rect, Vec2};
+use lntrn_math::{Color, Rect, Vec2};
 use lntrn_text::TextStyle;
 use lntrn_ui::Ui;
 
@@ -39,6 +39,7 @@ struct Timespec {
 unsafe extern "C" {
     fn tzset();
     fn localtime_r(t: *const i64, out: *mut Tm) -> *mut Tm;
+    fn mktime(tm: *mut Tm) -> i64;
     fn clock_nanosleep(clock: i32, flags: i32, request: *const Timespec, remain: *mut Timespec) -> i32;
 }
 const CLOCK_REALTIME: i32 = 0;
@@ -54,8 +55,8 @@ const PAD: f64 = 20.0;
 /// Between date and time when they share a line.
 const SPACING: f64 = 14.0;
 
-const WEEKDAYS: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+pub const WEEKDAYS: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+pub const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 /// A moment on the local clock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,6 +88,22 @@ impl Local {
         };
         let u = |v: i32| u32::try_from(v).unwrap_or(0);
         Some(Local { year: tm.year + 1900, month: u(tm.mon + 1), day: u(tm.mday), weekday: u(tm.wday) % 7, hour: u(tm.hour), minute: u(tm.min), second: u(tm.sec) })
+    }
+
+    /// Seconds since the epoch at `minute` into the day `year`-`month`-
+    /// `day` on the local clock, its summer time worked out for that day
+    /// (1440 is the next day's midnight).
+    pub fn epoch_at(year: i32, month: u32, day: u32, minute: u32) -> Option<i64> {
+        let i = |v: u32| i32::try_from(v).ok();
+        // SAFETY: plain libc calls on our own zeroed `tm`; `mktime` only
+        // reads it and writes it back normalized.
+        let t = unsafe {
+            let mut tm: Tm = std::mem::zeroed();
+            (tm.year, tm.mon, tm.mday, tm.hour, tm.min, tm.isdst) = (year - 1900, i(month)? - 1, i(day)?, i(minute / 60)?, i(minute % 60)?, -1);
+            tzset();
+            mktime(&mut tm)
+        };
+        (t != -1).then_some(t)
     }
 
     fn weekday_name(&self) -> &'static str {
@@ -186,9 +203,26 @@ pub fn redraw_after(opts: ClockOptions) -> Option<f64> {
     Some(if opts.seconds { soon } else { soon + 1.0 })
 }
 
-/// Draw the clock at the right end of `plate` (window pixels). Returns
-/// the room it took, so what is laid out beside it knows where to stop.
-pub fn draw(ui: &mut Ui, plate: Rect, opts: ClockOptions, now: &Local) -> Rect {
+/// The clock's lines placed at the right end of a plate, not yet drawn:
+/// what goes under them (the calendar's lit face) is painted first.
+pub struct Layout {
+    /// The room it takes, so what is laid out beside it knows where to
+    /// stop: the plate's height, from the widest line's left to the text's
+    /// right end.
+    pub rect: Rect,
+    lines: Vec<(String, TextStyle, Rect, Color)>,
+}
+
+impl Layout {
+    pub fn paint(&self, ui: &mut Ui) {
+        for (text, style, rect, color) in &self.lines {
+            ui.text_right(text, style, *rect, *color);
+        }
+    }
+}
+
+/// Place the clock at the right end of `plate` (window pixels).
+pub fn layout(ui: &mut Ui, plate: Rect, opts: ClockOptions, now: &Local) -> Layout {
     let m = ui.m;
     let (ink, dim) = (ui.theme.text, ui.theme.text_dim);
     let time = time_text(now, opts);
@@ -200,8 +234,8 @@ pub fn draw(ui: &mut Ui, plate: Rect, opts: ClockOptions, now: &Local) -> Rect {
     let line = |left: f64, top: f64, h: f64| Rect::new(Vec2::new(left, top), Vec2::new(right, top + h));
     let Some(date) = opts.date.then(|| date_text(now, opts.style)) else {
         let left = right - time_w;
-        ui.text_right(&time, &time_style, line(left, plate.min.y, plate.height()), ink);
-        return line(left, plate.min.y, plate.height());
+        let rect = line(left, plate.min.y, plate.height());
+        return Layout { rect, lines: vec![(time, time_style, rect, ink)] };
     };
     let date_w = ui.measure(&date, &date_style);
     let date_h = f64::from(date_style.line_height());
@@ -209,21 +243,29 @@ pub fn draw(ui: &mut Ui, plate: Rect, opts: ClockOptions, now: &Local) -> Rect {
     if time_h + date_h <= plate.height() - m.px(4.0) {
         let left = right - time_w.max(date_w);
         let top = (plate.center().y - (time_h + date_h) * 0.5).round();
-        ui.text_right(&time, &time_style, line(left, top, time_h), ink);
-        ui.text_right(&date, &date_style, line(left, top + time_h, date_h), dim);
-        return line(left, plate.min.y, plate.height());
+        let lines = vec![(time, time_style, line(left, top, time_h), ink), (date, date_style, line(left, top + time_h, date_h), dim)];
+        return Layout { rect: line(left, plate.min.y, plate.height()), lines };
     }
     let time_left = right - time_w;
-    ui.text_right(&time, &time_style, line(time_left, plate.min.y, plate.height()), ink);
     let date_right = time_left - m.px(SPACING);
     let left = date_right - date_w;
-    ui.text_right(&date, &date_style, Rect::new(Vec2::new(left, plate.min.y), Vec2::new(date_right, plate.max.y)), dim);
-    line(left, plate.min.y, plate.height())
+    let date_at = Rect::new(Vec2::new(left, plate.min.y), Vec2::new(date_right, plate.max.y));
+    let lines = vec![(time, time_style, line(time_left, plate.min.y, plate.height()), ink), (date, date_style, date_at, dim)];
+    Layout { rect: line(left, plate.min.y, plate.height()), lines }
 }
 
 /// Wake the loop on each wall-clock minute from a thread of its own.
 pub fn watch(waker: Waker) {
-    let spawned = std::thread::Builder::new().name("clock".into()).spawn(move || {
+    if let Err(e) = each_minute("clock", move || waker.wake()) {
+        log_warn!("clock: no thread: {e}; the minute turns on the UI's timer alone");
+    }
+}
+
+/// Call `f` from a thread called `name` just as each wall-clock minute
+/// starts. It sleeps on the real-time clock to an absolute deadline, so it
+/// is on time after a suspend and when the clock is set.
+pub fn each_minute(name: &str, mut f: impl FnMut() + Send + 'static) -> std::io::Result<()> {
+    std::thread::Builder::new().name(name.into()).spawn(move || {
         loop {
             let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) else {
                 std::thread::sleep(Duration::from_secs(1));
@@ -232,12 +274,10 @@ pub fn watch(waker: Waker) {
             let next = Timespec { sec: i64::try_from(now.as_secs() / 60 * 60 + 60).unwrap_or(i64::MAX), nsec: 0 };
             // SAFETY: a plain libc call on our own timespec.
             while unsafe { clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &next, std::ptr::null_mut()) } == EINTR {}
-            waker.wake();
+            f();
         }
-    });
-    if let Err(e) = spawned {
-        log_warn!("clock: no thread: {e}; the minute turns on the UI's timer alone");
-    }
+    })?;
+    Ok(())
 }
 
 #[cfg(test)]

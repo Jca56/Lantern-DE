@@ -2899,6 +2899,7 @@ name = "lntrn-status"
 version = "0.1.0"
 dependencies = [
  "lntrn-dbus",
+ "lntrn-sys",
 ]
 
 [[package]]
@@ -2925,6 +2926,7 @@ dependencies = [
  "lntrn-kit",
  "lntrn-math",
  "lntrn-props",
+ "lntrn-status",
  "lntrn-sys",
  "lntrn-ui 0.2.0",
 ]

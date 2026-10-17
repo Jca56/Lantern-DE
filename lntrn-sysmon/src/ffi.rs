@@ -1,16 +1,13 @@
-//! The few libc calls std has no face for: how big a page is, how full
-//! a filesystem is, and sending a process a signal.
+//! The few libc calls std has no face for: how full a filesystem is,
+//! and sending a process a signal.
 
-use std::ffi::{CString, c_char, c_int, c_long};
-use std::sync::OnceLock;
+use std::ffi::{CString, c_char, c_int};
 
 unsafe extern "C" {
-    fn sysconf(name: c_int) -> c_long;
     fn kill(pid: c_int, sig: c_int) -> c_int;
     fn statvfs(path: *const c_char, buf: *mut StatVfs) -> c_int;
 }
 
-const SC_PAGESIZE: c_int = 30;
 const EPERM: i32 = 1;
 const ESRCH: i32 = 3;
 
@@ -35,13 +32,6 @@ struct StatVfs {
     flag: u64,
     namemax: u64,
     spare: [c_int; 6],
-}
-
-/// Bytes in a page of memory.
-pub fn page_size() -> u64 {
-    static SIZE: OnceLock<u64> = OnceLock::new();
-    // SAFETY: sysconf only reads its argument.
-    *SIZE.get_or_init(|| u64::try_from(unsafe { sysconf(SC_PAGESIZE) }).ok().filter(|n| *n > 0).unwrap_or(4096))
 }
 
 /// How big the filesystem mounted at `path` is and how much of it an
@@ -82,7 +72,6 @@ mod tests {
 
     #[test]
     fn the_machine_answers_and_nonsense_is_refused() {
-        assert!(page_size().is_power_of_two());
         let (total, free) = space("/").expect("the root filesystem");
         assert!(total > 0 && free <= total);
         assert!(space("/no/such/place").is_none());

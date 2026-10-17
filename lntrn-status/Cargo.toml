@@ -1,9 +1,10 @@
 [package]
 name = "lntrn-status"
 version = "0.1.0"
-description = "Lantern DE - the machine's status and its quick controls: battery, backlight, audio, WiFi, Bluetooth"
+description = "Lantern DE - the machine's status and its quick controls: battery, backlight, audio, WiFi, Bluetooth, and how hard it works"
 authors = ["Alva"]
 edition = "2024"
 
 [dependencies]
 lntrn-dbus = { path = "../lntrn-dbus" }
+lntrn-sys = { path = "../../lantern-ui-2/crates/lntrn-sys" }

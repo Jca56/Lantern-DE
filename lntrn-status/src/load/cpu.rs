@@ -1,9 +1,11 @@
 //! The processors: how busy each has been since the last look, from the
-//! tick counters in `/proc/stat`, and how fast each is clocked.
+//! tick counters in `/proc/stat`, how fast each is clocked, and what
+//! they are called.
 
+use std::collections::BTreeSet;
 use std::fs;
 
-use super::{push, read, read_number};
+use super::{push, read, read_number, trim};
 
 /// A processor's clock ticks so far: all of them, and those spent
 /// working.
@@ -89,6 +91,8 @@ pub struct CpuSampler {
     all: Ticks,
     each: Vec<(usize, Ticks)>,
     history: Vec<f32>,
+    /// How many looks the history keeps.
+    cap: usize,
 }
 
 fn stat() -> (Ticks, Vec<(usize, Ticks)>) {
@@ -100,10 +104,17 @@ fn cpufreq(index: usize, file: &str) -> String {
 }
 
 impl CpuSampler {
-    /// Take the first reading: usage is always since the one before.
-    pub fn new() -> Self {
+    /// Take the first reading: usage is always since the one before. The
+    /// history keeps the last `cap` looks.
+    pub fn new(cap: usize) -> Self {
         let (all, each) = stat();
-        Self { all, each, history: Vec::new() }
+        Self { all, each, history: Vec::new(), cap }
+    }
+
+    /// Keep `cap` looks from now on.
+    pub fn set_cap(&mut self, cap: usize) {
+        self.cap = cap;
+        trim(&mut self.history, cap);
     }
 
     /// The processors now, and how many ticks the whole machine has
@@ -129,11 +140,45 @@ impl CpuSampler {
         let clocked: Vec<f32> = threads.iter().map(|t| t.mhz).filter(|m| *m > 0.0).collect();
         let mhz = if clocked.is_empty() { 0.0 } else { clocked.iter().sum::<f32>() / clocked.len() as f32 };
         let governor = read(&cpufreq(threads.first().map_or(0, |t| t.index), "scaling_governor")).unwrap_or_default();
-        push(&mut self.history, usage);
+        push(&mut self.history, usage, self.cap);
         self.all = all;
         self.each = each;
         (Cpu { usage, threads, mhz, governor, history: self.history.clone() }, elapsed)
     }
+}
+
+/// A processor's name as `/proc/cpuinfo` has it, without the trademark
+/// signs and the clock speed it is sold at.
+pub fn cpu_model(cpuinfo: &str) -> String {
+    let raw = cpuinfo.lines().find(|l| l.starts_with("model name")).and_then(|l| l.split_once(':')).map(|(_, v)| v.trim()).unwrap_or("");
+    let name = raw.replace("(R)", "").replace("(TM)", "").replace("(tm)", "").replace(" CPU", "").replace(" Processor", "");
+    let name = name.split(" @ ").next().unwrap_or("");
+    name.split_ascii_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// How many cores and threads `/proc/cpuinfo` lists. Cores are told
+/// apart by which package and which core in it a thread sits on; a
+/// kernel that doesn't say gets zero cores.
+pub fn cpu_counts(cpuinfo: &str) -> (usize, usize) {
+    let mut cores = BTreeSet::new();
+    let (mut threads, mut package) = (0, "");
+    for line in cpuinfo.lines() {
+        let Some((key, value)) = line.split_once(':') else { continue };
+        match key.trim() {
+            "processor" => threads += 1,
+            "physical id" => package = value.trim(),
+            "core id" => {
+                cores.insert((package, value.trim()));
+            }
+            _ => {}
+        }
+    }
+    (cores.len(), threads)
+}
+
+/// This machine's processor's name, from `/proc/cpuinfo`.
+pub fn this_cpu() -> String {
+    cpu_model(&fs::read_to_string("/proc/cpuinfo").unwrap_or_default())
 }
 
 #[cfg(test)]
@@ -168,11 +213,28 @@ mod tests {
     }
 
     #[test]
-    fn this_machine_is_read() {
-        let mut s = CpuSampler::new();
+    fn a_processor_is_named_plainly_and_its_cores_are_counted_once() {
+        assert_eq!(cpu_model("model name\t: Intel(R) Core(TM) i7-14700K\n"), "Intel Core i7-14700K");
+        assert_eq!(cpu_model("model name\t: Intel(R) Core(TM) i5-8250U CPU @ 1.60GHz\n"), "Intel Core i5-8250U");
+        assert_eq!(cpu_model("model name\t: AMD Ryzen 7 5800X 8-Core Processor\n"), "AMD Ryzen 7 5800X 8-Core");
+        assert_eq!(cpu_model(""), "");
+        // Two threads on core 0, one on core 1, and core 0 of a second package.
+        let info = "processor: 0\nphysical id: 0\ncore id: 0\n\nprocessor: 1\nphysical id: 0\ncore id: 0\n\nprocessor: 2\nphysical id: 0\ncore id: 1\n\nprocessor: 3\nphysical id: 1\ncore id: 0\n";
+        assert_eq!(cpu_counts(info), (3, 4));
+        assert_eq!(cpu_counts("processor: 0\nprocessor: 1\n"), (0, 2));
+    }
+
+    #[test]
+    fn this_machine_is_read_and_its_history_kept_to_its_cap() {
+        let mut s = CpuSampler::new(2);
         let (cpu, _) = s.sample();
         assert!(!cpu.threads.is_empty());
         assert!((0.0..=100.0).contains(&cpu.usage));
         assert_eq!(cpu.history.len(), 1);
+        s.sample();
+        assert_eq!(s.sample().0.history.len(), 2);
+        s.set_cap(1);
+        assert_eq!(s.history.len(), 1);
+        assert!(!this_cpu().is_empty());
     }
 }

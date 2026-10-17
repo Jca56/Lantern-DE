@@ -3,14 +3,16 @@
 //! then the bar along the bottom of the screen, its
 //! height, corners and gaps, over the bottom of a screen with the bar
 //! drawn on it at its real size (the middle of the screen left out), then
-//! whether it hides between uses, what its clock shows, and which items its
-//! system tray shows, dragged into the order the bar shows them in. The
-//! bar reads `[control_center]` as it changes.
+//! whether it hides between uses, what its clock shows, how its calendar
+//! starts the week and whether it dots the clock, which items its
+//! system tray shows, dragged into the order the bar shows them in, and
+//! its mini monitors likewise, with how often they look and how far back
+//! they graph. The bar reads `[control_center]` as it changes.
 
 use lntrn_math::{Color, Rect, Vec2};
 use lntrn_ui::Ui;
 
-use crate::config::{CC_DATE_STYLES, CC_GAPS_BELOW, CC_GAPS_SIDES, CC_HEIGHTS, CC_HIDE_DELAYS, CC_RADII, CC_SLIDES, CC_VISIBILITIES, Config, PANELS};
+use crate::config::{CC_DATE_STYLES, CC_GAPS_BELOW, CC_GAPS_SIDES, CC_HEIGHTS, CC_HIDE_DELAYS, CC_MONITOR_RATES, CC_MONITOR_SPANS, CC_RADII, CC_SLIDES, CC_VISIBILITIES, CC_WEEK_STARTS, Config, PANELS};
 use crate::kit::{self, look, pixels};
 use crate::machine;
 
@@ -110,6 +112,42 @@ pub fn draw(cfg: &mut Config, ui: &mut Ui) -> bool {
             changed = true;
         }
     });
+
+    kit::caption(ui, "Calendar");
+    kit::card(ui, "calendar", |c| {
+        let labels: Vec<&str> = CC_WEEK_STARTS.iter().map(|(_, shown)| *shown).collect();
+        let mut index = CC_WEEK_STARTS.iter().position(|(word, _)| *word == cc.calendar_week_start).unwrap_or(0);
+        if c.dropdown("Weeks start on", "", &mut index, &labels) {
+            cc.calendar_week_start = CC_WEEK_STARTS[index].0.to_owned();
+            changed = true;
+        }
+        changed |= c.switch("Event dot", "A dot by the clock while today has events still to come.", &mut cc.calendar_dot);
+    });
+    kit::note(ui, "A click on the clock opens the calendar: the month, each day's events, and making new ones. Rest the pointer on the clock to see the date and what's left of today.");
+
+    kit::caption(ui, "Mini Monitors");
+    kit::card(ui, "monitors", |c| {
+        // In `monitor_order`'s order, the top one leftmost on the bar.
+        let moved = c.reorder("order", &mut cc.monitor_order, String::as_str, |c, word| match word.as_str() {
+            "cpu" => changed |= c.switch("CPU", "Its load graphed, and its temperature.", &mut cc.monitor_cpu),
+            "gpu" => changed |= c.switch("GPU", "Its load graphed, its temperature and video memory. Shows where a graphics card says how busy it is.", &mut cc.monitor_gpu),
+            "ram" => changed |= c.switch("RAM", "Its load graphed, and how much is in use.", &mut cc.monitor_ram),
+            _ => {}
+        });
+        changed |= moved;
+        let pick = |c: &mut kit::Card, label: &str, value: &mut i64, choices: &[(i64, &str)]| {
+            let labels: Vec<&str> = choices.iter().map(|(_, shown)| *shown).collect();
+            let mut index = choices.iter().position(|(v, _)| v == value).unwrap_or(1);
+            let picked = c.dropdown(label, "", &mut index, &labels);
+            if picked {
+                *value = choices[index].0;
+            }
+            picked
+        };
+        changed |= pick(c, "Update", &mut cc.monitor_interval_ms, &CC_MONITOR_RATES);
+        changed |= pick(c, "Graphs show the last", &mut cc.monitor_span_s, &CC_MONITOR_SPANS);
+    });
+    kit::note(ui, "They sit after the app launcher. Drag one by the dots at its left to move it: top to bottom here is left to right on the bar. A click on one opens its details, with a way into the System Monitor.");
 
     kit::caption(ui, "System Tray");
     kit::card(ui, "tray", |c| {

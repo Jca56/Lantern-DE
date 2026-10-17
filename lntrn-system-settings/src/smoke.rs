@@ -442,8 +442,9 @@ fn a_grip_drags_its_entry_and_the_arrows_move_it() {
 #[test]
 fn the_control_center_page_drags_the_trays_items_into_order() {
     let mut cfg = Config::empty();
-    // Tall enough for the tray's card under the clock's.
-    let mut h = kit_at(1000.0, 2600.0);
+    // Tall enough for the tray's card under the clock's, the calendar's
+    // and the mini monitors'.
+    let mut h = kit_at(1000.0, 3400.0);
     h.settle(4, |ui| {
         control_center::draw(&mut cfg, ui);
     });
