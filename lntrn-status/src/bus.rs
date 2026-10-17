@@ -131,6 +131,29 @@ impl Bus {
         }
     }
 
+    /// Call `member` without waiting: its serial, for matching the reply
+    /// that [`Self::drain`] brings later. For a thread with many calls out
+    /// at once, which a blocking call would hold up.
+    pub fn ask(&mut self, dest: &str, path: &str, iface: &str, member: &str, sig: &str, body: &[u8]) -> u32 {
+        self.conn.method_call_with_flags(self.flags, dest, path, iface, member, sig, body)
+    }
+
+    /// Take the well-known `name` for ourselves; `false` when another has
+    /// it.
+    pub fn claim(&mut self, name: &str) -> bool {
+        self.conn.request_name(name)
+    }
+
+    /// Say `member` from `path` to whoever listens.
+    pub fn signal(&mut self, path: &str, iface: &str, member: &str, sig: &str, body: &[u8]) {
+        self.conn.send_signal(path, iface, member, sig, body);
+    }
+
+    /// Hear the signals `rule` matches.
+    pub fn hear(&mut self, rule: &str) {
+        self.conn.add_match(rule);
+    }
+
     /// Who has `name` on the bus now, by their unique name (`:1.7`).
     pub fn owner(&mut self, name: &str) -> Result<String, CallError> {
         let mut body = Vec::new();

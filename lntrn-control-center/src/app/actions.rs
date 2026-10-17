@@ -81,6 +81,12 @@ impl App {
             _ => None,
         };
         match action.id.as_str() {
+            // A row of an app's tray menu: back to the app.
+            crate::tray::apps::CLICK => {
+                if let (Some(key), Some(id), Some(apps)) = (text("key"), text("id").and_then(|id| id.parse().ok()), &self.tray.apps) {
+                    apps.click(&key, id);
+                }
+            }
             OPEN => {
                 if let Some(command) = text("command") {
                     launch(&command);

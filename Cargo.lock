@@ -2499,6 +2499,7 @@ dependencies = [
  "lntrn-apps",
  "lntrn-core",
  "lntrn-data",
+ "lntrn-image",
  "lntrn-kit",
  "lntrn-math",
  "lntrn-props",

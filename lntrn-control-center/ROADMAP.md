@@ -141,6 +141,21 @@ System Settings toggle picks which one the session uses.
 >   name and move to `~/Downloads`; progress shows under the device, and
 >   a notification says how sends and receives went. obexd takes one
 >   agent at a time: the bar's retries every 15 s while another holds it.
+> - **App icons in the tray (2026-10-17, Alva's answers):** the bar is the
+>   desktop's StatusNotifierWatcher + host (`lntrn-status`'s `apps`, on
+>   lntrn-dbus, a port of the Command Center's with calls answered by
+>   serial and items followed by their owner's unique name). **App icons**
+>   is a row in System Settings' tray order (`apps` in `tray_order`,
+>   `tray_apps`), first by default; an order saved before it gets it
+>   first. Passive items are hidden; all others show inline. Left click
+>   Activate (an item that's only a menu: its menu), middle click
+>   SecondaryActivate, wheel Scroll, right click its dbusmenu as the bar's
+>   own context menu in the overlay (submenus, ✓ for ticked rows, greyed
+>   rows as headers). Pictures: pixels the app sends, or a name looked up
+>   in its `IconThemePath`, the hicolor status/panel folders, then
+>   `lntrn-apps`; its first letter until one's there; an accent dot while
+>   it needs attention. Another tray holding the name: retried every 10 s.
+>   XEmbed (old X11 tray icons) isn't supported.
 > - **Tray order (2026-10-17, Alva's answers):** System Settings' System
 >   Tray card drags its rows by a six-dot grip at their left (or Up/Down,
 >   Home/End on a focused grip) into `[control_center] tray_order`, a list
@@ -195,8 +210,7 @@ open windows dock (middle).
 - [x] Tray: Bluetooth pairing (both ways), Forget, files (see above)
 - [ ] Mini system monitors: CPU (gold), GPU (green), RAM (blue), opening
       lntrn-system-monitor (Notes.md)
-- [ ] SNI app icons (Steam & co.): the Command Center owns the watcher
-      while both run
+- [x] SNI app icons (Steam & co.), see above
 
 ## Known gaps
 

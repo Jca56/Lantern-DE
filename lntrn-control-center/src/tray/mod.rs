@@ -1,6 +1,7 @@
 //! The system tray: the bar's right end before the clock, left to right
 //! in the order System Settings puts them (`[control_center]`'s
-//! `tray_order`), at first the battery (with its percent), WiFi,
+//! `tray_order`), at first apps' own icons (Steam, Discord…: `apps`), the
+//! battery (with its percent), WiFi,
 //! Bluetooth, sound, brightness, the workspace's number and Game Mode
 //! (`bar`). Each shows only where it means something (no battery on a
 //! desktop) and where System Settings leaves it on (`tray_*`). A click on the first
@@ -15,6 +16,7 @@
 //! a file) opens the Bluetooth popup by itself, once for each ask; a file
 //! to send is picked in the file manager, from a thread.
 
+pub mod apps;
 mod bar;
 pub mod glyphs;
 pub mod popup;
@@ -28,13 +30,15 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use lntrn_app::Waker;
 use lntrn_core::log_warn;
 use lntrn_math::Rect;
-use lntrn_status::{Audio, Backlight, Battery, Bluetooth, Notify, Wifi};
+use lntrn_status::{Apps, Audio, Backlight, Battery, Bluetooth, Notify, Wifi};
 
 use crate::game_mode::GameMode;
 use glyphs::Glyphs;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Item {
+    /// Apps' own icons: as many faces as there are apps showing one.
+    Apps,
     Battery,
     Wifi,
     Bluetooth,
@@ -46,11 +50,12 @@ pub enum Item {
 
 impl Item {
     /// Left to right, until System Settings says otherwise.
-    pub const ALL: [Item; 7] = [Item::Battery, Item::Wifi, Item::Bluetooth, Item::Audio, Item::Brightness, Item::Workspace, Item::GameMode];
+    pub const ALL: [Item; 8] = [Item::Apps, Item::Battery, Item::Wifi, Item::Bluetooth, Item::Audio, Item::Brightness, Item::Workspace, Item::GameMode];
 
     /// What `tray_order` calls it.
     pub fn word(self) -> &'static str {
         match self {
+            Item::Apps => "apps",
             Item::Battery => "battery",
             Item::Wifi => "wifi",
             Item::Bluetooth => "bluetooth",
@@ -62,23 +67,44 @@ impl Item {
     }
 
     /// Every item once, in the order `words` name them: a word that isn't
-    /// one is passed over, and the ones left out follow in their own order.
-    pub fn ordered<'a>(words: impl IntoIterator<Item = &'a str>) -> [Item; 7] {
-        let mut order = Vec::with_capacity(Item::ALL.len());
-        let named = words.into_iter().filter_map(|w| Item::ALL.into_iter().find(|i| i.word() == w));
-        for item in named.chain(Item::ALL) {
+    /// one is passed over, and one left out (new since the order was
+    /// saved) goes right after the last of those it comes after where it
+    /// starts (first, when none).
+    pub fn ordered<'a>(words: impl IntoIterator<Item = &'a str>) -> [Item; 8] {
+        let mut order: Vec<Item> = Vec::with_capacity(Item::ALL.len());
+        for item in words.into_iter().filter_map(|w| Item::ALL.into_iter().find(|i| i.word() == w)) {
             if !order.contains(&item) {
                 order.push(item);
             }
         }
+        for (at, item) in Item::ALL.into_iter().enumerate() {
+            if order.contains(&item) {
+                continue;
+            }
+            let after = order.iter().rposition(|o| Item::ALL[..at].contains(o)).map_or(0, |p| p + 1);
+            order.insert(after, item);
+        }
         order.try_into().unwrap_or(Item::ALL)
     }
+}
+
+/// An app's menu on its way to the screen.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AppMenu {
+    pub key: String,
+    /// The ask its menu answers.
+    pub ask: u64,
+    /// Shown by now (the overlay asked the shell for it).
+    pub shown: bool,
+    /// When it was asked for: an app that never answers isn't waited on.
+    pub at: std::time::Instant,
 }
 
 /// Which items show, and in what order: `[control_center]`'s `tray_*`
 /// keys, all on unless System Settings turned them off.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TrayOptions {
+    pub apps: bool,
     pub battery: bool,
     /// The percent beside the battery.
     pub battery_percent: bool,
@@ -89,18 +115,19 @@ pub struct TrayOptions {
     pub workspace: bool,
     pub game_mode: bool,
     /// Left to right (`tray_order`).
-    pub order: [Item; 7],
+    pub order: [Item; 8],
 }
 
 impl Default for TrayOptions {
     fn default() -> Self {
-        TrayOptions { battery: true, battery_percent: true, wifi: true, bluetooth: true, audio: true, brightness: true, workspace: true, game_mode: true, order: Item::ALL }
+        TrayOptions { apps: true, battery: true, battery_percent: true, wifi: true, bluetooth: true, audio: true, brightness: true, workspace: true, game_mode: true, order: Item::ALL }
     }
 }
 
 impl TrayOptions {
     pub fn shows(&self, item: Item) -> bool {
         match item {
+            Item::Apps => self.apps,
             Item::Battery => self.battery,
             Item::Wifi => self.wifi,
             Item::Bluetooth => self.bluetooth,
@@ -114,6 +141,14 @@ impl TrayOptions {
 
 #[derive(Default)]
 pub struct Tray {
+    pub apps: Option<Apps>,
+    /// Apps' pictures that came as pixels.
+    pub app_icons: apps::AppIcons,
+    /// An app's menu asked for: whose, the ask, and whether the bar has
+    /// shown it yet.
+    pub app_menu: Option<AppMenu>,
+    /// Each app's face as last drawn, by its item's key.
+    app_faces: Vec<(String, Rect)>,
     pub battery: Option<Battery>,
     pub backlight: Option<Backlight>,
     pub audio: Option<Audio>,
@@ -159,6 +194,9 @@ impl Tray {
         let wake = waker.clone();
         let notify: Notify = Arc::new(move || wake.wake());
         let start = |on: bool, slot: bool| on && !slot;
+        if start(options.apps, self.apps.is_some()) {
+            self.apps = Some(Apps::start(notify.clone()));
+        }
         if start(options.battery, self.battery.is_some()) {
             self.battery = Some(Battery::start(notify.clone()));
         }
@@ -180,6 +218,18 @@ impl Tray {
         }
     }
 
+    /// Where the app `key`'s face was last drawn on the bar.
+    pub fn app_face(&self, key: &str) -> Option<Rect> {
+        self.app_faces.iter().find(|(k, _)| k == key).map(|(_, r)| *r)
+    }
+
+    /// Ask the app `key` for its menu, for the overlay to show.
+    pub fn ask_app_menu(&mut self, key: &str) {
+        self.close();
+        let Some(ask) = self.apps.as_ref().map(|apps| apps.menu(key)) else { return };
+        self.app_menu = Some(AppMenu { key: key.to_owned(), ask, shown: false, at: std::time::Instant::now() });
+    }
+
     /// Where `item`'s face was last drawn on the bar.
     pub fn face(&self, item: Item) -> Option<Rect> {
         self.faces.iter().find(|(i, _)| *i == item).map(|(_, r)| *r)
@@ -198,6 +248,7 @@ impl Tray {
     }
 
     pub fn close(&mut self) {
+        self.app_menu = None;
         self.entry.put_away();
         if self.bt.adding
             && let Some(bt) = &self.bluetooth

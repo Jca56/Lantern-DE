@@ -12,6 +12,9 @@
 //!   its signal, the networks in range; joining one (telling iwd the
 //!   password it asks for, or a hidden one by name), leaving, forgetting
 //!   a saved one. Whether a cable is plugged in, too.
+//! - [`apps`]: apps' tray icons (StatusNotifierItem) on the session bus:
+//!   this is the desktop's tray, so they register here; their names,
+//!   pictures and menus, and clicks, the wheel and menu rows back to them.
 //! - [`bluetooth`]: BlueZ over the system bus: on or off, the paired
 //!   devices, their batteries; connecting and disconnecting them, finding
 //!   and pairing new ones (the desktop's pairing agent asking the person
@@ -25,6 +28,7 @@
 //! bus is `lntrn-dbus`, and the few libc calls std doesn't wrap are
 //! declared in `sys`.
 
+pub mod apps;
 pub mod audio;
 pub mod backlight;
 pub mod battery;
@@ -36,6 +40,7 @@ pub mod secret;
 mod sys;
 pub mod wifi;
 
+pub use apps::{Apps, AppsState};
 pub use audio::{Audio, AudioState};
 pub use backlight::{Backlight, BacklightState};
 pub use battery::{Battery, BatteryState};

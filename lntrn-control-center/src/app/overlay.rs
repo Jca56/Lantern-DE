@@ -24,6 +24,8 @@ use crate::tray::{self, Item};
 pub const NAMESPACE: &str = "lntrn-control-center-overlay";
 /// Between the card or the dock's menu and the bar, logical.
 const ABOVE_BAR: f64 = 10.0;
+/// How long an app's menu is waited for.
+const APP_MENU_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// The overlay's window, as the app keeps track of it.
 #[derive(Default)]
@@ -82,6 +84,7 @@ impl App {
     fn keyboard(&self) -> KeyboardMode {
         match (&self.dock.popup, self.launcher.open, self.tray.popup) {
             (_, true, _) | (Some(Popup::Menu { .. }), _, _) | (_, _, Some(_)) => KeyboardMode::Exclusive,
+            _ if self.tray.app_menu.is_some() => KeyboardMode::Exclusive,
             _ => KeyboardMode::None,
         }
     }
@@ -113,6 +116,10 @@ impl App {
         } else if let Some(item) = self.tray.popup {
             self.tell_thumbs(Vec::new(), 1.0);
             Some(self.tray_frame(ui, item))
+        } else if self.tray.app_menu.is_some() {
+            self.tell_thumbs(Vec::new(), 1.0);
+            self.app_menu_frame(ui, cx);
+            None
         } else {
             match self.dock.popup.clone() {
                 Some(Popup::Card(key)) => self.card_frame(ui, &key),
@@ -132,7 +139,7 @@ impl App {
         // The panels painted see-through: the compositor blurs behind them.
         let panes = glass::take();
         self.told.tell(&self.link, "overlay blur", glass::line(NAMESPACE, &panes, Vec2::splat(ui.m.scale)));
-        if !self.launcher.open && self.dock.popup.is_none() && self.tray.popup.is_none() {
+        if !self.launcher.open && self.dock.popup.is_none() && self.tray.popup.is_none() && self.tray.app_menu.is_none() {
             self.overlay.closing = true;
             self.told.tell(&self.link, "overlay blur", glass::line(NAMESPACE, &[], Vec2::splat(1.0)));
             self.tell_thumbs(Vec::new(), 1.0);
@@ -160,7 +167,41 @@ impl App {
             self.wake();
             return true;
         }
+        // An app's menu chosen from, Escaped or clicked off.
+        if self.tray.app_menu.as_ref().is_some_and(|m| m.shown) && !shell.popup_open() {
+            self.tray.app_menu = None;
+            self.wake();
+            return true;
+        }
         false
+    }
+
+    /// An app's menu: shown once it comes from the app, over its icon. An
+    /// app with nothing in it, or none answering in a while, and the
+    /// overlay goes.
+    fn app_menu_frame(&mut self, ui: &mut Ui, cx: &mut AreaCx<()>) {
+        let Some(asked) = self.tray.app_menu.clone().filter(|m| !m.shown) else { return };
+        let state = self.tray.apps.as_ref().map(lntrn_status::Apps::state).unwrap_or_default();
+        let menu = state.menu.as_ref().filter(|m| m.ask == asked.ask && m.key == asked.key);
+        let item = state.items.iter().find(|i| i.key == asked.key);
+        match (menu, item) {
+            (Some(menu), Some(item)) if !menu.entries.is_empty() => {
+                let m = ui.m;
+                let h = (menu.entries.len() as f64 + 1.0) * m.widget_h + m.pad * 4.0;
+                let x = self.tray.app_face(&asked.key).map_or(ui.state.pointer.x, |f| f.min.x);
+                let at = Vec2::new(x, ui.clip().max.y - m.px(self.place().clear + ABOVE_BAR) - h);
+                cx.request(ShellRequest::ContextMenu(Box::new(tray::apps::menu(item, &menu.entries, at))));
+                if let Some(m) = &mut self.tray.app_menu {
+                    m.shown = true;
+                }
+            }
+            _ if menu.is_some() || asked.at.elapsed() > APP_MENU_WAIT => {
+                self.tray.app_menu = None;
+                self.wake();
+            }
+            // Its answer wakes the loop; this is in case it never comes.
+            _ => ui.state.request_redraw_after(0.25),
+        }
     }
 
     /// The launcher's menu, above the bar's left end wherever the bar is.

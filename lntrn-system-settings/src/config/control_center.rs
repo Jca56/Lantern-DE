@@ -23,7 +23,7 @@ pub const CC_VISIBILITIES: [(&str, &str); 2] = [("always", "Always shown"), ("au
 pub const CC_DATE_STYLES: [(&str, &str); 4] = [("short", "Thu, Oct 16"), ("numeric", "10/16/2026"), ("long", "Thursday, October 16"), ("with_year", "Oct 16, 2026")];
 /// The tray's items as `tray_order` names them, in the order they start
 /// in, left to right (the bar's `Item`).
-pub const CC_TRAY_ITEMS: [&str; 7] = ["battery", "wifi", "bluetooth", "audio", "brightness", "workspace", "game_mode"];
+pub const CC_TRAY_ITEMS: [&str; 8] = ["apps", "battery", "wifi", "bluetooth", "audio", "brightness", "workspace", "game_mode"];
 
 props! {
     /// The bar's size and where it floats, in logical pixels, whether it
@@ -55,6 +55,8 @@ props! {
         /// The tray's items, each shown unless switched off (and only
         /// where the machine has it: no battery on a desktop).
         pub tray_battery: bool = true => { id: 13 },
+        /// Apps' own icons (Steam, Discord…).
+        pub tray_apps: bool = true => { id: 22 },
         /// The percent beside the battery.
         pub tray_battery_percent: bool = true => { id: 14 },
         pub tray_wifi: bool = true => { id: 15 },
@@ -84,11 +86,19 @@ impl ControlCenter {
             self.clock_date_style = "short".to_owned();
         }
         // Every item once, where it was put: a word that isn't one goes,
-        // and one left out goes at the end.
+        // and one left out (new since the order was saved) goes right after
+        // the last of those it comes after where it starts (first, when
+        // none). As the bar reads it (`Item::ordered`).
         let mut order: Vec<String> = Vec::with_capacity(CC_TRAY_ITEMS.len());
-        for word in self.tray_order.iter().map(String::as_str).chain(CC_TRAY_ITEMS) {
+        for word in self.tray_order.iter().map(String::as_str) {
             if CC_TRAY_ITEMS.contains(&word) && !order.iter().any(|w| w == word) {
                 order.push(word.to_owned());
+            }
+        }
+        for (at, word) in CC_TRAY_ITEMS.into_iter().enumerate() {
+            if !order.iter().any(|w| w == word) {
+                let after = order.iter().rposition(|w| CC_TRAY_ITEMS[..at].contains(&w.as_str())).map_or(0, |p| p + 1);
+                order.insert(after, word.to_owned());
             }
         }
         self.tray_order = order;

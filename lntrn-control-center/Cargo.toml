@@ -19,6 +19,7 @@ lntrn-data = { path = "../../lantern-ui-2/crates/lntrn-data" }
 lntrn-sys = { path = "../../lantern-ui-2/crates/lntrn-sys" }
 lntrn-text = { path = "../../lantern-ui-2/crates/lntrn-text" }
 lntrn-svg = { path = "../../lantern-ui-2/crates/lntrn-svg" }
+lntrn-image = { path = "../../lantern-ui-2/crates/lntrn-image" }
 lntrn-kit = { path = "../lntrn-kit" }
 lntrn-apps = { path = "../lntrn-apps" }
 lntrn-status = { path = "../lntrn-status" }

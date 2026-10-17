@@ -108,6 +108,7 @@ fn tray(doc: &Doc) -> TrayOptions {
     let key = |k: &str| doc.path(&format!("control_center.tray_{k}"));
     let on = |k: &str, or: bool| key(k).and_then(Doc::as_bool).unwrap_or(or);
     TrayOptions {
+        apps: on("apps", d.apps),
         battery: on("battery", d.battery),
         battery_percent: on("battery_percent", d.battery_percent),
         wifi: on("wifi", d.wifi),
@@ -231,10 +232,13 @@ mod tests {
     fn the_tray_is_in_the_order_system_settings_dragged_it_into() {
         use Item::*;
         let order = |text: &str| parse(&format!("[control_center]\ntray_order = {text}\n")).tray.order;
-        assert_eq!(order("[\"game_mode\", \"wifi\", \"battery\", \"audio\", \"brightness\", \"workspace\", \"bluetooth\"]"), [GameMode, Wifi, Battery, Audio, Brightness, Workspace, Bluetooth]);
+        // An order saved before apps had icons: theirs go where they start,
+        // first.
+        assert_eq!(order("[\"game_mode\", \"wifi\", \"battery\", \"audio\", \"brightness\", \"workspace\", \"bluetooth\"]"), [Apps, GameMode, Wifi, Battery, Audio, Brightness, Workspace, Bluetooth]);
+        assert_eq!(order("[\"battery\", \"wifi\", \"bluetooth\", \"audio\", \"brightness\", \"workspace\", \"game_mode\", \"apps\"]"), [Battery, Wifi, Bluetooth, Audio, Brightness, Workspace, GameMode, Apps]);
         // A stray word passed over, one named twice taken once, the ones
-        // left out after the rest in their own order.
-        assert_eq!(order("[\"workspace\", \"clock\", \"audio\", \"workspace\"]"), [Workspace, Audio, Battery, Wifi, Bluetooth, Brightness, GameMode]);
+        // left out each after the last named it comes after where it starts.
+        assert_eq!(order("[\"workspace\", \"clock\", \"audio\", \"workspace\"]"), [Apps, Battery, Wifi, Bluetooth, Workspace, Audio, Brightness, GameMode]);
         assert_eq!(order("\"wifi\""), Item::ALL, "not a list");
         assert_eq!(Settings::default().tray.order, Item::ALL);
     }

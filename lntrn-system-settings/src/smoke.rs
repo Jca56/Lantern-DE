@@ -454,7 +454,7 @@ fn the_control_center_page_drags_the_trays_items_into_order() {
     });
     // The battery and the backlight are this machine's to have or not.
     let everywhere = |cfg: &Config| cfg.control_center.tray_order.iter().filter(|w| !matches!(w.as_str(), "battery" | "brightness")).cloned().collect::<Vec<_>>().join(" ");
-    assert_eq!(everywhere(&cfg), "bluetooth audio wifi workspace game_mode");
+    assert_eq!(everywhere(&cfg), "apps bluetooth audio wifi workspace game_mode");
     assert!(cfg.control_center.tray_wifi, "the drag flipped nothing");
     // The rest of the row still flips its switch.
     h.click_on(WidgetId::ROOT.with("tray").with("WiFi"), |ui| {

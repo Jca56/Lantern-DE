@@ -381,9 +381,13 @@ mod tests {
         // missing item put at the end.
         let order = |cfg: &Config| cfg.control_center.tray_order.join(" ");
         assert_eq!(order(&cfg), control_center::CC_TRAY_ITEMS.join(" "));
-        cfg.control_center.tray_order = ["game_mode", "wifi", "clock", "wifi", "battery", "audio", "brightness", "workspace"].map(str::to_owned).to_vec();
+        cfg.control_center.tray_order = ["game_mode", "wifi", "clock", "wifi", "battery", "audio", "brightness", "workspace", "apps"].map(str::to_owned).to_vec();
         cfg.save_to(&path).unwrap();
-        assert_eq!(order(&cfg), "game_mode wifi battery audio brightness workspace bluetooth");
+        assert_eq!(order(&cfg), "game_mode wifi battery audio brightness workspace apps bluetooth", "after the last it comes after where it starts");
+        // An order saved before apps had icons: theirs go first.
+        cfg.control_center.tray_order = ["battery", "wifi", "bluetooth", "audio", "brightness", "workspace", "game_mode"].map(str::to_owned).to_vec();
+        cfg.save_to(&path).unwrap();
+        assert_eq!(order(&cfg), "apps battery wifi bluetooth audio brightness workspace game_mode");
         let words: Vec<String> = read_existing(&path).unwrap().path("control_center.tray_order").and_then(Doc::as_list).unwrap().iter().filter_map(Doc::as_str).map(str::to_owned).collect();
         assert_eq!(words, cfg.control_center.tray_order);
         let _ = std::fs::remove_dir_all(&dir);

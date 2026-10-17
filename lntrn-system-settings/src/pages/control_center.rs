@@ -122,6 +122,7 @@ pub fn draw(cfg: &mut Config, ui: &mut Ui) -> bool {
                     c.nested(|c| changed |= c.switch("Battery percent", "The number beside the battery.", &mut cc.tray_battery_percent));
                 }
             }
+            "apps" => changed |= c.switch("App icons", "Steam, Discord and other apps that keep running with no window.", &mut cc.tray_apps),
             "wifi" => changed |= c.switch("WiFi", "Networks, and joining one.", &mut cc.tray_wifi),
             "bluetooth" => changed |= c.switch("Bluetooth", "Connecting paired devices.", &mut cc.tray_bluetooth),
             "audio" => changed |= c.switch("Sound", "The volume and the outputs. The wheel turns it up and down, a middle click mutes.", &mut cc.tray_audio),

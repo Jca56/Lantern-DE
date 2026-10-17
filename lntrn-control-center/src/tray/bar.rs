@@ -1,14 +1,17 @@
 //! The tray's faces on the bar, in their order up to the clock: a
 //! picture each on a face as tall as the dock's (lit under the pointer,
 //! in the accent while its popup is up), the battery wider for its
-//! percent, the workspace's number in a box of its own. Hold Alt over one
-//! for what it says in words.
+//! percent, the workspace's number in a box of its own; apps' own icons
+//! (`apps`) a face each, where their group is in the order. Hold Alt over
+//! one for what it says in words.
 
+use lntrn_apps::Icons;
 use lntrn_kit::look;
 use lntrn_math::{Color, Rect, Vec2};
 use lntrn_status::audio::AudioState;
 use lntrn_status::battery::{BatteryState, Charge};
 use lntrn_status::bluetooth::BluetoothState;
+use lntrn_status::apps::{AppItem, Status};
 use lntrn_status::wifi::{Link, WifiState};
 use lntrn_text::TextStyle;
 use lntrn_ui::{Sense, Ui};
@@ -22,7 +25,7 @@ const MARGIN: f64 = 4.0;
 /// A face's width, and its picture's side, logical.
 const CELL: f64 = 50.0;
 const GLYPH: f64 = 30.0;
-const RADIUS: f64 = 12.0;
+pub(super) const RADIUS: f64 = 12.0;
 /// Between faces, logical.
 const GAP: f64 = 2.0;
 /// Inside the battery's face, either side; between its parts.
@@ -39,10 +42,20 @@ const CRITICAL: u32 = 25;
 const LOW: u32 = 50;
 
 /// What a frame's clicks on the tray ask of the app.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TrayPress {
     /// Open the item's popup, or close it when it is up.
     Toggle(Item),
+    /// Show the menu of the app whose item this is.
+    AppMenu(String),
+}
+
+/// A face on the tray: an item's, or an app's (by its place among those
+/// showing).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Face {
+    Item(Item),
+    App(usize),
 }
 
 /// What one frame of the tray did.
@@ -64,6 +77,8 @@ struct Seen {
     brightness: bool,
     workspaces: Option<Workspaces>,
     game: Option<bool>,
+    /// Apps' items that show: all but the idle.
+    apps: Vec<AppItem>,
 }
 
 impl Seen {
@@ -77,11 +92,13 @@ impl Seen {
             brightness: on(Item::Brightness) && tray.backlight.as_ref().is_some_and(|b| b.state().present),
             workspaces: link.workspaces().filter(|_| on(Item::Workspace)),
             game: on(Item::GameMode).then(|| tray.game.on()).flatten(),
+            apps: tray.apps.as_ref().filter(|_| on(Item::Apps)).map(|a| a.state().items.into_iter().filter(|i| i.status != Status::Passive).collect()).unwrap_or_default(),
         }
     }
 
     fn shows(&self, item: Item, options: TrayOptions) -> bool {
         match item {
+            Item::Apps => !self.apps.is_empty(),
             Item::Battery => self.battery.is_some(),
             Item::Wifi => self.wifi.is_some(),
             Item::Bluetooth => self.bluetooth.is_some(),
@@ -96,29 +113,51 @@ impl Seen {
 
 /// Draw the tray on `plate` (window pixels), its right end at `right`,
 /// on a plate of colour `under`.
-pub fn draw(tray: &mut Tray, ui: &mut Ui, plate: Rect, right: f64, under: Color, options: TrayOptions, link: &compositor::Link) -> TrayFrame {
+pub fn draw(tray: &mut Tray, ui: &mut Ui, plate: Rect, right: f64, under: Color, options: TrayOptions, link: &compositor::Link, icons: &mut Icons) -> TrayFrame {
     let m = ui.m;
     let seen = Seen::read(tray, options, link);
-    let items: Vec<Item> = options.order.into_iter().filter(|&i| seen.shows(i, options)).collect();
+    let faces: Vec<Face> = options
+        .order
+        .into_iter()
+        .filter(|&i| seen.shows(i, options))
+        .flat_map(|i| if i == Item::Apps { (0..seen.apps.len()).map(Face::App).collect() } else { vec![Face::Item(i)] })
+        .collect();
     tray.faces.clear();
+    tray.app_faces.clear();
     let mut frame = TrayFrame { rect: Rect::new(Vec2::new(right, plate.min.y), Vec2::new(right, plate.max.y)), press: None, pressed: false };
-    if items.is_empty() {
+    if faces.is_empty() {
         return frame;
     }
     let h = (plate.height() - m.px(MARGIN * 2.0)).max(m.px(24.0)).round();
     let g = m.px(GLYPH).min(h * 0.62).round();
     let percent = TextStyle::new(m.px(PERCENT) as f32).bold();
-    let widths: Vec<f64> = items.iter().map(|&i| width(ui, i, &seen, options, g, &percent)).collect();
-    let total = widths.iter().sum::<f64>() + m.px(GAP) * (items.len() - 1) as f64;
+    let cell = m.px(CELL).max(g + m.px(16.0)).round();
+    let widths: Vec<f64> = faces
+        .iter()
+        .map(|f| match f {
+            Face::Item(i) => width(ui, *i, &seen, options, g, &percent),
+            Face::App(_) => cell,
+        })
+        .collect();
+    let total = widths.iter().sum::<f64>() + m.px(GAP) * (faces.len() - 1) as f64;
     let top = (plate.center().y - h * 0.5).round();
     let mut x = (right - total).round();
     frame.rect = Rect::new(Vec2::new(x, plate.min.y), Vec2::new(right, plate.max.y));
 
     let (ink, accent) = (ui.theme.text, ui.theme.accent);
     let mut hovered = None;
-    for (&item, &w) in items.iter().zip(&widths) {
+    for (&which, &w) in faces.iter().zip(&widths) {
         let face = Rect::from_min_size(Vec2::new(x, top), Vec2::new(w, h));
         x += w + m.px(GAP);
+        let item = match which {
+            Face::Item(item) => item,
+            Face::App(n) => {
+                if super::apps::face(tray, ui, face, g, &seen.apps[n], under, icons, &mut frame) {
+                    hovered = Some(Item::Apps);
+                }
+                continue;
+            }
+        };
         let r = ui.interact(ui.id("tray").with_index(item as usize), face, Sense::CLICK);
         frame.pressed |= r.pressed;
         let game_on = item == Item::GameMode && seen.game == Some(true);
@@ -138,6 +177,8 @@ pub fn draw(tray: &mut Tray, ui: &mut Ui, plate: Rect, right: f64, under: Color,
         }
         let pic = Rect::from_center_size(face.center(), Vec2::splat(g)).round();
         let tip = match item {
+            // Its faces are the apps', above.
+            Item::Apps => None,
             Item::Battery => seen.battery.as_ref().map(|s| battery(tray, ui, face, g, s, options.battery_percent, &percent)),
             Item::Wifi => seen.wifi.as_ref().map(|s| {
                 tray.glyphs.draw(ui, wifi_glyph(s), pic, ink);
@@ -215,9 +256,9 @@ pub fn draw(tray: &mut Tray, ui: &mut Ui, plate: Rect, right: f64, under: Color,
 
 /// Whole notches the wheel turned over `item` this frame, up positive;
 /// a smooth wheel's pixels add up until they make one.
-fn wheel(tray: &mut Tray, ui: &mut Ui, item: Item) -> i32 {
+pub(super) fn wheel(tray: &mut Tray, ui: &mut Ui, item: Item) -> i32 {
     let dy = ui.state.wheel.y;
-    if dy == 0.0 || !matches!(item, Item::Audio | Item::Brightness | Item::Workspace) {
+    if dy == 0.0 || !matches!(item, Item::Audio | Item::Brightness | Item::Workspace | Item::Apps) {
         return 0;
     }
     ui.state.wheel = Vec2::ZERO;

@@ -59,7 +59,7 @@ pub fn draw(tray: &mut Tray, ui: &mut Ui, item: Item, frame: &Frame) -> Option<R
         Item::Bluetooth => bluetooth::draw(tray, ui, frame),
         Item::Audio => audio::draw(tray, ui, frame),
         Item::Brightness => brightness::draw(tray, ui, frame),
-        Item::Workspace | Item::GameMode => None,
+        Item::Apps | Item::Workspace | Item::GameMode => None,
     }?;
     // Its own rows took their clicks; any other is off it.
     if ui.state.pressed && !panel.contains(ui.state.pointer) {

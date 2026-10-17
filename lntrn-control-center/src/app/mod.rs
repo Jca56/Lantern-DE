@@ -225,10 +225,16 @@ impl App {
         }
         // The tray, before the clock.
         let tray_right = clock.map_or(plate.rect.max.x - m.px(TRAY_CLEAR), |c| c.min.x - m.px(TRAY_CLEAR));
-        let tray = tray::draw(&mut self.tray, ui, plate.rect, tray_right, self.look.plate, self.settings.tray, &self.link);
+        let tray = tray::draw(&mut self.tray, ui, plate.rect, tray_right, self.look.plate, self.settings.tray, &self.link, &mut self.icons);
         let tray_was = self.tray.popup;
         match tray.press {
             Some(TrayPress::Toggle(item)) => self.tray.toggle(item),
+            // An app's menu: asked for, and shown in the overlay once it comes.
+            Some(TrayPress::AppMenu(key)) => {
+                self.tray.ask_app_menu(&key);
+                self.open_overlay(cx);
+                self.wake();
+            }
             // A press anywhere else on the bar puts the popup away.
             None if ui.state.pressed && !tray.pressed => self.tray.close(),
             None => {}
@@ -428,7 +434,7 @@ impl AppHost for App {
     /// overlay's rebuild, a dock menu that went takes the overlay with it.
     fn after_rebuild(&mut self, gpu: &Gpu, images: &mut Images, shell: &mut Shell<Self>) -> bool {
         let again = shell.title.is_some() && self.after_overlay(shell);
-        let glyphs = self.tray.glyphs.upload(gpu, images);
+        let glyphs = self.tray.glyphs.upload(gpu, images) | self.tray.app_icons.upload(gpu, images);
         self.icons.upload(gpu, images) || glyphs || again
     }
 }
