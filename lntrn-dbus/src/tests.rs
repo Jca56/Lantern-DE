@@ -118,3 +118,123 @@ fn logind_hands_over_a_sleep_inhibitor() {
     assert_eq!(reply.signature, "h");
     assert_eq!(reply.fds.len(), 1);
 }
+
+/// An `a{sv}` entry whose variant is a 16-bit integer: key, signature,
+/// then the two bytes, as BlueZ sends a device's RSSI.
+fn entry_i16(body: &mut Vec<u8>, key: &str, v: i16) {
+    align_to(body, 8);
+    encode_string(body, key);
+    encode_signature(body, "n");
+    align_to(body, 2);
+    body.extend_from_slice(&v.to_le_bytes());
+}
+
+#[test]
+fn sixteen_bit_integers_take_two_bytes_and_what_follows_still_reads() {
+    // a{sv}: RSSI (n), then Name (s), then Appearance (q).
+    let mut entries = Vec::new();
+    entry_i16(&mut entries, "RSSI", -67);
+    encode_dict_entry_sv(&mut entries, "Name", |b| encode_variant_string(b, "Buds"));
+    align_to(&mut entries, 8);
+    encode_string(&mut entries, "Appearance");
+    encode_signature(&mut entries, "q");
+    align_to(&mut entries, 2);
+    entries.extend_from_slice(&0x0941u16.to_le_bytes());
+    let mut body = Vec::new();
+    encode_u32(&mut body, entries.len() as u32);
+    align_to(&mut body, 8);
+    body.extend_from_slice(&entries);
+
+    let props = BodyReader::new(&body, "a{sv}").read_value("a{sv}").unwrap();
+    let props = props.as_dict().unwrap();
+    assert_eq!(props["RSSI"].as_i32(), Some(-67));
+    assert_eq!(props["Name"].as_str(), Some("Buds"));
+    assert_eq!(props["Appearance"].as_u32(), Some(0x0941));
+}
+
+#[test]
+fn doubles_signatures_and_struct_arrays_read() {
+    let mut body = Vec::new();
+    encode_dict_entry_sv(&mut body, "Level", |b| encode_variant_double(b, 0.65));
+    let mut wrapped = Vec::new();
+    encode_u32(&mut wrapped, body.len() as u32);
+    align_to(&mut wrapped, 8);
+    wrapped.extend_from_slice(&body);
+    let props = BodyReader::new(&wrapped, "a{sv}").read_value("a{sv}").unwrap();
+    assert_eq!(props.as_dict().unwrap()["Level"].as_f64(), Some(0.65));
+
+    // a(on): iwd's ordered networks, a path and a strength each.
+    let mut items = Vec::new();
+    for (path, strength) in [("/net/connman/iwd/0/4/a", -4500i16), ("/net/connman/iwd/0/4/b", -7000)] {
+        align_to(&mut items, 8);
+        encode_string(&mut items, path);
+        align_to(&mut items, 2);
+        items.extend_from_slice(&strength.to_le_bytes());
+    }
+    let mut body = Vec::new();
+    encode_u32(&mut body, items.len() as u32);
+    align_to(&mut body, 8);
+    body.extend_from_slice(&items);
+    let list = BodyReader::new(&body, "a(on)").read_value("a(on)").unwrap();
+    let list = list.as_array().unwrap();
+    assert_eq!(list.len(), 2);
+    let Value::Struct(second) = &list[1] else { panic!("a struct") };
+    assert_eq!((second[0].as_str(), second[1].as_i32()), (Some("/net/connman/iwd/0/4/b"), Some(-7000)));
+
+    let mut sig = Vec::new();
+    encode_signature(&mut sig, "a{sv}");
+    assert_eq!(BodyReader::new(&sig, "g").read_value("g").unwrap().as_str(), Some("a{sv}"));
+}
+
+#[test]
+fn arrays_of_dicts_keep_their_elements() {
+    // aa{sv} with two dicts of one entry each, built in one buffer so the
+    // padding falls where it does on the wire. Lengths are filled in after.
+    let mut body = Vec::new();
+    encode_u32(&mut body, 0);
+    let start = body.len();
+    for name in ["one", "two"] {
+        align_to(&mut body, 4);
+        let len_at = body.len();
+        encode_u32(&mut body, 0);
+        align_to(&mut body, 8);
+        let entries_at = body.len();
+        encode_dict_entry_sv(&mut body, "Name", |b| encode_variant_string(b, name));
+        let n = (body.len() - entries_at) as u32;
+        body[len_at..len_at + 4].copy_from_slice(&n.to_le_bytes());
+    }
+    let n = (body.len() - start) as u32;
+    body[..4].copy_from_slice(&n.to_le_bytes());
+    let list = BodyReader::new(&body, "aa{sv}").read_value("aa{sv}").unwrap();
+    let names: Vec<_> = list.as_array().unwrap().iter().map(|d| d.as_dict().unwrap()["Name"].as_str().unwrap().to_owned()).collect();
+    assert_eq!(names, ["one", "two"]);
+}
+
+#[test]
+fn a_length_past_the_end_of_the_message_stops_at_its_end() {
+    // Each array claims far more than the message holds; misaligned
+    // padding too. Every one must come back, not spin.
+    for sig in ["a{sv}", "aa{sv}", "a(iiay)", "as", "ao", "ay", "av", "a(on)", "ai"] {
+        for cut in 0..24 {
+            let mut body = Vec::new();
+            encode_u32(&mut body, 100_000);
+            body.extend(std::iter::repeat_n(0x41u8, cut));
+            let _ = BodyReader::new(&body, sig).read_value(sig);
+        }
+    }
+    // What is there before the cut still reads.
+    let mut body = Vec::new();
+    encode_u32(&mut body, 100_000);
+    align_to(&mut body, 8);
+    encode_dict_entry_sv(&mut body, "Name", |b| encode_variant_string(b, "Buds"));
+    let props = BodyReader::new(&body, "a{sv}").read_value("a{sv}").unwrap();
+    assert_eq!(props.as_dict().unwrap()["Name"].as_str(), Some("Buds"));
+}
+
+#[test]
+fn a_call_carries_its_flags() {
+    let plain = encode_method_call(1, 0, "net.connman.iwd", "/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects", "", &[]);
+    let flagged = encode_method_call(2, FLAG_NO_AUTO_START, "net.connman.iwd", "/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects", "", &[]);
+    assert_eq!((plain[2], flagged[2]), (0, FLAG_NO_AUTO_START));
+    assert_eq!(plain.len(), flagged.len());
+}

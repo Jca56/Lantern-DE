@@ -25,6 +25,12 @@ const FIELD_SENDER: u8 = 7;
 const FIELD_SIGNATURE: u8 = 8;
 const FIELD_REPLY_SERIAL: u8 = 5;
 
+/// Method-call header flag: don't let the bus start the destination to
+/// deliver this call. Without it, calling a system daemon that just went
+/// away (an OpenRC-managed iwd being restarted) makes dbus-daemon spawn a
+/// fresh copy of its own, outside the init system.
+pub const FLAG_NO_AUTO_START: u8 = 0x2;
+
 // ── Public types ────────────────────────────────────────────────────────────
 
 #[derive(Debug)]
@@ -244,9 +250,25 @@ impl Connection {
         sig: &str,
         args: &[u8],
     ) -> u32 {
+        self.method_call_with_flags(0, dest, path, iface, member, sig, args)
+    }
+
+    /// [`method_call`](Self::method_call) with header `flags` set, such as
+    /// [`FLAG_NO_AUTO_START`]. Returns the serial number.
+    #[allow(clippy::too_many_arguments)]
+    pub fn method_call_with_flags(
+        &mut self,
+        flags: u8,
+        dest: &str,
+        path: &str,
+        iface: &str,
+        member: &str,
+        sig: &str,
+        args: &[u8],
+    ) -> u32 {
         self.serial += 1;
         let serial = self.serial;
-        let msg = encode_method_call(serial, dest, path, iface, member, sig, args);
+        let msg = encode_method_call(serial, flags, dest, path, iface, member, sig, args);
         let _ = self.stream.write_all(&msg);
         serial
     }
@@ -263,6 +285,7 @@ impl Connection {
         let serial = self.serial;
         let msg = encode_method_call(
             serial,
+            0,
             "org.freedesktop.DBus",
             "/org/freedesktop/DBus",
             "org.freedesktop.DBus",
@@ -524,8 +547,10 @@ fn encode_header_field(buf: &mut Vec<u8>, code: u8, sig: &str, value: &str) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn encode_method_call(
     serial: u32,
+    flags: u8,
     dest: &str,
     path: &str,
     iface: &str,
@@ -545,7 +570,7 @@ fn encode_method_call(
     let mut msg = Vec::with_capacity(128 + fields.len() + body.len());
     msg.push(b'l');
     msg.push(MSG_METHOD_CALL);
-    msg.push(0);
+    msg.push(flags);
     msg.push(1);
     encode_u32(&mut msg, body.len() as u32);
     encode_u32(&mut msg, serial);
@@ -837,8 +862,9 @@ impl<'a> BodyReader<'a> {
     }
 
     pub fn read_bytes(&mut self, n: usize) -> Vec<u8> {
-        let end = (self.pos + n).min(self.data.len());
-        let v = self.data[self.pos..end].to_vec();
+        let start = self.pos.min(self.data.len());
+        let end = (start + n).min(self.data.len());
+        let v = self.data[start..end].to_vec();
         self.pos = end;
         v
     }
@@ -896,11 +922,40 @@ impl<'a> BodyReader<'a> {
         self.read_u64() as i64
     }
 
+    pub fn read_u16(&mut self) -> u16 {
+        self.align(2);
+        if self.remaining() < 2 {
+            return 0;
+        }
+        let v = u16::from_le_bytes([self.data[self.pos], self.data[self.pos + 1]]);
+        self.pos += 2;
+        v
+    }
+
+    pub fn read_i16(&mut self) -> i16 {
+        self.read_u16() as i16
+    }
+
+    pub fn read_f64(&mut self) -> f64 {
+        f64::from_bits(self.read_u64())
+    }
+
+    /// A signature (`g`): one length byte, the text, a nul.
+    pub fn read_signature(&mut self) -> String {
+        let len = self.read_byte() as usize;
+        let start = self.pos.min(self.data.len());
+        let end = (start + len).min(self.data.len());
+        let s = String::from_utf8_lossy(&self.data[start..end]).to_string();
+        self.pos = (end + 1).min(self.data.len());
+        s
+    }
+
     pub fn read_string(&mut self) -> String {
         self.align(4);
         let len = self.read_u32() as usize;
-        let end = (self.pos + len).min(self.data.len());
-        let s = String::from_utf8_lossy(&self.data[self.pos..end]).to_string();
+        let start = self.pos.min(self.data.len());
+        let end = (start + len).min(self.data.len());
+        let s = String::from_utf8_lossy(&self.data[start..end]).to_string();
         self.pos = (end + 1).min(self.data.len());
         s
     }
@@ -914,17 +969,21 @@ impl<'a> BodyReader<'a> {
         Some(match c {
             'y' => Value::Uint32(self.read_byte() as u32),
             'b' => Value::Bool(self.read_bool()),
-            'i' | 'n' => Value::Int32(self.read_i32()),
-            'u' | 'q' => Value::Uint32(self.read_u32()),
+            // 16-bit integers are two bytes on the wire (BlueZ's RSSI,
+            // iwd's signal strength); they read into the 32-bit values.
+            'n' => Value::Int32(i32::from(self.read_i16())),
+            'q' => Value::Uint32(u32::from(self.read_u16())),
+            'i' => Value::Int32(self.read_i32()),
+            // `h` is an index into the message's file descriptors.
+            'u' | 'h' => Value::Uint32(self.read_u32()),
             't' => Value::Uint64(self.read_u64()),
             'x' => Value::Int64(self.read_i64()),
+            'd' => Value::Double(self.read_f64()),
             's' => Value::String(self.read_string()),
             'o' => Value::ObjectPath(self.read_string()),
+            'g' => Value::String(self.read_signature()),
             'v' => {
-                let vsig_len = self.read_byte() as usize;
-                let end = (self.pos + vsig_len).min(self.data.len());
-                let vsig = String::from_utf8_lossy(&self.data[self.pos..end]).to_string();
-                self.pos = (end + 1).min(self.data.len());
+                let vsig = self.read_signature();
                 self.read_value(&vsig)?
             }
             'a' => {
@@ -946,7 +1005,11 @@ impl<'a> BodyReader<'a> {
                     _ => 4,
                 };
                 self.align(elem_align);
-                let array_end = self.pos + array_len;
+                // A length running past the end of the message (one cut
+                // off or malformed) reads what is there and stops: never
+                // past it, and never round and round at its end.
+                self.pos = self.pos.min(self.data.len());
+                let array_end = (self.pos + array_len).min(self.data.len());
                 if inner.starts_with('{') {
                     // Dict entry signature: {KV} — K is a basic type (s, o, ...),
                     // V is any single complete type. We MUST read V using its
@@ -957,6 +1020,7 @@ impl<'a> BodyReader<'a> {
                     let (val_sig, _) = subsig_at(inside, val_offset);
                     let mut dict = HashMap::new();
                     while self.pos < array_end {
+                        let at = self.pos;
                         self.align(8);
                         if self.pos >= array_end {
                             break;
@@ -971,6 +1035,9 @@ impl<'a> BodyReader<'a> {
                         }
                         if let Some(val) = self.read_value(&val_sig) {
                             dict.insert(key, val);
+                        }
+                        if self.pos <= at {
+                            break;
                         }
                     }
                     self.pos = array_end;
@@ -999,6 +1066,7 @@ impl<'a> BodyReader<'a> {
                 if inner.starts_with("(iiay)") {
                     let mut arr = Vec::new();
                     while self.pos < array_end {
+                        let at = self.pos;
                         self.align(8);
                         let w = self.read_i32();
                         let h = self.read_i32();
@@ -1010,6 +1078,9 @@ impl<'a> BodyReader<'a> {
                             Value::Int32(h),
                             Value::Bytes(bytes),
                         ]));
+                        if self.pos <= at {
+                            break;
+                        }
                     }
                     return Some(Value::Array(arr));
                 }
@@ -1025,20 +1096,19 @@ impl<'a> BodyReader<'a> {
                     self.pos = array_end;
                     return Some(Value::Array(arr));
                 }
-                if inner.starts_with('(') {
-                    let mut arr = Vec::new();
-                    while self.pos < array_end {
-                        if let Some(v) = self.read_value(inner) {
-                            arr.push(v);
-                        } else {
-                            break;
-                        }
+                // Structs and everything else (`ai`, `aa{sv}`, `aas`, …):
+                // element by element, stopping at the first that won't
+                // read or doesn't move on.
+                let mut arr = Vec::new();
+                while self.pos < array_end {
+                    let at = self.pos;
+                    match self.read_value(inner) {
+                        Some(v) if self.pos > at => arr.push(v),
+                        _ => break,
                     }
-                    self.pos = array_end;
-                    return Some(Value::Array(arr));
                 }
                 self.pos = array_end;
-                Value::Array(Vec::new())
+                Value::Array(arr)
             }
             '(' => {
                 self.align(8);
