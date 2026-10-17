@@ -35,6 +35,22 @@ System Settings toggle picks which one the session uses.
 >   maximized windows draw no border ring (it showed as a yellow stripe
 >   above the docked plate). The docked plate's top uses the surface's own
 >   pixels-per-logical, floored, so fractional scales never leave a sliver.
+> - **Auto hide (2026-10-16):** `[control_center] visibility = "always" |
+>   "auto_hide"`, `auto_hide_delay_ms` (500, 0–3000), `auto_hide_slide_ms`
+>   (250, 0–1000), all on the Settings page. For the OLED: hidden, the
+>   surface is a see-through 2px strip at the bottom edge (zone 0); the
+>   pointer on it grows the surface and slides the plate up. **The bar never
+>   sits over a window** (Alva): every frame of the slide the exclusive zone
+>   is exactly as much of the bar as shows, and the compositor refits
+>   maximized windows on each zone commit, so the window's edge rides the
+>   plate up and back down, floating or docked. No compositor change was
+>   needed. The input region keeps the strip while shown, so a pointer
+>   resting on the edge never makes it flicker. Stays up while the launcher
+>   is open. Starts shown, hides after the delay.
+> - **Session (2026-10-16):** in `lntrn-session-manager`'s `DAEMONS`:
+>   started at login, restarted after a crash. The compositor taking the
+>   surface away (monitor gone) exits 75, so the session starts it again;
+>   its own restarts (new primary, Quick Kill) exec in place, same pid.
 
 ## Done
 
@@ -48,24 +64,40 @@ System Settings toggle picks which one the session uses.
       time, a real-time-clock thread turning the minute (right after a
       suspend); `clock_24h`, `clock_seconds`, `clock_date`,
       `clock_date_style` in `[control_center]` and on the Settings page
+- [x] App launcher (far left): nine-dot button; Kickoff-style menu (search,
+      category sidebar, app list, power row with confirm) on a full-monitor
+      Top-layer surface with Exclusive keyboard (type to search; click off
+      the panel / Esc / launching closes). Apps + icons from the new shared
+      `lntrn-apps` crate (desktop entries with OnlyShowIn/NotShowIn/TryExec,
+      apps in every main category they list, icons rendered off-thread)
+- [x] Auto hide (see above), with the Settings page's Visibility card
+- [x] Launcher button fills the bar's height, bigger dots, faint face at rest
+- [x] Favorites above All apps (the menu opens on them), kept in
+      `~/.lantern/config/control-center/favorites.toml` (one id a line, like
+      the Command Center's pins); right-click an app for its menu (LUI2
+      `ContextMenu`): Open, Add to / Remove from Favorites
+- [x] Quick Kill at the right of the power row: execs the newest build
+- [x] `clock_ampm` (Show AM/PM) in `[control_center]` and on the page
+- [x] Search field keeps the keyboard after a group is clicked, and has a
+      real ring (the bar's theme has `border_width` 0; LUI2 now draws no
+      zero-width strokes at all)
 
 ## Next (ideas, unordered)
 
 Planned order (Alva, 2026-10-16): clock → app launcher (far left) → pins +
 open windows dock (middle).
 
-- [ ] App launcher (far left)
 - [ ] Pins + open windows dock (middle): window feed per monitor/workspace
       from the compositor (foreign-toplevel lacks both), app icons
 - [ ] System tray / quick toggles (audio, network, bluetooth, battery)
 
 ## Known gaps
 
-- **Monitor goes away:** the compositor closes the layer surface, and in LUI2
-  closing the main surface quits the app. Fix: add the bar to
-  `lntrn-session-manager`'s supervised `DAEMONS` (restart on exit), and/or
-  teach LUI2 to report outputs and keep the app alive. Both are other crates:
-  ask first.
-- **Autostart:** not started at login yet (same `DAEMONS` list).
+- **Monitor gone for long:** the session gives up on a daemon that dies 5
+  times in a minute, so with no monitor at all for a while the bar stays
+  down until the next login. LUI2 reporting outputs (so the bar could wait
+  for one alive) would fix it.
+- **Auto hide and a monitor below:** the strip sits on the bottom edge, so
+  a monitor arranged under the bar's would let the pointer pass through.
 - **Blur:** the compositor doesn't blur behind layer surfaces, so the plate
   stays solid rather than following `windows.background_opacity`.

@@ -31,6 +31,7 @@ members = [
     "lntrn-screencopy",
     "lntrn-command-center",
     "lntrn-control-center",
+    "lntrn-apps",
     "lntrn-keychain",
     "lntrn-keys",
     "lntrn-kit",

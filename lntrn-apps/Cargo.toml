@@ -1,0 +1,14 @@
+[package]
+name = "lntrn-apps"
+version = "0.1.0"
+description = "Lantern DE - the apps installed here and their pictures, for Lantern apps on Lantern UI 2"
+authors = ["Alva"]
+edition = "2024"
+
+[dependencies]
+lntrn-app = { path = "../../lantern-ui-2/crates/lntrn-app" }
+lntrn-core = { path = "../../lantern-ui-2/crates/lntrn-core" }
+lntrn-image = { path = "../../lantern-ui-2/crates/lntrn-image" }
+lntrn-svg = { path = "../../lantern-ui-2/crates/lntrn-svg" }
+lntrn-sys = { path = "../../lantern-ui-2/crates/lntrn-sys" }
+lntrn-icons = { path = "../lntrn-icons" }

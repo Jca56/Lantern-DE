@@ -26,10 +26,16 @@ extern "C" fn handle_signal(_: i32) {
 /// The shell daemons, in the order they start. Each one stays in the
 /// foreground, so the process started here is the daemon itself: that is what
 /// gets restarted if it dies and stopped at logout.
+///
+/// The Control Center (the bar) exits uncleanly when the compositor takes
+/// its surface away with its monitor, so it is started again too; its own
+/// restarts (a new primary monitor, Quick Kill) exec in place, keeping its
+/// pid.
 const DAEMONS: &[(&str, &[&str])] = &[
     ("lntrn-desktop", &["--foreground"]),
     ("lntrn-portal", &[]),
     ("lntrn-notifyd", &[]),
+    ("lntrn-control-center", &[]),
 ];
 
 /// How long the compositor gets to open its Wayland socket. It does so first

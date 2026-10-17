@@ -1,6 +1,8 @@
-//! The plate's glide between floating (0) and docked (1), picked up from
-//! wherever it is when it turns round, so a window maximized and let go at
-//! once never makes it jump. Docking keeps step with the window filling
+//! The plate's glides, picked up from wherever it is when it turns round:
+//! between floating (0) and docked (1), so a window maximized and let go
+//! at once never makes it jump, and (auto hide) between hidden (0) and
+//! shown (1), so the pointer coming back mid-slide sends it straight back
+//! up. Docking keeps step with the window filling
 //! the screen: the compositor's maximize glide, its time and curve
 //! (`[animations]`, as lntrn-compositor's `animations.rs` reads it), so the
 //! two land together. Floating again is the bar's own quick ease-out.
@@ -79,24 +81,25 @@ pub struct Morph {
 }
 
 impl Morph {
-    /// At rest, docked or not.
-    pub fn at(docked: bool) -> Morph {
-        let t = if docked { 1.0 } else { 0.0 };
+    /// At rest, at 1 (`on`) or 0.
+    pub fn at(on: bool) -> Morph {
+        let t = if on { 1.0 } else { 0.0 };
         Morph { from: t, to: t, start: 0.0, span: 0.0, curve: Curve::Linear }
     }
 
-    /// Head for docked or floating from where it is at `now`. A part of
-    /// the way takes its part of `glide`'s time.
-    pub fn aim(&mut self, docked: bool, now: f64, glide: Glide) {
-        let to = if docked { 1.0 } else { 0.0 };
+    /// Head for 1 (`on`) or 0 from where it is at `now`. A part of the
+    /// way takes its part of `glide`'s time.
+    pub fn aim(&mut self, on: bool, now: f64, glide: Glide) {
+        let to = if on { 1.0 } else { 0.0 };
         let from = self.value(now);
         let span = glide.seconds.max(0.0) * (to - from).abs();
         *self = Morph { from, to, start: now, span, curve: glide.curve };
     }
 
-    /// Where it is at `now`, 0 floating to 1 docked.
+    /// Where it is at `now`, 0 to 1.
     pub fn value(&self, now: f64) -> f64 {
-        if self.span <= 0.0 {
+        // Landed is exactly there, not a rounding error short of it.
+        if !self.moving(now) {
             return self.to;
         }
         let eased = self.curve.eval((now - self.start) / self.span).min(1.0);

@@ -13,6 +13,8 @@ use lntrn_kit::look;
 use lntrn_math::{Color, Rect, Vec2};
 use lntrn_ui::{Anchor, KeyboardMode, LayerConfig, Metrics, Theme, Ui};
 
+use crate::hide;
+
 /// What the compositor knows the surface as.
 pub const NAMESPACE: &str = "lntrn-control-center";
 /// The Fox style's plate: the Command Center's panel (Fox Dark's `bg`).
@@ -55,16 +57,28 @@ impl Default for Shape {
 /// `output` (the compositor's pick when `None`), across its whole width,
 /// keeping windows above the plate whether it floats or is `docked`.
 pub fn layer(shape: Shape, docked: bool, output: Option<&str>) -> LayerConfig {
-    // Floating, the gap under the plate is kept from windows too.
-    let zone = if docked { shape.height } else { shape.height + shape.below };
     let cfg = LayerConfig::bar(NAMESPACE, Anchor::BOTTOM, shape.height + shape.below)
-        .exclusive(zone as i32)
+        .exclusive(zone(shape, docked) as i32)
         // A click on the bar leaves the keyboard with the window it was in.
         .keyboard(KeyboardMode::None);
     match output {
         Some(name) => cfg.output(name),
         None => cfg,
     }
+}
+
+/// [`layer`] as auto hide has it: the bar's full height, or only the strip
+/// along the bottom edge while it is out of sight, keeping `zone` logical
+/// px from windows.
+pub fn layer_with(shape: Shape, docked: bool, output: Option<&str>, full: bool, zone: u32) -> LayerConfig {
+    let cfg = layer(shape, docked, output).exclusive(zone as i32);
+    if full { cfg } else { cfg.size((0, hide::STRIP)) }
+}
+
+/// The space the whole bar keeps from windows, logical px. Floating, the
+/// gap under the plate is kept too.
+pub fn zone(shape: Shape, docked: bool) -> u32 {
+    if docked { shape.height } else { shape.height + shape.below }
 }
 
 /// The monitor the bar goes on: the primary, by name, when it is plugged
@@ -121,16 +135,27 @@ pub struct Plate {
     pub t: f64,
 }
 
+impl Plate {
+    /// Moved `dy` window pixels down: on its way out of sight.
+    pub fn lowered(self, dy: f64) -> Plate {
+        Plate { rect: self.rect.translate(Vec2::new(0.0, dy)), ..self }
+    }
+}
+
+/// The surface's own pixels per logical one: its buffer is rounded to
+/// whole pixels (94 for 72 logical at 1.3x), so this, not the scale, is
+/// what puts an edge where the compositor puts the window above it.
+pub fn per_logical(surface: Rect, m: Metrics, shape: Shape) -> f64 {
+    let logical = f64::from(shape.height + shape.below);
+    if surface.height() > 0.0 { surface.height() / logical } else { m.scale }
+}
+
 /// The plate in a surface filling `surface`, at `t` of the way from
 /// floating to docked.
 pub fn plate(surface: Rect, m: Metrics, shape: Shape, t: f64) -> Plate {
     let gap = f64::from(shape.below);
     let side = m.px(f64::from(shape.sides));
-    // The surface's own pixels per logical one: its buffer is rounded to
-    // whole pixels (94 for 72 logical at 1.3x), so this, not the scale, is
-    // what puts an edge where the compositor puts the window above it.
-    let logical = f64::from(shape.height) + gap;
-    let per = if surface.height() > 0.0 { surface.height() / logical } else { m.scale };
+    let per = per_logical(surface, m, shape);
     let below = (gap * per).round();
     let floating = Rect::new(Vec2::new(surface.min.x + side, surface.min.y), Vec2::new(surface.max.x - side, surface.max.y - below));
     // Docked, the top is rounded up the screen: over the window's last
@@ -179,6 +204,12 @@ mod tests {
         assert!(floating.check().is_ok());
         let docked = layer(Shape { height: 90, below: 20, ..shape }, true, None);
         assert_eq!((docked.size, docked.exclusive_zone, docked.output), ((0, 110), 90, None));
+        // Auto hide: all the way up it is the same surface; out of sight,
+        // a strip that keeps nothing from windows.
+        assert_eq!(layer_with(shape, false, Some("DP-1"), true, 72), floating);
+        let hidden = layer_with(shape, true, None, false, 0);
+        assert_eq!((hidden.size, hidden.exclusive_zone, hidden.anchor), ((0, hide::STRIP), 0, Anchor::BOTTOM));
+        assert!(hidden.check().is_ok());
     }
 
     #[test]

@@ -45,10 +45,10 @@ const CLOCK_REALTIME: i32 = 0;
 const TIMER_ABSTIME: i32 = 1;
 const EINTR: i32 = 4;
 
-/// Logical sizes: the time to read from across the desk, the date at the
-/// 18px floor.
-const TIME_SIZE: f64 = 22.0;
-const DATE_SIZE: f64 = 18.0;
+/// Logical sizes, to read from across the desk: as big as still stacks
+/// time over date on the default 64px bar, line height and all.
+const TIME_SIZE: f64 = 28.0;
+const DATE_SIZE: f64 = 21.0;
 /// From the plate's right end to the text.
 const PAD: f64 = 20.0;
 /// Between date and time when they share a line.
@@ -130,26 +130,32 @@ impl DateStyle {
 pub struct ClockOptions {
     pub hour24: bool,
     pub seconds: bool,
+    /// AM or PM after a 12-hour time.
+    pub ampm: bool,
     pub date: bool,
     pub style: DateStyle,
 }
 
 impl Default for ClockOptions {
     fn default() -> Self {
-        ClockOptions { hour24: false, seconds: false, date: true, style: DateStyle::Short }
+        ClockOptions { hour24: false, seconds: false, ampm: true, date: true, style: DateStyle::Short }
     }
 }
 
-/// `6:52 PM`, `18:52`, with `:07` before the AM/PM when asked.
-pub fn time_text(t: &Local, hour24: bool, seconds: bool) -> String {
-    let sec = if seconds { format!(":{:02}", t.second) } else { String::new() };
-    if hour24 {
+/// `6:52 PM`, `18:52`, with `:07` before the AM/PM when asked, and
+/// `6:52` alone when the AM/PM isn't.
+pub fn time_text(t: &Local, opts: ClockOptions) -> String {
+    let sec = if opts.seconds { format!(":{:02}", t.second) } else { String::new() };
+    if opts.hour24 {
         return format!("{:02}:{:02}{sec}", t.hour, t.minute);
     }
     let h = match t.hour % 12 {
         0 => 12,
         h => h,
     };
+    if !opts.ampm {
+        return format!("{h}:{:02}{sec}", t.minute);
+    }
     format!("{h}:{:02}{sec} {}", t.minute, if t.hour < 12 { "AM" } else { "PM" })
 }
 
@@ -185,7 +191,7 @@ pub fn redraw_after(opts: ClockOptions) -> Option<f64> {
 pub fn draw(ui: &mut Ui, plate: Rect, opts: ClockOptions, now: &Local) -> Rect {
     let m = ui.m;
     let (ink, dim) = (ui.theme.text, ui.theme.text_dim);
-    let time = time_text(now, opts.hour24, opts.seconds);
+    let time = time_text(now, opts);
     let time_style = TextStyle::new(m.px(TIME_SIZE) as f32).bold();
     let date_style = TextStyle::new(m.px(DATE_SIZE) as f32);
     let right = plate.max.x - m.px(PAD);
@@ -243,15 +249,23 @@ mod tests {
         Local { year: 2026, month: 10, day: 16, weekday: 4, hour, minute, second }
     }
 
+    fn opts(hour24: bool, seconds: bool, ampm: bool) -> ClockOptions {
+        ClockOptions { hour24, seconds, ampm, ..ClockOptions::default() }
+    }
+
     #[test]
     fn the_time_reads_as_a_clock_does() {
-        assert_eq!(time_text(&at(18, 52, 7), false, false), "6:52 PM");
-        assert_eq!(time_text(&at(18, 52, 7), false, true), "6:52:07 PM");
-        assert_eq!(time_text(&at(18, 52, 7), true, false), "18:52");
-        assert_eq!(time_text(&at(6, 5, 9), true, true), "06:05:09");
+        assert_eq!(time_text(&at(18, 52, 7), opts(false, false, true)), "6:52 PM");
+        assert_eq!(time_text(&at(18, 52, 7), opts(false, true, true)), "6:52:07 PM");
+        assert_eq!(time_text(&at(18, 52, 7), opts(true, false, true)), "18:52");
+        assert_eq!(time_text(&at(6, 5, 9), opts(true, true, true)), "06:05:09");
         // Midnight and noon are twelve.
-        assert_eq!(time_text(&at(0, 0, 0), false, false), "12:00 AM");
-        assert_eq!(time_text(&at(12, 30, 0), false, false), "12:30 PM");
+        assert_eq!(time_text(&at(0, 0, 0), opts(false, false, true)), "12:00 AM");
+        assert_eq!(time_text(&at(12, 30, 0), opts(false, false, true)), "12:30 PM");
+        // Without the AM/PM; a 24-hour clock has none to leave out.
+        assert_eq!(time_text(&at(18, 52, 7), opts(false, false, false)), "6:52");
+        assert_eq!(time_text(&at(0, 5, 7), opts(false, true, false)), "12:05:07");
+        assert_eq!(time_text(&at(18, 52, 7), opts(true, false, false)), "18:52");
     }
 
     #[test]
@@ -270,6 +284,13 @@ mod tests {
         let now = Duration::from_millis(125_250);
         assert!((until_next(now, false) - 54.755).abs() < 1e-9, "to 3:00 on the minute");
         assert!((until_next(now, true) - 0.755).abs() < 1e-9);
+    }
+
+    #[test]
+    fn time_over_date_fits_the_default_bar() {
+        // Text's line is 1.2 of its size; draw() wants 4px to spare.
+        let bar = f64::from(crate::bar::Shape::default().height);
+        assert!((TIME_SIZE + DATE_SIZE) * 1.2 <= bar - 4.0);
     }
 
     #[test]

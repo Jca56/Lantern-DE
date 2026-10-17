@@ -299,7 +299,8 @@ fn the_terminal_page_sets_its_size_cursor_and_bar() {
 #[test]
 fn the_control_center_page_sets_the_bars_shape() {
     let mut cfg = Config::empty();
-    let mut h = kit_at(1000.0, 1000.0);
+    // Tall enough for the clock's card under the others.
+    let mut h = kit_at(1000.0, 1600.0);
     let cc = &cfg.control_center;
     assert_eq!((cc.height, cc.corner_radius, cc.gap_below, cc.gap_sides), (64, 16, 8, 16), "where the bar starts");
     clipped();
@@ -334,6 +335,41 @@ fn the_control_center_page_sets_the_bars_shape() {
         control_center::draw(&mut cfg, ui);
     });
     assert_eq!((cfg.control_center.clock_24h, cfg.control_center.clock_seconds, cfg.control_center.clock_date), (true, false, false));
+    assert!(clipped().is_empty());
+}
+
+#[test]
+fn the_control_center_page_sets_auto_hide_and_the_am_pm() {
+    let mut cfg = Config::empty();
+    // Tall enough for the clock's card under the others.
+    let mut h = kit_at(1000.0, 1600.0);
+    assert_eq!((cfg.control_center.visibility.as_str(), cfg.control_center.clock_ampm), ("always", true));
+    clipped();
+    h.settle(4, |ui| {
+        control_center::draw(&mut cfg, ui);
+    });
+    let delay = WidgetId::ROOT.with("visibility").with("Hide after");
+    assert!(h.rect_of(delay).is_none(), "its timings show with auto hide alone");
+    cfg.control_center.visibility = "auto_hide".to_owned();
+    h.settle(4, |ui| {
+        control_center::draw(&mut cfg, ui);
+    });
+    let track = h.rect_of(delay).expect("the delay's slider");
+    let y = track.center().y;
+    h.drag(Vec2::new(track.center().x, y), Vec2::new(track.max.x + 40.0, y), 4, |ui| {
+        control_center::draw(&mut cfg, ui);
+    });
+    assert_eq!(cfg.control_center.auto_hide_delay_ms, 3000);
+    let slide = h.rect_of(WidgetId::ROOT.with("visibility").with("Slide time")).expect("the slide's slider");
+    let y = slide.center().y;
+    h.drag(Vec2::new(slide.center().x, y), Vec2::new(slide.min.x - 40.0, y), 4, |ui| {
+        control_center::draw(&mut cfg, ui);
+    });
+    assert_eq!(cfg.control_center.auto_hide_slide_ms, 0);
+    h.click_on(WidgetId::ROOT.with("clock").with("Show AM/PM"), |ui| {
+        control_center::draw(&mut cfg, ui);
+    });
+    assert!(!cfg.control_center.clock_ampm);
     assert!(clipped().is_empty());
 }
 

@@ -11,30 +11,47 @@
 //!   how it is painted, floating or docked.
 //! - `clock.rs` — the time and date at its right end, and the thread
 //!   that turns the minute.
+//! - `launcher/` — the app launcher: its button at the bar's left end and
+//!   the menu it opens above the bar.
 //! - `dock.rs` — when to dock: the compositor's word on whether a window
 //!   fills our monitor, read on a thread of its own.
-//! - `morph.rs` — the plate's glide between floating and docked.
+//! - `hide.rs` — auto hide: sliding out of sight and back, the windows
+//!   giving way to as much of the bar as shows.
+//! - `morph.rs` — the plate's glides: floating and docked, hidden and
+//!   shown.
 //! - `settings.rs` — what it reads from `lantern.toml`, and the thread
 //!   that watches the file.
 //! - `instance.rs` — one bar at a time.
+//!
+//! The session manager keeps it running: a crash, or the compositor taking
+//! the bar away with its monitor ([`TAKEN_AWAY`]), and it is started again.
 
 mod app;
 mod bar;
 mod clock;
 mod dock;
+mod hide;
 mod instance;
+mod launcher;
 mod morph;
 mod settings;
+#[cfg(test)]
+mod smoke;
 
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 
 use lntrn_app::{AppConfig, run};
-use lntrn_core::{log_error, log_info};
+use lntrn_core::{log_error, log_info, log_warn};
 use lntrn_ui::Shell;
 
 use crate::app::{APP_ID, App, Editor};
 use crate::settings::Settings;
+
+/// The exit status for a bar the compositor took away: not a clean exit,
+/// which the session manager leaves alone, so it starts the bar again
+/// (wherever the compositor puts it, if its monitor is gone). EX_TEMPFAIL.
+const TAKEN_AWAY: i32 = 75;
 
 fn main() {
     lntrn_kit::startup::log_panics(APP_ID);
@@ -64,12 +81,17 @@ fn main() {
         drop(lock);
         restart();
     }
+    if app::taken_away() {
+        log_warn!("{APP_ID}: the compositor took the bar away; exiting for the session to start it again");
+        std::process::exit(TAKEN_AWAY);
+    }
     std::process::exit(0);
 }
 
 /// Start over as a fresh process with the same arguments: a layer
 /// surface's monitor is fixed when it is made, so moving to a new primary
-/// monitor takes a new surface.
+/// monitor takes a new surface; and Quick Kill's fresh start, the newest
+/// build. The pid stays the same, so the session manager keeps it.
 fn restart() -> ! {
     // A binary replaced since it started reads as `… (deleted)`; the new
     // one is at the same path.

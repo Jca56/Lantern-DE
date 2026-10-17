@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 
 pub use appearance::{Appearance, GRADIENT_STOPS, WindowManager, Windows};
-pub use control_center::{CC_DATE_STYLES, CC_GAPS_BELOW, CC_GAPS_SIDES, CC_HEIGHTS, CC_RADII, ControlCenter};
+pub use control_center::{CC_DATE_STYLES, CC_GAPS_BELOW, CC_GAPS_SIDES, CC_HEIGHTS, CC_HIDE_DELAYS, CC_RADII, CC_SLIDES, CC_VISIBILITIES, ControlCenter};
 use lntrn_data::{Doc, from_doc, to_doc, toml};
 use lntrn_props::Reflect;
 pub use monitors::Monitor;

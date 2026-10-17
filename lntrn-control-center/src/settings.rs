@@ -1,5 +1,6 @@
 //! What the bar takes from `lantern.toml`: the desktop's look (through
-//! `lntrn-kit`), its own shape (`[control_center]`), the primary monitor
+//! `lntrn-kit`), its own shape, clock and auto hide (`[control_center]`),
+//! the primary monitor
 //! it lives on, and how windows glide (which docking keeps step with). A
 //! thread watches the file and wakes the loop when it changes, so a bar
 //! sitting still draws nothing.
@@ -17,6 +18,7 @@ use lntrn_sys::watch::{Event, EventKind, Watcher};
 
 use crate::bar::Shape;
 use crate::clock::{ClockOptions, DateStyle};
+use crate::hide::{HideOptions, Visibility};
 use crate::morph::Glide;
 /// How long a burst of writes to the file is let settle before it is read.
 const SETTLE: Duration = Duration::from_millis(100);
@@ -30,6 +32,9 @@ pub struct Settings {
     pub shape: Shape,
     /// `[control_center]`'s `clock_*` keys: what the clock shows.
     pub clock: ClockOptions,
+    /// `[control_center]`'s `visibility` and `auto_hide_*` keys: whether
+    /// it hides, and how.
+    pub hide: HideOptions,
     /// The monitor `[[monitors]]` marks `primary`, by its connector name
     /// (`DP-1`), unless it is switched off.
     pub primary: Option<String>,
@@ -57,7 +62,7 @@ impl Settings {
     }
 
     pub fn from_doc(doc: &Doc) -> Settings {
-        Settings { desktop: Desktop::from_doc(doc), shape: shape(doc), clock: clock(doc), primary: primary(doc), dock_glide: dock_glide(doc) }
+        Settings { desktop: Desktop::from_doc(doc), shape: shape(doc), clock: clock(doc), hide: hide(doc), primary: primary(doc), dock_glide: dock_glide(doc) }
     }
 }
 
@@ -74,7 +79,20 @@ fn clock(doc: &Doc) -> ClockOptions {
     let d = ClockOptions::default();
     let key = |k: &str| doc.path(&format!("control_center.clock_{k}"));
     let flag = |k: &str, or: bool| key(k).and_then(Doc::as_bool).unwrap_or(or);
-    ClockOptions { hour24: flag("24h", d.hour24), seconds: flag("seconds", d.seconds), date: flag("date", d.date), style: key("date_style").and_then(Doc::as_str).map_or(d.style, DateStyle::from_word) }
+    ClockOptions { hour24: flag("24h", d.hour24), seconds: flag("seconds", d.seconds), ampm: flag("ampm", d.ampm), date: flag("date", d.date), style: key("date_style").and_then(Doc::as_str).map_or(d.style, DateStyle::from_word) }
+}
+
+/// `[control_center]`'s `visibility`, and the auto hide timings in
+/// milliseconds held to their ranges; the default for any missing.
+fn hide(doc: &Doc) -> HideOptions {
+    let d = HideOptions::default();
+    let key = |k: &str| doc.path(&format!("control_center.{k}"));
+    let seconds = |k: &str, or: f64, (lo, hi): (i64, i64)| key(k).and_then(Doc::as_i64).map_or(or, |ms| ms.clamp(lo, hi) as f64 / 1000.0);
+    HideOptions {
+        visibility: key("visibility").and_then(Doc::as_str).map_or(Visibility::Always, Visibility::from_word),
+        delay: seconds("auto_hide_delay_ms", d.delay, HideOptions::DELAYS_MS),
+        slide: seconds("auto_hide_slide_ms", d.slide, HideOptions::SLIDES_MS),
+    }
 }
 
 /// `[animations]` as the compositor reads it for a window-state change:
@@ -163,9 +181,18 @@ mod tests {
     #[test]
     fn the_clock_shows_what_system_settings_chose() {
         assert_eq!(Settings::default().clock, ClockOptions::default());
-        let set = parse("[control_center]\nclock_24h = true\nclock_seconds = true\nclock_date = false\nclock_date_style = \"long\"\n").clock;
-        assert_eq!(set, ClockOptions { hour24: true, seconds: true, date: false, style: DateStyle::Long });
+        let set = parse("[control_center]\nclock_24h = true\nclock_seconds = true\nclock_ampm = false\nclock_date = false\nclock_date_style = \"long\"\n").clock;
+        assert_eq!(set, ClockOptions { hour24: true, seconds: true, ampm: false, date: false, style: DateStyle::Long });
         assert_eq!(parse("[control_center]\nclock_date_style = \"???\"\n").clock.style, DateStyle::Short);
+    }
+
+    #[test]
+    fn auto_hide_is_what_system_settings_chose_held_to_its_ranges() {
+        assert_eq!(Settings::default().hide, HideOptions::default());
+        let set = parse("[control_center]\nvisibility = \"auto_hide\"\nauto_hide_delay_ms = 1200\nauto_hide_slide_ms = 400\n").hide;
+        assert_eq!(set, HideOptions { visibility: Visibility::AutoHide, delay: 1.2, slide: 0.4 });
+        let odd = parse("[control_center]\nvisibility = \"?\"\nauto_hide_delay_ms = -5\nauto_hide_slide_ms = 99999\n").hide;
+        assert_eq!(odd, HideOptions { visibility: Visibility::Always, delay: 0.0, slide: 1.0 });
     }
 
     #[test]

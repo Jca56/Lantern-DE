@@ -1,12 +1,12 @@
 use smithay::{
     output::Output,
-    reexports::wayland_server::protocol::wl_output::WlOutput,
+    reexports::wayland_server::protocol::{wl_output::WlOutput, wl_surface::WlSurface},
     utils::Size,
     wayland::{
-        compositor::with_states,
+        compositor::{get_parent, with_states},
         shell::wlr_layer::{
-            Anchor, ExclusiveZone, Layer, LayerSurface, LayerSurfaceCachedState, LayerSurfaceData,
-            WlrLayerShellHandler, WlrLayerShellState,
+            Anchor, ExclusiveZone, KeyboardInteractivity, Layer, LayerSurface,
+            LayerSurfaceCachedState, LayerSurfaceData, WlrLayerShellHandler, WlrLayerShellState,
         },
     },
 };
@@ -101,6 +101,25 @@ impl WlrLayerShellHandler for Lantern {
 }
 
 impl Lantern {
+    /// Whether `surface` (or the surface it is a subsurface of) is a layer
+    /// surface that asked for no keyboard (`KeyboardInteractivity::None`).
+    /// The protocol says such a surface must never be given the keyboard
+    /// focus: a click on a bar's button must leave the keyboard with the
+    /// window being typed in. (Handing it over and taking it straight back
+    /// also made Lantern UI drop the press, so the click never landed.)
+    pub(crate) fn layer_declines_keyboard(&self, surface: &WlSurface) -> bool {
+        let mut root = surface.clone();
+        while let Some(parent) = get_parent(&root) {
+            root = parent;
+        }
+        self.layer_surfaces.iter().find(|ls| *ls.wl_surface() == root).is_some_and(|ls| {
+            with_states(ls.wl_surface(), |states| {
+                states.cached_state.get::<LayerSurfaceCachedState>().current().keyboard_interactivity
+                    == KeyboardInteractivity::None
+            })
+        })
+    }
+
     /// Stage a layer surface's size as pending state: the size its client
     /// asked for, with 0 on an axis anchored to both edges resolved to the
     /// output's span (less its margins and the exclusive zones other layer

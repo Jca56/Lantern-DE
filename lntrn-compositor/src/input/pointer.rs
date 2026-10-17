@@ -610,10 +610,11 @@ impl Lantern {
                         && crate::window_ext::WindowExt::get_wl_surface(w).as_ref()
                             == Some(&surface)
                 });
-                if !is_x11 {
+                if !is_x11 && !self.layer_declines_keyboard(&surface) {
                     // Clicked on a layer surface (e.g. Bottom layer desktop
                     // widget). Give it keyboard focus so OnDemand
-                    // interactivity works.
+                    // interactivity works; one that asked for no keyboard
+                    // (the Control Center's bar) is never given it.
                     let keyboard = self.seat.get_keyboard().unwrap();
                     keyboard.set_focus(
                         self,
