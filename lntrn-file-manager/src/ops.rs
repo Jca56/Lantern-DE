@@ -23,6 +23,9 @@
 //!    and comes back if the last step fails.
 //!  - A cross-device move is copy, land, then delete from the source only
 //!    what verifiably arrived (`copy_tree::remove_moved_source`).
+//!  - On a drive that can be pulled out, an item is done only once the
+//!    drive holds it: flushed before it lands and again after, so the bar
+//!    never runs ahead of the stick and a move's source goes only then.
 //!  - Cancel is honoured between entries and between chunks of a file; the
 //!    item in flight is rolled back.
 

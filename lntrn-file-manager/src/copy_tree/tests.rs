@@ -30,7 +30,7 @@ fn folder_copy_keeps_links_and_survives_bad_entries() {
     std::fs::write(src.join("z-last.txt"), b"omega").unwrap();
 
     let dst = d.join("dst");
-    let report = copy_item(&src, &dst, &no_cancel()).unwrap();
+    let report = copy_item(&src, &dst, &no_cancel(), &mut Flusher::off()).unwrap();
 
     // The pipe is reported and skipped; it did not block and did not
     // stop the entries around it.
@@ -55,7 +55,7 @@ fn existing_destination_is_never_overwritten() {
     std::fs::write(d.join("new.txt"), b"new").unwrap();
     std::fs::write(d.join("old.txt"), b"old").unwrap();
     assert!(matches!(
-        copy_item(&d.join("new.txt"), &d.join("old.txt"), &no_cancel()),
+        copy_item(&d.join("new.txt"), &d.join("old.txt"), &no_cancel(), &mut Flusher::off()),
         Err(CopyError::Failed(_))
     ));
     assert_eq!(std::fs::read(d.join("old.txt")).unwrap(), b"old");
@@ -65,7 +65,7 @@ fn existing_destination_is_never_overwritten() {
     std::fs::write(d.join("a/x"), b"1").unwrap();
     std::fs::create_dir_all(d.join("b")).unwrap();
     std::fs::write(d.join("b/keep"), b"2").unwrap();
-    assert!(copy_item(&d.join("a"), &d.join("b"), &no_cancel()).is_err());
+    assert!(copy_item(&d.join("a"), &d.join("b"), &no_cancel(), &mut Flusher::off()).is_err());
     assert!(d.join("b/keep").exists());
     assert!(!d.join("b/x").exists());
     let _ = std::fs::remove_dir_all(&d);
@@ -81,13 +81,13 @@ fn cancel_leaves_nothing_behind() {
     }
     let cancel = AtomicBool::new(true);
     assert!(matches!(
-        copy_item(&src, &d.join("dst"), &cancel),
+        copy_item(&src, &d.join("dst"), &cancel, &mut Flusher::off()),
         Err(CopyError::Cancelled)
     ));
     assert!(std::fs::symlink_metadata(d.join("dst")).is_err());
     // Same for a single file.
     assert!(matches!(
-        copy_item(&src.join("f0"), &d.join("one"), &cancel),
+        copy_item(&src.join("f0"), &d.join("one"), &cancel, &mut Flusher::off()),
         Err(CopyError::Cancelled)
     ));
     assert!(std::fs::symlink_metadata(d.join("one")).is_err());
@@ -101,7 +101,7 @@ fn file_copy_is_exact_and_keeps_mode_and_mtime() {
     let data: Vec<u8> = (0..3_000_017u32).map(|i| (i % 251) as u8).collect();
     std::fs::write(d.join("big"), &data).unwrap();
     std::fs::set_permissions(d.join("big"), std::fs::Permissions::from_mode(0o640)).unwrap();
-    copy_item(&d.join("big"), &d.join("copy"), &no_cancel()).unwrap();
+    copy_item(&d.join("big"), &d.join("copy"), &no_cancel(), &mut Flusher::off()).unwrap();
     assert_eq!(std::fs::read(d.join("copy")).unwrap(), data);
     let (a, b) = (
         std::fs::metadata(d.join("big")).unwrap(),
@@ -142,10 +142,38 @@ fn moved_source_is_deleted_only_where_the_copy_is_verified() {
     let (s2, d2) = (d.join("s2"), d.join("d2"));
     std::fs::create_dir_all(s2.join("x")).unwrap();
     std::fs::write(s2.join("x/f"), b"1").unwrap();
-    copy_item(&s2, &d2, &no_cancel()).unwrap();
+    copy_item(&s2, &d2, &no_cancel(), &mut Flusher::off()).unwrap();
     let mut failures = Vec::new();
     assert!(remove_moved_source(&s2, &d2, &mut failures));
     assert!(!s2.exists() && failures.is_empty());
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_flushing_copy_arrives_whole() {
+    let d = scratch("flush");
+    let src = d.join("src");
+    std::fs::create_dir_all(src.join("sub")).unwrap();
+    // Enough entries to fill the flush window several times over, and a
+    // file larger than one read buffer.
+    for i in 0..300 {
+        std::fs::write(src.join(format!("sub/f{i}")), format!("file {i}")).unwrap();
+    }
+    let data: Vec<u8> = (0..3_000_017u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(src.join("big"), &data).unwrap();
+
+    let mut flush = Flusher::at(&d);
+    let dst = d.join("dst");
+    let report = copy_item(&src, &dst, &no_cancel(), &mut flush).unwrap();
+    flush.settle().unwrap();
+    assert!(report.failures.is_empty() && !flush.failed());
+    assert_eq!(std::fs::read(dst.join("big")).unwrap(), data);
+    for i in 0..300 {
+        assert_eq!(
+            std::fs::read_to_string(dst.join(format!("sub/f{i}"))).unwrap(),
+            format!("file {i}")
+        );
+    }
     let _ = std::fs::remove_dir_all(&d);
 }
 

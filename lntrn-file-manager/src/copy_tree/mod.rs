@@ -14,6 +14,8 @@
 //!  - When the item fails or is cancelled, everything it created is removed.
 //!    Nothing that existed before is ever touched.
 //!  - The cancel flag is read between entries and between chunks of a file.
+//!  - On a drive that can be pulled out, what is written is flushed to the
+//!    drive as the copy goes (`flush.rs`).
 
 use std::io::{self, Read, Write};
 use std::os::unix::ffi::OsStrExt;
@@ -22,8 +24,10 @@ use std::os::unix::io::{AsRawFd, IntoRawFd};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+mod flush;
 mod moved;
 
+pub use flush::Flusher;
 pub use moved::remove_moved_source;
 
 /// One entry that did not make it, with the reason shown to the user.
@@ -105,7 +109,12 @@ fn special_reason(ft: &std::fs::FileType) -> &'static str {
 /// Copy `src` to `dst`, which must not exist. `Ok` means `dst` is in place
 /// (for a folder, possibly with the listed entries missing). `Err` means
 /// `dst` does not exist: whatever was written has been removed again.
-pub fn copy_item(src: &Path, dst: &Path, cancel: &AtomicBool) -> Result<CopyReport, CopyError> {
+pub fn copy_item(
+    src: &Path,
+    dst: &Path,
+    cancel: &AtomicBool,
+    flush: &mut Flusher,
+) -> Result<CopyReport, CopyError> {
     let meta = std::fs::symlink_metadata(src).map_err(CopyError::Failed)?;
     let ft = meta.file_type();
     let mut report = CopyReport::default();
@@ -113,13 +122,13 @@ pub fn copy_item(src: &Path, dst: &Path, cancel: &AtomicBool) -> Result<CopyRepo
         copy_symlink(src, dst).map_err(CopyError::Failed)?;
     } else if ft.is_dir() {
         std::fs::create_dir(dst).map_err(CopyError::Failed)?;
-        if let Err(e) = copy_dir_contents(src, dst, cancel, &mut report, true) {
+        if let Err(e) = copy_dir_contents(src, dst, cancel, flush, &mut report, true) {
             remove_tree(dst);
             return Err(e);
         }
         finish_dir(&meta, dst);
     } else if ft.is_file() {
-        copy_file_new(src, &meta, dst, cancel)?;
+        copy_file_new(src, &meta, dst, cancel, flush)?;
     } else {
         return Err(CopyError::Failed(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -133,6 +142,7 @@ fn copy_dir_contents(
     src: &Path,
     dst: &Path,
     cancel: &AtomicBool,
+    flush: &mut Flusher,
     report: &mut CopyReport,
     top: bool,
 ) -> Result<(), CopyError> {
@@ -159,10 +169,12 @@ fn copy_dir_contents(
         };
         let from = entry.path();
         let to = dst.join(entry.file_name());
-        match copy_entry(&from, &to, cancel, report) {
+        match copy_entry(&from, &to, cancel, flush, report) {
             Ok(()) => {}
             Err(CopyError::Cancelled) => return Err(CopyError::Cancelled),
-            Err(CopyError::Failed(e)) if aborts_item(&e) => return Err(CopyError::Failed(e)),
+            Err(CopyError::Failed(e)) if aborts_item(&e) || flush.failed() => {
+                return Err(CopyError::Failed(e))
+            }
             Err(CopyError::Failed(e)) => report.fail(&from, &e),
         }
     }
@@ -173,8 +185,10 @@ fn copy_entry(
     from: &Path,
     to: &Path,
     cancel: &AtomicBool,
+    flush: &mut Flusher,
     report: &mut CopyReport,
 ) -> Result<(), CopyError> {
+    flush.new_entry().map_err(CopyError::Failed)?;
     // lstat, never stat: a link to a folder is a link, not a folder to
     // descend into (and a dangling one is still worth keeping).
     let meta = std::fs::symlink_metadata(from).map_err(CopyError::Failed)?;
@@ -183,11 +197,11 @@ fn copy_entry(
         copy_symlink(from, to).map_err(CopyError::Failed)
     } else if ft.is_dir() {
         std::fs::create_dir(to).map_err(CopyError::Failed)?;
-        copy_dir_contents(from, to, cancel, report, false)?;
+        copy_dir_contents(from, to, cancel, flush, report, false)?;
         finish_dir(&meta, to);
         Ok(())
     } else if ft.is_file() {
-        copy_file_new(from, &meta, to, cancel)
+        copy_file_new(from, &meta, to, cancel, flush)
     } else {
         Err(CopyError::Failed(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -216,6 +230,7 @@ fn copy_file_new(
     src_meta: &std::fs::Metadata,
     dst: &Path,
     cancel: &AtomicBool,
+    flush: &mut Flusher,
 ) -> Result<(), CopyError> {
     // O_NONBLOCK: if the entry was swapped for a FIFO after the lstat, the
     // open returns instead of waiting for a writer. O_NOFOLLOW: same for a
@@ -240,7 +255,7 @@ fn copy_file_new(
         .open(dst)
         .map_err(CopyError::Failed)?;
 
-    let written = pump(&input, &out, cancel).and_then(|n| {
+    let written = pump(&input, &out, cancel, flush).and_then(|n| {
         // The umask narrowed the mode at create time.
         let _ = out.set_permissions(std::fs::Permissions::from_mode(mode));
         // A FUSE destination commits on close and reports its failure there;
@@ -282,7 +297,12 @@ fn close_checked(file: std::fs::File) -> io::Result<()> {
 /// `copy_file_range` first (reflinks on btrfs, stays in the kernel); when
 /// the pair of filesystems cannot do it, plain read/write. Both use the
 /// files' own offsets, so switching over mid-file continues where it was.
-fn pump(input: &std::fs::File, out: &std::fs::File, cancel: &AtomicBool) -> Result<u64, CopyError> {
+fn pump(
+    input: &std::fs::File,
+    out: &std::fs::File,
+    cancel: &AtomicBool,
+    flush: &mut Flusher,
+) -> Result<u64, CopyError> {
     const RANGE_CHUNK: usize = 32 * 1024 * 1024;
     const BUF_LEN: usize = 1024 * 1024;
     let mut total: u64 = 0;
@@ -308,6 +328,7 @@ fn pump(input: &std::fs::File, out: &std::fs::File, cancel: &AtomicBool) -> Resu
             };
             if n > 0 {
                 total += n as u64;
+                flush.wrote(n as u64).map_err(CopyError::Failed)?;
                 continue;
             }
             if n < 0 {
@@ -342,6 +363,7 @@ fn pump(input: &std::fs::File, out: &std::fs::File, cancel: &AtomicBool) -> Resu
         };
         writer.write_all(&buf[..n]).map_err(CopyError::Failed)?;
         total += n as u64;
+        flush.wrote(n as u64).map_err(CopyError::Failed)?;
     }
 }
 

@@ -3001,6 +3001,7 @@ version = "0.2.0"
 dependencies = [
  "lntrn-core",
  "lntrn-image",
+ "lntrn-sys",
 ]
 
 [[package]]
@@ -6100,6 +6101,7 @@ dependencies = [
  "android_system_properties",
  "arrayvec",
  "ash",
+ "bit-set 0.10.0",
  "bitflags 2.11.0",
  "bytemuck",
  "cfg-if",
@@ -6111,11 +6113,13 @@ dependencies = [
  "log",
  "naga 30.0.1",
  "naga-types",
+ "once_cell",
  "ordered-float",
  "parking_lot",
  "portable-atomic",
  "portable-atomic-util",
  "profiling",
+ "range-alloc",
  "raw-window-handle",
  "raw-window-metal",
  "renderdoc-sys",
@@ -6125,6 +6129,7 @@ dependencies = [
  "wgpu-naga-bridge",
  "wgpu-types 30.0.1",
  "windows 0.62.2",
+ "windows-core 0.62.2",
 ]
 
 [[package]]

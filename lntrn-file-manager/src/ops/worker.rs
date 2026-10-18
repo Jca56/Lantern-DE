@@ -8,7 +8,7 @@ use std::sync::mpsc::Sender;
 use super::{OpItem, OpKind, OpOutcome, OpProgress};
 use crate::copy_tree::{
     copy_item, reason_of, remove_moved_source, remove_tree, rename_noreplace, temp_sibling,
-    CopyError,
+    CopyError, Flusher,
 };
 use crate::trash::{TrashError, Trashed};
 
@@ -127,7 +127,8 @@ fn copy_and_land(
     } else {
         staging_for(item)
     };
-    let report = match copy_item(&item.src, &staging, cancel) {
+    let mut flush = Flusher::for_target(&item.target);
+    let report = match copy_item(&item.src, &staging, cancel, &mut flush) {
         Ok(report) => report,
         Err(CopyError::Cancelled) => {
             out.cancelled = true;
@@ -158,6 +159,17 @@ fn copy_and_land(
         );
         return false;
     }
+    // On a drive that can be pulled out, the copy is on the drive before it
+    // takes its real name, so the name never holds a partial item there
+    // either...
+    if let Err(e) = flush.settle() {
+        remove_tree(&staging);
+        out.fail(
+            &item.target,
+            &format!("not saved: the drive reported an error ({})", reason_of(&e)),
+        );
+        return false;
+    }
     if !in_place {
         if let Err(why) = land(&staging, &item.target, replacing, trasher, out) {
             remove_tree(&staging);
@@ -166,6 +178,18 @@ fn copy_and_land(
         }
     }
     out.failures.extend(report.failures);
+    // ...and the name is on the drive too before the item counts as done,
+    // which is what a move waits for to delete its source.
+    if let Err(e) = flush.settle() {
+        out.fail(
+            &item.target,
+            &format!(
+                "may not be saved: the drive reported an error ({})",
+                reason_of(&e)
+            ),
+        );
+        return false;
+    }
     true
 }
 

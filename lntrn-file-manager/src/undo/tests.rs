@@ -23,9 +23,12 @@ pub(super) type Trasher<'a> = &'a dyn Fn(&Path) -> Result<Trashed, TrashError>;
 /// Run a job on this thread, the way the worker does.
 pub(super) fn exec_job(job: Job, trash: Trasher, cancelled: bool) -> Outcome {
     let cancel = AtomicBool::new(cancelled);
-    let copy = |src: &Path, dst: &Path| match crate::copy_tree::copy_item(src, dst, &cancel) {
-        Ok(report) => (true, report.failures),
-        Err(_) => (false, Vec::new()),
+    let copy = |src: &Path, dst: &Path| {
+        let mut flush = crate::copy_tree::Flusher::off();
+        match crate::copy_tree::copy_item(src, dst, &cancel, &mut flush) {
+            Ok(report) => (true, report.failures),
+            Err(_) => (false, Vec::new()),
+        }
     };
     let mut progress = |_: usize, _: usize, _: &str| {};
     exec::run(
@@ -357,7 +360,8 @@ fn redo_of_a_copy_copies_again_only_when_its_trashed_copy_is_gone() {
     std::fs::write(d.join("tree/sub/f"), b"data").unwrap();
     std::fs::create_dir_all(d.join("dest")).unwrap();
     let never = AtomicBool::new(false);
-    crate::copy_tree::copy_item(&d.join("tree"), &d.join("dest/tree"), &never).unwrap();
+    let mut flush = crate::copy_tree::Flusher::off();
+    crate::copy_tree::copy_item(&d.join("tree"), &d.join("dest/tree"), &never, &mut flush).unwrap();
     let mut stack = UndoStack::new();
     stack.push(UndoAction::Copy(vec![(d.join("tree"), d.join("dest/tree"))]));
 
