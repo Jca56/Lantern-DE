@@ -136,7 +136,8 @@ fn month(cal: &mut Calendar, ui: &mut Ui, frame: &Frame, clock: ClockOptions) ->
     let style = TextStyle::new(m.px(TIME) as f32).bold();
     let row = col.take(m.px(TIME * 1.2));
     if let Some(now) = Local::now() {
-        ui.text_in_rect(&clock::time_text(&now, clock), &style, row, ink);
+        let top = (row.center().y - f64::from(style.line_height()) * 0.5).round();
+        clock::tabular(ui, &clock::time_text(&now, clock), &style, Vec2::new(row.min.x, top), ink);
     }
     ui.text_in_rect(&today.long(), &kit::name_style(ui), col.take(m.px(DATE_H)), dim);
     col.take(m.px(GAP));

@@ -208,15 +208,32 @@ pub fn redraw_after(opts: ClockOptions) -> Option<f64> {
 pub struct Layout {
     /// The room it takes, so what is laid out beside it knows where to
     /// stop: the plate's height, from the widest line's left to the text's
-    /// right end.
+    /// right end. The time's share is the most it can ever take, so it
+    /// stays put as the seconds tick, at ten o'clock and at noon.
     pub rect: Rect,
-    lines: Vec<(String, TextStyle, Rect, Color)>,
+    lines: Vec<Line>,
+}
+
+/// One of the clock's lines, right-aligned in its rect; the time's with
+/// its digits [`tabular`].
+struct Line {
+    text: String,
+    style: TextStyle,
+    rect: Rect,
+    color: Color,
+    tabular: bool,
 }
 
 impl Layout {
     pub fn paint(&self, ui: &mut Ui) {
-        for (text, style, rect, color) in &self.lines {
-            ui.text_right(text, style, *rect, *color);
+        for l in &self.lines {
+            if l.tabular {
+                let w = tabular_w(ui, &l.text, &l.style);
+                let top = (l.rect.center().y - f64::from(l.style.line_height()) * 0.5).round();
+                tabular(ui, &l.text, &l.style, Vec2::new(l.rect.max.x - w, top), l.color);
+            } else {
+                ui.text_right(&l.text, &l.style, l.rect, l.color);
+            }
         }
     }
 }
@@ -229,29 +246,85 @@ pub fn layout(ui: &mut Ui, plate: Rect, opts: ClockOptions, now: &Local) -> Layo
     let time_style = TextStyle::new(m.px(TIME_SIZE) as f32).bold();
     let date_style = TextStyle::new(m.px(DATE_SIZE) as f32);
     let right = plate.max.x - m.px(PAD);
-    let time_w = ui.measure(&time, &time_style);
+    let time_w = time_room(ui, opts, &time_style);
     let time_h = f64::from(time_style.line_height());
     let line = |left: f64, top: f64, h: f64| Rect::new(Vec2::new(left, top), Vec2::new(right, top + h));
+    let time_line = |rect: Rect| Line { text: time.clone(), style: time_style.clone(), rect, color: ink, tabular: true };
     let Some(date) = opts.date.then(|| date_text(now, opts.style)) else {
-        let left = right - time_w;
-        let rect = line(left, plate.min.y, plate.height());
-        return Layout { rect, lines: vec![(time, time_style, rect, ink)] };
+        let rect = line(right - time_w, plate.min.y, plate.height());
+        return Layout { rect, lines: vec![time_line(rect)] };
     };
     let date_w = ui.measure(&date, &date_style);
     let date_h = f64::from(date_style.line_height());
+    let date_line = |rect: Rect| Line { text: date.clone(), style: date_style.clone(), rect, color: dim, tabular: false };
     // Time over date when both lines fit the plate, else side by side.
     if time_h + date_h <= plate.height() - m.px(4.0) {
         let left = right - time_w.max(date_w);
         let top = (plate.center().y - (time_h + date_h) * 0.5).round();
-        let lines = vec![(time, time_style, line(left, top, time_h), ink), (date, date_style, line(left, top + time_h, date_h), dim)];
+        let lines = vec![time_line(line(left, top, time_h)), date_line(line(left, top + time_h, date_h))];
         return Layout { rect: line(left, plate.min.y, plate.height()), lines };
     }
     let time_left = right - time_w;
     let date_right = time_left - m.px(SPACING);
     let left = date_right - date_w;
     let date_at = Rect::new(Vec2::new(left, plate.min.y), Vec2::new(date_right, plate.max.y));
-    let lines = vec![(time, time_style, line(time_left, plate.min.y, plate.height()), ink), (date, date_style, date_at, dim)];
+    let lines = vec![time_line(line(time_left, plate.min.y, plate.height())), date_line(date_at)];
     Layout { rect: line(left, plate.min.y, plate.height()), lines }
+}
+
+/// The most room the time can take on `opts`' clock: a two-digit hour,
+/// and the wider of AM and PM.
+fn time_room(ui: &mut Ui, opts: ClockOptions, style: &TextStyle) -> f64 {
+    let at = |hour: u32| Local { year: 2026, month: 1, day: 1, weekday: 4, hour, minute: 0, second: 0 };
+    tabular_w(ui, &time_text(&at(10), opts), style).max(tabular_w(ui, &time_text(&at(22), opts), style))
+}
+
+const DIGITS: [&str; 10] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+
+/// The pieces `text` is drawn in: each digit alone (`true`), what is
+/// between them whole.
+fn pieces(text: &str) -> Vec<(&str, bool)> {
+    let mut out = Vec::new();
+    let mut run = 0;
+    for (i, c) in text.char_indices() {
+        if c.is_ascii_digit() {
+            if run < i {
+                out.push((&text[run..i], false));
+            }
+            out.push((&text[i..i + 1], true));
+            run = i + 1;
+        }
+    }
+    if run < text.len() {
+        out.push((&text[run..], false));
+    }
+    out
+}
+
+/// A digit's cell in `style`: as wide as the widest digit.
+fn cell(ui: &mut Ui, style: &TextStyle) -> f64 {
+    DIGITS.iter().map(|d| ui.measure(d, style)).fold(0.0, f64::max)
+}
+
+/// How wide `text` is drawn [`tabular`].
+pub fn tabular_w(ui: &mut Ui, text: &str, style: &TextStyle) -> f64 {
+    let cell = cell(ui, style);
+    pieces(text).into_iter().map(|(piece, digit)| if digit { cell } else { ui.measure(piece, style) }).sum()
+}
+
+/// Draw `text` with its line box's top left at `at`, each digit centred in
+/// a cell as wide as the widest one: the font's own digits are each their
+/// own width, so a ticking time would grow and shrink. What is between the
+/// digits keeps its own width.
+pub fn tabular(ui: &mut Ui, text: &str, style: &TextStyle, at: Vec2, color: Color) {
+    let cell = cell(ui, style);
+    let mut x = at.x;
+    for (piece, digit) in pieces(text) {
+        let w = ui.measure(piece, style);
+        let left = if digit { x + (cell - w) * 0.5 } else { x };
+        ui.text_at(piece, style, Vec2::new(left.round(), at.y), 1.0e6, color);
+        x += if digit { cell } else { w };
+    }
 }
 
 /// Wake the loop on each wall-clock minute from a thread of its own.
@@ -331,6 +404,36 @@ mod tests {
         // Text's line is 1.2 of its size; draw() wants 4px to spare.
         let bar = f64::from(crate::bar::Shape::default().height);
         assert!((TIME_SIZE + DATE_SIZE) * 1.2 <= bar - 4.0);
+    }
+
+    #[test]
+    fn a_time_is_cut_into_its_digits_and_what_is_between() {
+        assert_eq!(pieces("12:05 PM"), [("1", true), ("2", true), (":", false), ("0", true), ("5", true), (" PM", false)]);
+        assert_eq!(pieces("PM"), [("PM", false)]);
+        assert!(pieces("").is_empty());
+    }
+
+    #[test]
+    fn the_clock_takes_the_same_room_whatever_the_time() {
+        use lntrn_kit::desktop::Desktop;
+        use lntrn_ui::testing::Harness;
+        let mut h = Harness::new(1600.0, 200.0);
+        h.theme = crate::bar::theme(&Desktop::default());
+        let plate = Rect::new(Vec2::new(0.0, 100.0), Vec2::new(1600.0, 164.0));
+        let mine = ClockOptions { seconds: true, ampm: false, ..ClockOptions::default() };
+        for opts in [mine, ClockOptions { seconds: true, ..ClockOptions::default() }, ClockOptions { hour24: true, seconds: true, ..ClockOptions::default() }, ClockOptions { date: false, seconds: true, ..ClockOptions::default() }] {
+            let mut rooms = Vec::new();
+            h.frame(|ui| {
+                for (hour, minute, second) in [(1, 11, 11), (8, 8, 8), (9, 59, 59), (10, 0, 0), (12, 47, 3), (23, 58, 40)] {
+                    rooms.push(layout(ui, plate, opts, &at(hour, minute, second)).rect);
+                }
+                // Each digit in a cell of its own: a ticking time is as wide
+                // whichever digits it shows.
+                let style = TextStyle::new(28.0).bold();
+                assert_eq!(tabular_w(ui, "1:11:11", &style), tabular_w(ui, "8:08:08", &style));
+            });
+            assert!(rooms.windows(2).all(|r| r[0] == r[1]), "{opts:?}: {rooms:?}");
+        }
     }
 
     #[test]
