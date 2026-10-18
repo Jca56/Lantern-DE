@@ -101,6 +101,21 @@ impl WlrLayerShellHandler for Lantern {
 }
 
 impl Lantern {
+    /// The layer surface `surface` is, or is a subsurface of.
+    fn layer_surface_of(&self, surface: &WlSurface) -> Option<&LayerSurface> {
+        let mut root = surface.clone();
+        while let Some(parent) = get_parent(&root) {
+            root = parent;
+        }
+        self.layer_surfaces.iter().find(|ls| *ls.wl_surface() == root)
+    }
+
+    /// Whether `surface` belongs to a layer surface (a panel, a bar, the
+    /// desktop) rather than a window.
+    pub(crate) fn is_layer_surface(&self, surface: &WlSurface) -> bool {
+        self.layer_surface_of(surface).is_some()
+    }
+
     /// Whether `surface` (or the surface it is a subsurface of) is a layer
     /// surface that asked for no keyboard (`KeyboardInteractivity::None`).
     /// The protocol says such a surface must never be given the keyboard
@@ -108,11 +123,7 @@ impl Lantern {
     /// window being typed in. (Handing it over and taking it straight back
     /// also made Lantern UI drop the press, so the click never landed.)
     pub(crate) fn layer_declines_keyboard(&self, surface: &WlSurface) -> bool {
-        let mut root = surface.clone();
-        while let Some(parent) = get_parent(&root) {
-            root = parent;
-        }
-        self.layer_surfaces.iter().find(|ls| *ls.wl_surface() == root).is_some_and(|ls| {
+        self.layer_surface_of(surface).is_some_and(|ls| {
             with_states(ls.wl_surface(), |states| {
                 states.cached_state.get::<LayerSurfaceCachedState>().current().keyboard_interactivity
                     == KeyboardInteractivity::None

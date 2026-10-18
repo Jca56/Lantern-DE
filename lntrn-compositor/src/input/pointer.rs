@@ -599,9 +599,17 @@ impl Lantern {
                     }
                 }
             }
-            if let Some((window, _loc)) = self.visible_element_under(pos) {
+            // What is really under the pointer first: a panel on a layer
+            // above the windows (the Control Center's launcher, the Command
+            // Center) takes the click itself. Focusing the window hidden
+            // behind it raised that window out of sight and took the
+            // keyboard off the panel mid-click, which Lantern UI hears as
+            // the press cancelled: the click never landed.
+            let top = self.surface_under(pos);
+            let on_layer = top.as_ref().is_some_and(|(surface, _)| self.is_layer_surface(surface));
+            if let Some((window, _loc)) = self.visible_element_under(pos).filter(|_| !on_layer) {
                 self.focus_window(&window, serial);
-            } else if let Some((surface, _)) = self.surface_under(pos) {
+            } else if let Some((surface, _)) = top {
                 // Not a workspace window. An X11 surface here is an
                 // override-redirect window — a menu, a tooltip, a game's
                 // helper window — and those never take focus from the window
