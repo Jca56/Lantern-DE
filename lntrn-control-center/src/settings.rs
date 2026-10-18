@@ -112,6 +112,7 @@ fn hide(doc: &Doc) -> HideOptions {
         visibility: key("visibility").and_then(Doc::as_str).map_or(Visibility::Always, Visibility::from_word),
         delay: seconds("auto_hide_delay_ms", d.delay, HideOptions::DELAYS_MS),
         slide: seconds("auto_hide_slide_ms", d.slide, HideOptions::SLIDES_MS),
+        peek: seconds("auto_hide_peek_ms", d.peek, HideOptions::PEEKS_MS),
     }
 }
 
@@ -256,10 +257,10 @@ mod tests {
     #[test]
     fn auto_hide_is_what_system_settings_chose_held_to_its_ranges() {
         assert_eq!(Settings::default().hide, HideOptions::default());
-        let set = parse("[control_center]\nvisibility = \"auto_hide\"\nauto_hide_delay_ms = 1200\nauto_hide_slide_ms = 400\n").hide;
-        assert_eq!(set, HideOptions { visibility: Visibility::AutoHide, delay: 1.2, slide: 0.4 });
-        let odd = parse("[control_center]\nvisibility = \"?\"\nauto_hide_delay_ms = -5\nauto_hide_slide_ms = 99999\n").hide;
-        assert_eq!(odd, HideOptions { visibility: Visibility::Always, delay: 0.0, slide: 1.0 });
+        let set = parse("[control_center]\nvisibility = \"auto_hide\"\nauto_hide_delay_ms = 1200\nauto_hide_slide_ms = 400\nauto_hide_peek_ms = 3000\n").hide;
+        assert_eq!(set, HideOptions { visibility: Visibility::AutoHide, delay: 1.2, slide: 0.4, peek: 3.0 });
+        let odd = parse("[control_center]\nvisibility = \"?\"\nauto_hide_delay_ms = -5\nauto_hide_slide_ms = 99999\nauto_hide_peek_ms = 1\n").hide;
+        assert_eq!(odd, HideOptions { visibility: Visibility::Always, delay: 0.0, slide: 1.0, peek: 0.5 });
     }
 
     #[test]

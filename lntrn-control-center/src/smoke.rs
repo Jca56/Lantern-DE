@@ -71,7 +71,7 @@ fn a_quick_click_on_an_unfocused_bar_asks_for_the_menu() {
 /// frame by frame.
 #[test]
 fn auto_hide_slides_away_to_the_strip_and_back_with_the_windows_giving_way() {
-    let hide = HideOptions { visibility: Visibility::AutoHide, delay: 0.5, slide: 0.25 };
+    let hide = HideOptions { visibility: Visibility::AutoHide, delay: 0.5, slide: 0.25, ..HideOptions::default() };
     let (mut h, mut shell, mut app) = bar_with(Settings { hide, ..Settings::default() });
     let at = |h: &mut Harness, shell: &mut Shell<App>, app: &mut App, t: f64| {
         h.advance(t - h.time());
@@ -96,12 +96,51 @@ fn auto_hide_slides_away_to_the_strip_and_back_with_the_windows_giving_way() {
     assert_eq!(at(&mut h, &mut shell, &mut app, 5.0), None);
 }
 
+/// A Super tap with the bar out of sight only peeks: up as from the edge,
+/// no launcher, held for the peek time rather than the hover delay, then
+/// away again. A tap with the bar up opens the launcher.
+#[test]
+fn a_super_tap_peeks_at_a_hidden_bar_and_a_second_opens_the_launcher() {
+    let hide = HideOptions { visibility: Visibility::AutoHide, delay: 0.5, slide: 0.25, peek: 2.0 };
+    let (mut h, mut shell, mut app) = bar_with(Settings { hide, ..Settings::default() });
+    let at = |h: &mut Harness, shell: &mut Shell<App>, app: &mut App, t: f64| {
+        h.advance(t - h.time());
+        h.shell_settle(shell, app, 4);
+        shell.take_layer_change()
+    };
+    for t in [0.0, 0.6, 0.7] {
+        at(&mut h, &mut shell, &mut app, t);
+    }
+    let hidden = at(&mut h, &mut shell, &mut app, 0.9).expect("out of sight");
+    assert_eq!(hidden.size, (0, hide::STRIP));
+    // Super, with the pointer nowhere near.
+    app.link().feed("launcher:toggle");
+    let grow = at(&mut h, &mut shell, &mut app, 1.0).expect("comes up as from the edge");
+    assert_eq!((grow.size, grow.exclusive_zone), ((0, 72), 0));
+    let up = at(&mut h, &mut shell, &mut app, 1.3).expect("all the way up");
+    assert_eq!(up.exclusive_zone, 72);
+    assert!(shell.take_new_windows().is_empty(), "a peek, not the launcher");
+    // Held from landing for the peek's 2 s, well past the 0.5 s delay.
+    assert_eq!(at(&mut h, &mut shell, &mut app, 3.0), None, "still up for its look");
+    at(&mut h, &mut shell, &mut app, 3.4);
+    let away = at(&mut h, &mut shell, &mut app, 3.8).expect("away again");
+    assert_eq!((away.size, away.exclusive_zone), ((0, hide::STRIP), 0));
+    // Peek again, then a second tap while it is up: the launcher.
+    app.link().feed("launcher:toggle");
+    at(&mut h, &mut shell, &mut app, 4.0);
+    at(&mut h, &mut shell, &mut app, 4.3);
+    assert!(shell.take_new_windows().is_empty());
+    app.link().feed("launcher:toggle");
+    at(&mut h, &mut shell, &mut app, 4.4);
+    assert_eq!(shell.take_new_windows().len(), 1, "the launcher's menu asked for");
+}
+
 /// See-through windows make the plate glass: the compositor is told where
 /// to blur behind it. Out of sight with auto hide, it's told the bar waits
 /// at the bottom edge (and that there's nothing to blur).
 #[test]
 fn the_plate_is_glass_for_the_compositor_and_a_hidden_bar_waits_at_the_edge() {
-    let hide = HideOptions { visibility: Visibility::AutoHide, delay: 0.5, slide: 0.25 };
+    let hide = HideOptions { visibility: Visibility::AutoHide, delay: 0.5, slide: 0.25, ..HideOptions::default() };
     let desktop = lntrn_kit::desktop::Desktop { opacity: 0.8, ..lntrn_kit::desktop::Desktop::default() };
     let (mut h, mut shell, mut app) = bar_with(Settings { hide, desktop, ..Settings::default() });
     // As the live bar: the surface is the whole window.

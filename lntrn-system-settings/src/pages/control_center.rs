@@ -12,7 +12,7 @@
 use lntrn_math::{Color, Rect, Vec2};
 use lntrn_ui::Ui;
 
-use crate::config::{CC_DATE_STYLES, CC_GAPS_BELOW, CC_GAPS_SIDES, CC_HEIGHTS, CC_HIDE_DELAYS, CC_MONITOR_RATES, CC_MONITOR_SPANS, CC_RADII, CC_SLIDES, CC_VISIBILITIES, CC_WEEK_STARTS, Config, PANELS};
+use crate::config::{CC_DATE_STYLES, CC_GAPS_BELOW, CC_GAPS_SIDES, CC_HEIGHTS, CC_HIDE_DELAYS, CC_MONITOR_RATES, CC_MONITOR_SPANS, CC_PEEKS, CC_RADII, CC_SLIDES, CC_VISIBILITIES, CC_WEEK_STARTS, Config, PANELS};
 use crate::kit::{self, look, pixels};
 use crate::machine;
 
@@ -68,7 +68,7 @@ pub fn draw(cfg: &mut Config, ui: &mut Ui) -> bool {
             changed = true;
         }
     });
-    kit::note(ui, "Only one runs at a time, and switching takes effect at once. The Control Center is the bar along the bottom: a Super tap opens its app launcher. The Command Center drops down from the top: a Super tap opens it. The settings below are the Control Center's.");
+    kit::note(ui, "Only one runs at a time, and switching takes effect at once. The Control Center is the bar along the bottom: a Super tap opens its app launcher (with auto hide, the first tap only peeks). The Command Center drops down from the top: a Super tap opens it. The settings below are the Control Center's.");
 
     let cc = &mut cfg.control_center;
 
@@ -95,9 +95,10 @@ pub fn draw(cfg: &mut Config, ui: &mut Ui) -> bool {
         if cc.visibility == "auto_hide" {
             changed |= c.slider_int("Hide after", "Once the pointer leaves the bar.", &mut cc.auto_hide_delay_ms, CC_HIDE_DELAYS, 100, seconds);
             changed |= c.slider_int("Slide time", "Out of sight, or back.", &mut cc.auto_hide_slide_ms, CC_SLIDES, 25, seconds);
+            changed |= c.slider_int("Peek time", "How long a Super tap shows it.", &mut cc.auto_hide_peek_ms, CC_PEEKS, 250, seconds);
         }
     });
-    kit::note(ui, "Auto hide keeps the bar out of sight until you push the pointer against the bottom edge of the screen. It never covers a window: windows make room as it slides up, and take the room back as it slides away.");
+    kit::note(ui, "Auto hide keeps the bar out of sight until you push the pointer against the bottom edge of the screen. A Super tap only peeks at it: up for a look at the clock, then away again after the peek time unless the pointer goes to it. Tap again while it's up to open the launcher. It never covers a window: windows make room as it slides up, and take the room back as it slides away.");
 
     kit::caption(ui, "Clock");
     kit::card(ui, "clock", |c| {

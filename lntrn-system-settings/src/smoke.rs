@@ -366,6 +366,12 @@ fn the_control_center_page_sets_auto_hide_and_the_am_pm() {
         control_center::draw(&mut cfg, ui);
     });
     assert_eq!(cfg.control_center.auto_hide_slide_ms, 0);
+    let peek = h.rect_of(WidgetId::ROOT.with("visibility").with("Peek time")).expect("the peek's slider");
+    let y = peek.center().y;
+    h.drag(Vec2::new(peek.center().x, y), Vec2::new(peek.max.x + 40.0, y), 4, |ui| {
+        control_center::draw(&mut cfg, ui);
+    });
+    assert_eq!(cfg.control_center.auto_hide_peek_ms, 5000);
     h.click_on(WidgetId::ROOT.with("clock").with("Show AM/PM"), |ui| {
         control_center::draw(&mut cfg, ui);
     });

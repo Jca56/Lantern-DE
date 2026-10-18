@@ -2,7 +2,8 @@
 //! the screen, which reads these keys as they change: its shape (it
 //! floats this far from the screen's edges, and docks full width and
 //! square while a window is maximized or full screen on its monitor),
-//! whether it hides out of sight between uses, what its clock shows,
+//! whether it hides out of sight between uses (and how long a Super
+//! tap's peek at it lasts), what its clock shows,
 //! which day its calendar's weeks start on and whether a dot by the clock
 //! says today has events to come, which items its system tray shows, in what order, and which mini
 //! monitors it shows, in what order, how often they look and how far
@@ -19,6 +20,7 @@ pub const CC_GAPS_SIDES: (i64, i64) = (0, 120);
 /// Auto hide's timings, in milliseconds (the bar's `HideOptions`).
 pub const CC_HIDE_DELAYS: (i64, i64) = (0, 3000);
 pub const CC_SLIDES: (i64, i64) = (0, 1000);
+pub const CC_PEEKS: (i64, i64) = (500, 5000);
 /// Whether it hides: the word stored, and how the page shows it.
 pub const CC_VISIBILITIES: [(&str, &str); 2] = [("always", "Always shown"), ("auto_hide", "Auto hide")];
 /// The clock's date styles: the word stored, and how the page shows it
@@ -66,6 +68,9 @@ props! {
         pub auto_hide_delay_ms: i64 = 500 => { id: 11, hard: 0..=3000 },
         /// How long its slide out of sight, or back, takes.
         pub auto_hide_slide_ms: i64 = 250 => { id: 12, hard: 0..=1000 },
+        /// How long a Super tap's peek holds the hidden bar up, once it is
+        /// all the way up, before it slides away again.
+        pub auto_hide_peek_ms: i64 = 2000 => { id: 31, hard: 500..=5000 },
         /// The tray's items, each shown unless switched off (and only
         /// where the machine has it: no battery on a desktop).
         pub tray_battery: bool = true => { id: 13 },
@@ -108,6 +113,7 @@ impl ControlCenter {
         self.gap_sides = hold(self.gap_sides, CC_GAPS_SIDES);
         self.auto_hide_delay_ms = hold(self.auto_hide_delay_ms, CC_HIDE_DELAYS);
         self.auto_hide_slide_ms = hold(self.auto_hide_slide_ms, CC_SLIDES);
+        self.auto_hide_peek_ms = hold(self.auto_hide_peek_ms, CC_PEEKS);
         if !CC_VISIBILITIES.iter().any(|(word, _)| *word == self.visibility) {
             self.visibility = "always".to_owned();
         }

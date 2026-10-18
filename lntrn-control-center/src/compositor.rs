@@ -4,7 +4,7 @@
 //! so the bar docks, every open window (`win:` / `win-gone:`), for the
 //! dock, and each monitor's workspaces (`state:<output>:<active>:<ids>`),
 //! for the tray's number, and a Super tap's `launcher:toggle`, to open or
-//! close the launcher. Out go the dock's commands: activate, minimize
+//! close the launcher (or, the bar away with auto hide, to peek). Out go the dock's commands: activate, minimize
 //! or close a window, the tray's turn to the next workspace,
 //! where its icons are (minimizing flies a window into its app's icon),
 //! and which windows its previews want live thumbnails of. The thread
@@ -195,6 +195,10 @@ impl Told {
 impl Link {
     /// Take in a line as though the compositor said it.
     pub fn feed(&self, line: &str) {
+        if line.trim() == "launcher:toggle" {
+            self.shared.launcher.store(true, Ordering::Release);
+            return;
+        }
         if apply(&mut self.shared.windows.lock().unwrap(), line) {
             self.shared.revision.fetch_add(1, Ordering::AcqRel);
         }

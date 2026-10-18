@@ -1,6 +1,9 @@
 //! Auto hide: the bar out of sight until the pointer touches the bottom
 //! edge of its monitor, then sliding up, and away again a moment after the
-//! pointer leaves it (never while the launcher is up). Nothing of it stays
+//! pointer leaves it (never while the launcher is up). A Super tap while
+//! it is away only peeks: up as from the edge, held a while for a look at
+//! the clock, then away again unless the pointer came to it (a second tap
+//! opens the launcher). Nothing of it stays
 //! lit, for an OLED's sake: hidden, its surface is a see-through strip
 //! along the bottom edge that only waits for the pointer.
 //!
@@ -46,6 +49,8 @@ pub struct HideOptions {
     pub delay: f64,
     /// How long a slide takes, s.
     pub slide: f64,
+    /// How long a peek holds the bar up once it is all the way up, s.
+    pub peek: f64,
 }
 
 impl HideOptions {
@@ -53,6 +58,7 @@ impl HideOptions {
     /// sliders offer them.
     pub const DELAYS_MS: (i64, i64) = (0, 3000);
     pub const SLIDES_MS: (i64, i64) = (0, 1000);
+    pub const PEEKS_MS: (i64, i64) = (500, 5000);
 
     pub fn auto(self) -> bool {
         self.visibility == Visibility::AutoHide
@@ -69,7 +75,7 @@ impl HideOptions {
 
 impl Default for HideOptions {
     fn default() -> Self {
-        HideOptions { visibility: Visibility::Always, delay: 0.5, slide: 0.25 }
+        HideOptions { visibility: Visibility::Always, delay: 0.5, slide: 0.25, peek: 2.0 }
     }
 }
 
@@ -81,6 +87,8 @@ pub struct Reveal {
     shown: bool,
     /// When to set off down, the pointer having left.
     hide_at: Option<f64>,
+    /// A peek on its way up, and how long to hold it there once up.
+    peek: Option<f64>,
     /// Whether the surface should be the bar's full height, else the strip.
     full: bool,
 }
@@ -89,7 +97,18 @@ impl Reveal {
     /// Shown, on its full-height surface, as the bar starts: auto hide
     /// lets it go a moment later, so a fresh bar says it is there.
     pub fn new() -> Reveal {
-        Reveal { morph: Morph::at(true), shown: true, hide_at: None, full: true }
+        Reveal { morph: Morph::at(true), shown: true, hide_at: None, peek: None, full: true }
+    }
+
+    /// Whether the bar is out of sight or on its way there.
+    pub fn away(&self) -> bool {
+        !self.shown
+    }
+
+    /// Come up as if the pointer had, and once all the way up, stay
+    /// `hold` s before going as after the pointer leaves.
+    pub fn peek(&mut self, hold: f64) {
+        self.peek = Some(hold.max(0.0));
     }
 
     /// Take a frame at `now`: the bar is `want`ed (the pointer is on it,
@@ -97,6 +116,17 @@ impl Reveal {
     /// full height or not yet. Returns how long until it needs a frame of
     /// its own, while it waits out the delay.
     pub fn step(&mut self, now: f64, want: bool, grown: bool, glide: Glide, delay: f64) -> Option<f64> {
+        if let Some(hold) = self.peek
+            && self.shown
+            && !self.morph.moving(now)
+        {
+            // A peek all the way up: held its own while, then as ever.
+            self.peek = None;
+            if !want {
+                self.hide_at = Some(now + hold);
+            }
+        }
+        let want = want || self.peek.is_some();
         let mut wait = None;
         if want {
             self.hide_at = None;
@@ -212,6 +242,58 @@ mod tests {
         assert_eq!(r.value(0.8), 1.0);
         // A fresh leave waits the whole delay again.
         assert_eq!(r.step(2.0, false, true, GLIDE, DELAY), Some(0.5));
+    }
+
+    #[test]
+    fn a_peek_comes_up_from_the_strip_holds_then_goes() {
+        let mut r = Reveal::new();
+        r.step(0.0, false, true, GLIDE, 0.0);
+        r.step(0.2, false, true, GLIDE, 0.0);
+        assert!(r.away() && !r.full());
+        r.peek(2.0);
+        r.step(1.0, false, false, GLIDE, DELAY);
+        assert!(r.full() && r.value(1.0) == 0.0, "asks for its full height, then waits for it");
+        r.step(1.05, false, true, GLIDE, DELAY);
+        assert!(!r.away() && r.moving(1.1));
+        r.step(1.1, false, true, GLIDE, DELAY);
+        // Landed at 1.25: the hold starts on the frame after, not the
+        // hover delay.
+        assert!(r.step(1.3, false, true, GLIDE, DELAY).is_some_and(|w| (w - 2.0).abs() < 1e-9));
+        assert!(r.step(3.0, false, true, GLIDE, DELAY).is_some_and(|w| (w - 0.3).abs() < 1e-9));
+        assert_eq!(r.value(3.0), 1.0, "still up for its look");
+        r.step(3.3, false, true, GLIDE, DELAY);
+        assert!(r.away() && r.moving(3.4));
+        r.step(3.6, false, true, GLIDE, DELAY);
+        assert_eq!((r.value(3.6), r.full()), (0.0, false), "away again, down to the strip");
+    }
+
+    #[test]
+    fn the_pointer_coming_to_a_peek_keeps_it_up_like_a_hover() {
+        let mut r = Reveal::new();
+        r.step(0.0, false, true, GLIDE, 0.0);
+        r.step(0.2, false, true, GLIDE, 0.0);
+        r.peek(2.0);
+        r.step(1.0, false, true, GLIDE, DELAY);
+        r.step(1.3, false, true, GLIDE, DELAY);
+        // The pointer comes and stays past the hold.
+        assert_eq!(r.step(1.5, true, true, GLIDE, DELAY), None);
+        assert_eq!(r.step(9.0, true, true, GLIDE, DELAY), None);
+        assert_eq!(r.value(9.0), 1.0);
+        // It leaves: the hover delay, not the peek's hold.
+        assert_eq!(r.step(10.0, false, true, GLIDE, DELAY), Some(DELAY));
+    }
+
+    #[test]
+    fn a_peek_turns_a_bar_on_its_way_down_round() {
+        let mut r = Reveal::new();
+        r.step(0.0, false, true, GLIDE, 0.0);
+        r.step(0.1, false, true, GLIDE, 0.0);
+        let mid = r.value(0.1);
+        assert!(r.away() && mid > 0.0 && mid < 1.0);
+        r.peek(1.0);
+        r.step(0.1, false, true, GLIDE, DELAY);
+        assert!(!r.away());
+        assert_eq!(r.value(0.1), mid, "no jump");
     }
 
     #[test]
