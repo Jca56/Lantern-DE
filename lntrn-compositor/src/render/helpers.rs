@@ -10,7 +10,8 @@ use smithay::{
         allocator::Fourcc,
         renderer::{
             element::{
-                surface::WaylandSurfaceRenderElement, AsRenderElements, Element, RenderElement,
+                surface::{render_elements_from_surface_tree, WaylandSurfaceRenderElement},
+                AsRenderElements, Element, Kind, RenderElement,
             },
             gles::{GlesRenderer, GlesTexture},
             Bind, Color32F, Frame, Offscreen, Renderer,
@@ -150,6 +151,52 @@ pub(super) fn capture_window_snapshot(
         content_key,
         captured_at: Instant::now(),
     })
+}
+
+/// A window's render elements, split into its popups and its own surface
+/// tree (each front to back; popups go above the tree, as Smithay's
+/// `Window::render_elements` orders them). The rounded window clip applies
+/// to the tree alone: popups (menus, dropdowns) reach past the window.
+pub(super) fn window_elements_split(
+    renderer: &mut GlesRenderer,
+    window: &smithay::desktop::Window,
+    location: Point<i32, Physical>,
+    scale: Scale<f64>,
+    alpha: f32,
+) -> (
+    Vec<WaylandSurfaceRenderElement<GlesRenderer>>,
+    Vec<WaylandSurfaceRenderElement<GlesRenderer>>,
+) {
+    use smithay::desktop::{PopupManager, WindowSurface};
+    match window.underlying_surface() {
+        WindowSurface::Wayland(toplevel) => {
+            let surface = toplevel.wl_surface();
+            let popups = PopupManager::popups_for_surface(surface)
+                .flat_map(|(popup, popup_offset)| {
+                    let offset = (window.geometry().loc + popup_offset - popup.geometry().loc)
+                        .to_physical_precise_round(scale);
+                    render_elements_from_surface_tree(
+                        renderer,
+                        popup.wl_surface(),
+                        location + offset,
+                        scale,
+                        alpha,
+                        Kind::Unspecified,
+                    )
+                })
+                .collect();
+            let tree = render_elements_from_surface_tree(
+                renderer,
+                surface,
+                location,
+                scale,
+                alpha,
+                Kind::Unspecified,
+            );
+            (popups, tree)
+        }
+        WindowSurface::X11(_) => (Vec::new(), window.render_elements(renderer, location, scale, alpha)),
+    }
 }
 
 // ── Slow-render reporting ─────────────────────────────────────────────────

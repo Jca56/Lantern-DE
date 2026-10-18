@@ -32,8 +32,8 @@ use crate::udev::{UdevOutputId, BG_COLOR};
 use crate::Lantern;
 
 use super::helpers::{
-    capture_window_snapshot, snapshot_is_stale, window_content_key, SlowRenderBreakdown,
-    SlowRenderReport,
+    capture_window_snapshot, snapshot_is_stale, window_content_key, window_elements_split,
+    SlowRenderBreakdown, SlowRenderReport,
 };
 use super::scanout::{collect_presentation_feedback, update_primary_scanout_outputs};
 use super::CustomRenderElements;
@@ -1101,8 +1101,8 @@ pub fn render_surface(
         }
 
         // 2) Live surface, fading IN (and rescaled to the anim rect).
-        let win_render_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
-            window.render_elements(renderer, phys_loc, render_scale, live_alpha);
+        let (popup_elements, win_render_elements) =
+            window_elements_split(renderer, window, phys_loc, render_scale, live_alpha);
         let win_phys_w_raw = (win_geo.size.w as f64 * output_scale) as f32;
         let win_phys_h_raw = (win_geo.size.h as f64 * output_scale) as f32;
         let corner_r = win_corner_r_logical * output_scale as f32;
@@ -1135,20 +1135,45 @@ pub fn render_surface(
                 combined_scale,
             )
         };
+        // Popups (menus, dropdowns) reach past the window: never clipped.
+        target.extend(
+            popup_elements
+                .into_iter()
+                .map(|e| CustomRenderElements::Rescaled(rescale(e))),
+        );
         if needs_rounding {
-            let shader = udev.rounded_tex_shader.as_ref().unwrap();
-            // Corner mask shader uses the post-rescale texture size so
-            // the SDF mask lands at the actual visible edges.
-            let win_phys_w = (win_phys_w_raw as f64 * combined_scale_x) as f32;
-            let win_phys_h = (win_phys_h_raw as f64 * combined_scale_y) as f32;
+            let shaders = crate::rounded_element::RoundedShaders {
+                texture: udev.rounded_tex_shader.clone().unwrap(),
+                solid: udev.rounded_solid_shader.clone(),
+            };
+            // The clip is the window geometry box where it lands on screen
+            // after the rescale about phys_loc, not the surface's buffer:
+            // CSD clients (Electron, GTK) draw shadow margins around their
+            // geometry, and those slipped a buffer-sized mask past the
+            // corners, letting the client's own radius cover the border.
+            let clip = crate::rounded_element::WindowClip {
+                rect: Rectangle::new(
+                    Point::from((
+                        phys_loc.x as f64 + win_geo.loc.x as f64 * output_scale * combined_scale_x,
+                        phys_loc.y as f64 + win_geo.loc.y as f64 * output_scale * combined_scale_y,
+                    )),
+                    Size::from((
+                        win_phys_w_raw as f64 * combined_scale_x,
+                        win_phys_h_raw as f64 * combined_scale_y,
+                    )),
+                ),
+                corner_radius: corner_r,
+                top_extend: round_top_extend,
+            };
             target.extend(win_render_elements.into_iter().map(|e| {
                 CustomRenderElements::RoundedSurface(
                     crate::rounded_element::RoundedSurfaceElement::new(
-                        rescale(e),
-                        shader.clone(),
-                        [win_phys_w, win_phys_h],
-                        corner_r,
-                        round_top_extend,
+                        e,
+                        phys_loc,
+                        combined_scale,
+                        render_scale,
+                        clip,
+                        shaders.clone(),
                     ),
                 )
             }));
@@ -1826,39 +1851,52 @@ pub fn render_surface(
             )
                 .into();
 
-            let full_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> = window
-                .render_elements(
-                    renderer,
-                    base_phys,
-                    smithay::utils::Scale::from(output_scale),
-                    1.0,
-                );
+            let preview_scale = Scale::from(output_scale);
+            let (popup_elements, tree_elements) =
+                window_elements_split(renderer, window, base_phys, preview_scale, 1.0);
+            let thumb_rescale = Scale::from(thumb_scale);
+            for elem in popup_elements {
+                elements.push(CustomRenderElements::Rescaled(
+                    RescaleRenderElement::from_element(elem, content_phys, thumb_rescale),
+                ));
+            }
 
-            // Rounded corners on the preview if the shader is available;
-            // fall back to a plain rescale otherwise. corner_radius is in
+            // Rounded corners on the preview, clipped to the window's
+            // geometry box like the live window, if the shader is
+            // available; fall back to a plain rescale otherwise. Radius in
             // physical px (post-scale), matching the rendered preview size.
-            let rounded_shader = udev.rounded_tex_shader.as_ref();
-            let corner_phys = slot.corner_radius * output_scale as f32;
-            let preview_phys_w = rendered_w as f32 * output_scale as f32;
-            let preview_phys_h = rendered_h as f32 * output_scale as f32;
-            for elem in full_elements {
-                let rescaled = RescaleRenderElement::from_element(
-                    elem,
-                    content_phys,
-                    smithay::utils::Scale::from(thumb_scale),
-                );
-                if let Some(shader) = rounded_shader {
-                    elements.push(CustomRenderElements::RoundedSurface(
+            let rounded = udev.rounded_tex_shader.clone().map(|texture| {
+                crate::rounded_element::RoundedShaders {
+                    texture,
+                    solid: udev.rounded_solid_shader.clone(),
+                }
+            });
+            let clip = crate::rounded_element::WindowClip {
+                rect: Rectangle::new(
+                    Point::from((content_phys.x as f64, content_phys.y as f64)),
+                    Size::from((
+                        rendered_w as f64 * output_scale,
+                        rendered_h as f64 * output_scale,
+                    )),
+                ),
+                corner_radius: slot.corner_radius * output_scale as f32,
+                top_extend: 0.0,
+            };
+            for elem in tree_elements {
+                match rounded {
+                    Some(ref shaders) => elements.push(CustomRenderElements::RoundedSurface(
                         crate::rounded_element::RoundedSurfaceElement::new(
-                            rescaled,
-                            shader.clone(),
-                            [preview_phys_w, preview_phys_h],
-                            corner_phys,
-                            0.0,
+                            elem,
+                            content_phys,
+                            thumb_rescale,
+                            preview_scale,
+                            clip,
+                            shaders.clone(),
                         ),
-                    ));
-                } else {
-                    elements.push(CustomRenderElements::Rescaled(rescaled));
+                    )),
+                    None => elements.push(CustomRenderElements::Rescaled(
+                        RescaleRenderElement::from_element(elem, content_phys, thumb_rescale),
+                    )),
                 }
             }
         }

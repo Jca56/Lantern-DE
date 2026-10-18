@@ -49,10 +49,12 @@ void main() {
 }
 "#;
 
-/// Custom texture shader for rounded-corner alpha masking.
-/// Applied to window textures rendered offscreen; clips corners via SDF.
-/// Custom uniforms: `tex_size` (vec2, physical px), `corner_radius` (float, physical px),
-/// `top_extend` (float, physical px — see the shader comment)
+/// Custom texture shader for rounded-corner alpha masking: clips each
+/// surface of a window to the window's rounded geometry
+/// (`rounded_element::RoundedSurfaceElement`). Custom uniforms:
+/// `uv_to_clip_x`/`uv_to_clip_y` (vec3 rows of the affine map from texture
+/// coords to clip-local physical px), `clip_size` (vec2, physical px) and
+/// `corner_radius` (float, physical px).
 pub const ROUNDED_TEX_SHADER_SRC: &str = r#"
 //_DEFINES_
 
@@ -60,7 +62,12 @@ pub const ROUNDED_TEX_SHADER_SRC: &str = r#"
 #extension GL_OES_EGL_image_external : require
 #endif
 
+// Clip-local positions reach thousands of px: mediump would band them.
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
 precision mediump float;
+#endif
 
 #if defined(EXTERNAL)
 uniform samplerExternalOES tex;
@@ -69,13 +76,10 @@ uniform sampler2D tex;
 #endif
 
 uniform float alpha;
-uniform vec2 tex_size;
+uniform vec3 uv_to_clip_x;
+uniform vec3 uv_to_clip_y;
+uniform vec2 clip_size;
 uniform float corner_radius;
-// Extra height virtually added ABOVE the texture before the SDF is evaluated.
-// 0 rounds all four corners; >= 2*corner_radius pushes the top corners off
-// the visible texture so only the bottom pair is rounded — used for windows
-// with a server-side titlebar, whose top edge is covered by the bar.
-uniform float top_extend;
 varying vec2 v_coords;
 
 #if defined(DEBUG_FLAGS)
@@ -91,10 +95,11 @@ void main() {
     color = color * alpha;
 #endif
 
-    // SDF rounded-rect mask (rect = texture extended upward by top_extend)
-    vec2 ext_size = tex_size + vec2(0.0, top_extend);
-    vec2 pos = v_coords * tex_size + vec2(0.0, top_extend);
-    vec2 half_size = ext_size * 0.5;
+    // SDF rounded-rect mask over the window's clip rect. Anything outside
+    // it (CSD shadow margins) is cut along with the corners.
+    vec3 uv = vec3(v_coords, 1.0);
+    vec2 pos = vec2(dot(uv_to_clip_x, uv), dot(uv_to_clip_y, uv));
+    vec2 half_size = clip_size * 0.5;
     vec2 q = abs(pos - half_size) - half_size + vec2(corner_radius);
     float dist = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - corner_radius;
     float mask = 1.0 - smoothstep(-0.5, 0.5, dist);
@@ -108,6 +113,35 @@ void main() {
 #endif
 
     gl_FragColor = color;
+}
+"#;
+
+/// Pixel shader twin of [`ROUNDED_TEX_SHADER_SRC`] for single-pixel (solid
+/// colour) buffers, which Smithay draws without a texture program. Same
+/// clip uniforms, plus `color` (vec4, premultiplied).
+pub const ROUNDED_SOLID_SHADER_SRC: &str = r#"
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
+precision mediump float;
+#endif
+
+varying vec2 v_coords;
+uniform float alpha;
+uniform vec3 uv_to_clip_x;
+uniform vec3 uv_to_clip_y;
+uniform vec2 clip_size;
+uniform float corner_radius;
+uniform vec4 color;
+
+void main() {
+    vec3 uv = vec3(v_coords, 1.0);
+    vec2 pos = vec2(dot(uv_to_clip_x, uv), dot(uv_to_clip_y, uv));
+    vec2 half_size = clip_size * 0.5;
+    vec2 q = abs(pos - half_size) - half_size + vec2(corner_radius);
+    float dist = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - corner_radius;
+    float mask = 1.0 - smoothstep(-0.5, 0.5, dist);
+    gl_FragColor = color * (alpha * mask);
 }
 "#;
 

@@ -249,19 +249,31 @@ fn compile_shaders(udev: &mut crate::udev::UdevData) {
         Err(e) => warn!("Failed to compile SSD header shader: {:?}", e),
     }
 
-    match renderer.compile_custom_texture_shader(
-        ROUNDED_TEX_SHADER_SRC,
-        &[
-            UniformName::new("tex_size", UniformType::_2f),
-            UniformName::new("corner_radius", UniformType::_1f),
-            UniformName::new("top_extend", UniformType::_1f),
-        ],
-    ) {
+    let window_clip_uniforms = [
+        UniformName::new("uv_to_clip_x", UniformType::_3f),
+        UniformName::new("uv_to_clip_y", UniformType::_3f),
+        UniformName::new("clip_size", UniformType::_2f),
+        UniformName::new("corner_radius", UniformType::_1f),
+    ];
+    match renderer.compile_custom_texture_shader(ROUNDED_TEX_SHADER_SRC, &window_clip_uniforms) {
         Ok(shader) => {
             udev.rounded_tex_shader = Some(shader);
             info!("Rounded-corner texture shader compiled");
         }
         Err(e) => warn!("Failed to compile rounded-corner texture shader: {:?}", e),
+    }
+
+    let mut solid_uniforms = window_clip_uniforms.to_vec();
+    solid_uniforms.push(UniformName::new("color", UniformType::_4f));
+    match renderer.compile_custom_pixel_shader(
+        crate::shaders::ROUNDED_SOLID_SHADER_SRC,
+        &solid_uniforms,
+    ) {
+        Ok(shader) => {
+            udev.rounded_solid_shader = Some(shader);
+            info!("Rounded-corner solid shader compiled");
+        }
+        Err(e) => warn!("Failed to compile rounded-corner solid shader: {:?}", e),
     }
 
     match renderer.compile_custom_texture_shader(
