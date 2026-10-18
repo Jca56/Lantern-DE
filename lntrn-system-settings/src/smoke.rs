@@ -300,7 +300,7 @@ fn the_terminal_page_sets_its_size_cursor_and_bar() {
 fn the_control_center_page_sets_the_bars_shape() {
     let mut cfg = Config::empty();
     // Tall enough for the clock's card under the others.
-    let mut h = kit_at(1000.0, 1600.0);
+    let mut h = kit_at(1000.0, 1900.0);
     let cc = &cfg.control_center;
     assert_eq!((cc.height, cc.corner_radius, cc.gap_below, cc.gap_sides), (64, 16, 8, 16), "where the bar starts");
     clipped();
@@ -342,7 +342,7 @@ fn the_control_center_page_sets_the_bars_shape() {
 fn the_control_center_page_sets_auto_hide_and_the_am_pm() {
     let mut cfg = Config::empty();
     // Tall enough for the clock's card under the others.
-    let mut h = kit_at(1000.0, 1600.0);
+    let mut h = kit_at(1000.0, 1900.0);
     assert_eq!((cfg.control_center.visibility.as_str(), cfg.control_center.clock_ampm), ("always", true));
     clipped();
     h.settle(4, |ui| {
@@ -376,6 +376,31 @@ fn the_control_center_page_sets_auto_hide_and_the_am_pm() {
         control_center::draw(&mut cfg, ui);
     });
     assert!(!cfg.control_center.clock_ampm);
+    assert!(clipped().is_empty());
+}
+
+#[test]
+fn the_control_center_page_sizes_the_launchers_grid_with_the_grid_alone() {
+    let mut cfg = Config::empty();
+    let mut h = kit_at(1000.0, 1800.0);
+    assert_eq!(cfg.control_center.launcher_view, "list");
+    clipped();
+    h.settle(4, |ui| {
+        control_center::draw(&mut cfg, ui);
+    });
+    assert!(h.rect_of(WidgetId::ROOT.with("launcher").with("View")).is_some(), "the view's dropdown");
+    let icon = WidgetId::ROOT.with("launcher").with("Grid icon size");
+    assert!(h.rect_of(icon).is_none(), "the icon size shows with the grid alone");
+    cfg.control_center.launcher_view = "grid".to_owned();
+    h.settle(4, |ui| {
+        control_center::draw(&mut cfg, ui);
+    });
+    let track = h.rect_of(icon).expect("the icon size's slider");
+    let y = track.center().y;
+    h.drag(Vec2::new(track.center().x, y), Vec2::new(track.max.x + 40.0, y), 4, |ui| {
+        control_center::draw(&mut cfg, ui);
+    });
+    assert_eq!(cfg.control_center.launcher_grid_icon, 96);
     assert!(clipped().is_empty());
 }
 

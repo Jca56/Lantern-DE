@@ -1,8 +1,10 @@
 //! The app launcher at the bar's left end: a button of dots, and the menu
 //! it opens above the bar the way KDE's Kickoff does: a search field, your
 //! favorites, all apps and their groups down the left, the apps beside
-//! them (right-click one for what can be done with it), and the power
-//! buttons along the bottom. A menu can't open inside the bar, so it is
+//! them (right-click one for what can be done with it) as a list or a
+//! grid of tiles (`[control_center] launcher_view`, which the two buttons
+//! beside the search field switch too), and the power buttons along the
+//! bottom. A menu can't open inside the bar, so it is
 //! drawn in the overlay (`app::overlay`), a surface over the whole monitor,
 //! see-through but for its panel, taking the keyboard so typing searches
 //! at once; a click anywhere off the panel closes it, as Escape does and
@@ -10,12 +12,17 @@
 
 mod button;
 mod find;
+mod grid;
 mod menu;
 mod power;
 #[cfg(test)]
 mod tests;
+mod toggle;
 
 use lntrn_apps::{App, Group};
+use lntrn_core::log_warn;
+use lntrn_data::Doc;
+use lntrn_math::Vec2;
 
 pub use button::button;
 pub use menu::{Outcome, Place, draw as menu};
@@ -42,9 +49,66 @@ impl View {
     }
 }
 
+/// How the menu lays its apps out: `[control_center] launcher_view`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Layout {
+    /// A row each: the icon, the name and what the app is.
+    #[default]
+    List,
+    /// Tiles: the icon above the name.
+    Grid,
+}
+
+impl Layout {
+    /// From its stored word; anything else is the list.
+    pub fn from_word(word: &str) -> Layout {
+        match word {
+            "grid" => Layout::Grid,
+            _ => Layout::List,
+        }
+    }
+
+    pub fn word(self) -> &'static str {
+        match self {
+            Layout::List => "list",
+            Layout::Grid => "grid",
+        }
+    }
+}
+
+/// `[control_center]`'s `launcher_*` keys.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LauncherOptions {
+    pub layout: Layout,
+    /// The grid's icons, logical px.
+    pub grid_icon: u32,
+}
+
+impl LauncherOptions {
+    /// `launcher_grid_icon`'s range, as System Settings' slider offers it.
+    pub const GRID_ICONS: (i64, i64) = (48, 96);
+}
+
+impl Default for LauncherOptions {
+    fn default() -> Self {
+        LauncherOptions { layout: Layout::List, grid_icon: 64 }
+    }
+}
+
+/// Keep `layout` in `lantern.toml`, where System Settings shows it and the
+/// bar reads it back: the menu's own buttons switched it.
+pub fn keep(layout: Layout) {
+    let written = lntrn_kit::desktop::update("control_center", |t| t.insert("launcher_view", Doc::Str(layout.word().to_owned())));
+    if let Err(e) = written {
+        log_warn!("launcher: can't keep the {} view: {e}", layout.word());
+    }
+}
+
 pub struct Launcher {
     /// Whether the menu is up.
     pub open: bool,
+    /// List or grid, and the grid's icon size.
+    options: LauncherOptions,
     apps: Vec<App>,
     /// Each app's groups, beside `apps`.
     app_groups: Vec<Vec<Group>>,
@@ -53,8 +117,15 @@ pub struct Launcher {
     view: View,
     favorites: IdList,
     query: String,
-    /// The row the keyboard is on, among those showing.
-    selected: usize,
+    /// The app lit, among those showing: none as the menu opens; the
+    /// first found once typing; then wherever the arrows or the pointer
+    /// put it. Enter starts it.
+    selected: Option<usize>,
+    /// The pointer lit it (and moving off the apps puts it out), not the
+    /// keyboard.
+    by_pointer: bool,
+    /// Where the pointer was last frame, inside the window.
+    pointer: Option<Vec2>,
     /// How far the list is scrolled, window pixels.
     scroll: f64,
     /// Scroll the selected row into view on the next frame.
@@ -65,7 +136,7 @@ pub struct Launcher {
 
 impl Launcher {
     pub fn new() -> Self {
-        Self { open: false, apps: Vec::new(), app_groups: Vec::new(), groups: Vec::new(), view: View::Favorites, favorites: IdList::default(), query: String::new(), selected: 0, scroll: 0.0, reveal: false, confirm: None }
+        Self { open: false, options: LauncherOptions::default(), apps: Vec::new(), app_groups: Vec::new(), groups: Vec::new(), view: View::Favorites, favorites: IdList::default(), query: String::new(), selected: None, by_pointer: false, pointer: None, scroll: 0.0, reveal: false, confirm: None }
     }
 
     /// Open the menu on `apps` (read afresh, so one installed since
@@ -83,13 +154,30 @@ impl Launcher {
         self.groups = Group::ALL.into_iter().filter(|g| self.app_groups.iter().any(|gs| gs.contains(g))).collect();
         self.view = View::Favorites;
         self.query.clear();
-        (self.selected, self.scroll, self.reveal, self.confirm) = (0, 0.0, false, None);
+        (self.selected, self.by_pointer, self.pointer) = (None, false, None);
+        (self.scroll, self.reveal, self.confirm) = (0.0, false, None);
         self.open = true;
+    }
+
+    /// Take up `options` from the settings. A new layout starts from the
+    /// top, with the selection in view.
+    pub fn follow(&mut self, options: LauncherOptions) {
+        if options.layout != self.options.layout {
+            (self.scroll, self.reveal) = (0.0, true);
+        }
+        self.options = options;
     }
 
     pub fn close(&mut self) {
         self.open = false;
         self.confirm = None;
+    }
+
+    /// Light nothing, or the first found while there is a search, and
+    /// start from the top: the apps showing changed.
+    fn restart(&mut self) {
+        self.selected = (!self.query.trim().is_empty()).then_some(0);
+        (self.by_pointer, self.scroll) = (false, 0.0);
     }
 
     /// The app at `index` in the list the menu was opened on.

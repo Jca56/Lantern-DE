@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 
 pub use appearance::{Appearance, GRADIENT_STOPS, WindowManager, Windows};
-pub use control_center::{CC_DATE_STYLES, CC_GAPS_BELOW, CC_GAPS_SIDES, CC_HEIGHTS, CC_HIDE_DELAYS, CC_MONITOR_RATES, CC_MONITOR_SPANS, CC_PEEKS, CC_RADII, CC_SLIDES, CC_VISIBILITIES, CC_WEEK_STARTS, ControlCenter};
+pub use control_center::{CC_DATE_STYLES, CC_GAPS_BELOW, CC_GAPS_SIDES, CC_GRID_ICONS, CC_HEIGHTS, CC_HIDE_DELAYS, CC_LAUNCHER_VIEWS, CC_MONITOR_RATES, CC_MONITOR_SPANS, CC_PEEKS, CC_RADII, CC_SLIDES, CC_VISIBILITIES, CC_WEEK_STARTS, ControlCenter};
 use lntrn_data::{Doc, from_doc, to_doc, toml};
 use lntrn_props::Reflect;
 pub use monitors::Monitor;

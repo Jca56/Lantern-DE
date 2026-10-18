@@ -3,7 +3,8 @@
 //! floats this far from the screen's edges, and docks full width and
 //! square while a window is maximized or full screen on its monitor),
 //! whether it hides out of sight between uses (and how long a Super
-//! tap's peek at it lasts), what its clock shows,
+//! tap's peek at it lasts), whether its launcher lays apps out as a list
+//! or a grid (and how big the grid's icons are), what its clock shows,
 //! which day its calendar's weeks start on and whether a dot by the clock
 //! says today has events to come, which items its system tray shows, in what order, and which mini
 //! monitors it shows, in what order, how often they look and how far
@@ -21,6 +22,12 @@ pub const CC_GAPS_SIDES: (i64, i64) = (0, 120);
 pub const CC_HIDE_DELAYS: (i64, i64) = (0, 3000);
 pub const CC_SLIDES: (i64, i64) = (0, 1000);
 pub const CC_PEEKS: (i64, i64) = (500, 5000);
+/// The launcher's layouts: the word stored, and how the page shows it
+/// (the bar's `Layout`).
+pub const CC_LAUNCHER_VIEWS: [(&str, &str); 2] = [("list", "List"), ("grid", "Grid")];
+/// The launcher grid's icon sizes, logical px (the bar's
+/// `LauncherOptions::GRID_ICONS`).
+pub const CC_GRID_ICONS: (i64, i64) = (48, 96);
 /// Whether it hides: the word stored, and how the page shows it.
 pub const CC_VISIBILITIES: [(&str, &str); 2] = [("always", "Always shown"), ("auto_hide", "Auto hide")];
 /// The clock's date styles: the word stored, and how the page shows it
@@ -71,6 +78,11 @@ props! {
         /// How long a Super tap's peek holds the hidden bar up, once it is
         /// all the way up, before it slides away again.
         pub auto_hide_peek_ms: i64 = 2000 => { id: 31, hard: 500..=5000 },
+        /// One of [`CC_LAUNCHER_VIEWS`]' words. The launcher's own buttons
+        /// write it too.
+        pub launcher_view: String = "list".to_owned() => { id: 32 },
+        /// The grid's icons, logical px; its columns fit themselves to it.
+        pub launcher_grid_icon: i64 = 64 => { id: 33, hard: 48..=96 },
         /// The tray's items, each shown unless switched off (and only
         /// where the machine has it: no battery on a desktop).
         pub tray_battery: bool = true => { id: 13 },
@@ -114,6 +126,10 @@ impl ControlCenter {
         self.auto_hide_delay_ms = hold(self.auto_hide_delay_ms, CC_HIDE_DELAYS);
         self.auto_hide_slide_ms = hold(self.auto_hide_slide_ms, CC_SLIDES);
         self.auto_hide_peek_ms = hold(self.auto_hide_peek_ms, CC_PEEKS);
+        self.launcher_grid_icon = hold(self.launcher_grid_icon, CC_GRID_ICONS);
+        if !CC_LAUNCHER_VIEWS.iter().any(|(word, _)| *word == self.launcher_view) {
+            self.launcher_view = "list".to_owned();
+        }
         if !CC_VISIBILITIES.iter().any(|(word, _)| *word == self.visibility) {
             self.visibility = "always".to_owned();
         }

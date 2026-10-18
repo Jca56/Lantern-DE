@@ -1,6 +1,6 @@
 //! What the bar takes from `lantern.toml`: the desktop's look (through
-//! `lntrn-kit`), its own shape, clock, calendar, auto hide, tray and mini
-//! monitors (`[control_center]`),
+//! `lntrn-kit`), its own shape, clock, calendar, auto hide, launcher, tray
+//! and mini monitors (`[control_center]`),
 //! the primary monitor
 //! it lives on, and how windows glide (which docking keeps step with). A
 //! thread watches the file and wakes the loop when it changes, so a bar
@@ -21,6 +21,7 @@ use crate::bar::Shape;
 use crate::calendar::{CalendarOptions, WeekStart};
 use crate::clock::{ClockOptions, DateStyle};
 use crate::hide::{HideOptions, Visibility};
+use crate::launcher::{LauncherOptions, Layout};
 use crate::monitors::{Kind, MonitorOptions};
 use crate::morph::Glide;
 use crate::tray::{Item, TrayOptions};
@@ -42,6 +43,9 @@ pub struct Settings {
     /// `[control_center]`'s `visibility` and `auto_hide_*` keys: whether
     /// it hides, and how.
     pub hide: HideOptions,
+    /// `[control_center]`'s `launcher_*` keys: list or grid, and the grid's
+    /// icon size.
+    pub launcher: LauncherOptions,
     /// `[control_center]`'s `tray_*` keys: which of the tray's items show,
     /// and in what order.
     pub tray: TrayOptions,
@@ -75,7 +79,7 @@ impl Settings {
     }
 
     pub fn from_doc(doc: &Doc) -> Settings {
-        Settings { desktop: Desktop::from_doc(doc), shape: shape(doc), clock: clock(doc), calendar: calendar(doc), hide: hide(doc), tray: tray(doc), monitors: monitors(doc), primary: primary(doc), dock_glide: dock_glide(doc) }
+        Settings { desktop: Desktop::from_doc(doc), shape: shape(doc), clock: clock(doc), calendar: calendar(doc), hide: hide(doc), launcher: launcher(doc), tray: tray(doc), monitors: monitors(doc), primary: primary(doc), dock_glide: dock_glide(doc) }
     }
 }
 
@@ -113,6 +117,18 @@ fn hide(doc: &Doc) -> HideOptions {
         delay: seconds("auto_hide_delay_ms", d.delay, HideOptions::DELAYS_MS),
         slide: seconds("auto_hide_slide_ms", d.slide, HideOptions::SLIDES_MS),
         peek: seconds("auto_hide_peek_ms", d.peek, HideOptions::PEEKS_MS),
+    }
+}
+
+/// `[control_center]`'s `launcher_view` and `launcher_grid_icon`, the
+/// icon size held to its range; the default for any missing.
+fn launcher(doc: &Doc) -> LauncherOptions {
+    let d = LauncherOptions::default();
+    let key = |k: &str| doc.path(&format!("control_center.launcher_{k}"));
+    let (lo, hi) = LauncherOptions::GRID_ICONS;
+    LauncherOptions {
+        layout: key("view").and_then(Doc::as_str).map_or(d.layout, Layout::from_word),
+        grid_icon: key("grid_icon").and_then(Doc::as_i64).map_or(d.grid_icon, |v| v.clamp(lo, hi) as u32),
     }
 }
 
@@ -252,6 +268,15 @@ mod tests {
         let set = parse("[control_center]\ncalendar_week_start = \"monday\"\ncalendar_dot = false\n").calendar;
         assert_eq!(set, CalendarOptions { week_start: WeekStart::Monday, dot: false });
         assert_eq!(parse("[control_center]\ncalendar_week_start = \"friday\"\ncalendar_dot = \"no\"\n").calendar, CalendarOptions::default());
+    }
+
+    #[test]
+    fn the_launchers_view_and_grid_icon_are_read_held_to_their_range() {
+        assert_eq!(Settings::default().launcher, LauncherOptions::default());
+        let set = parse("[control_center]\nlauncher_view = \"grid\"\nlauncher_grid_icon = 80\n").launcher;
+        assert_eq!(set, LauncherOptions { layout: Layout::Grid, grid_icon: 80 });
+        let odd = parse("[control_center]\nlauncher_view = \"spiral\"\nlauncher_grid_icon = 500\n").launcher;
+        assert_eq!(odd, LauncherOptions { layout: Layout::List, grid_icon: 96 });
     }
 
     #[test]

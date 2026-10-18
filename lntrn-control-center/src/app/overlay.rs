@@ -242,6 +242,10 @@ impl App {
                 action.run();
                 true
             }
+            Outcome::Layout(layout) => {
+                launcher::keep(layout);
+                false
+            }
             Outcome::QuickKill => {
                 log_info!("{APP_ID}: Quick Kill: starting over");
                 RESTART.store(true, Ordering::Release);

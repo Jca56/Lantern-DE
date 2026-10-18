@@ -10,7 +10,7 @@ use lntrn_math::Vec2;
 use lntrn_ui::testing::Harness;
 use lntrn_ui::{Key, Ui, WidgetId};
 
-use super::{Launcher, Outcome, Place, PowerAction, View, menu};
+use super::{Launcher, LauncherOptions, Layout, Outcome, Place, PowerAction, View, menu};
 use crate::idlist::IdList;
 use crate::bar::{self, Look};
 
@@ -94,11 +94,15 @@ fn the_arrows_pick_and_escape_clears_the_search_then_closes() {
     let (mut h, mut l) = open();
     settle(&mut h, &mut l);
     pick(&mut h, &mut l, "All apps");
-    h.key(Key::ArrowDown);
-    h.key(Key::ArrowDown);
-    h.key(Key::ArrowDown);
+    assert_eq!(l.selected, None, "nothing lit till asked");
+    h.key(Key::Enter);
+    assert_eq!(settle(&mut h, &mut l), Outcome::Stay, "Enter with nothing lit starts nothing");
+    // The first press lights the first app, then each moves on.
+    for _ in 0..4 {
+        h.key(Key::ArrowDown);
+    }
     settle(&mut h, &mut l);
-    assert_eq!(l.selected, 2, "held at the last");
+    assert_eq!(l.selected, Some(2), "held at the last");
     h.key(Key::ArrowUp);
     h.key(Key::Enter);
     assert_eq!(settle(&mut h, &mut l), Outcome::Launch("firefox-bin".into()));
@@ -176,7 +180,7 @@ fn a_right_click_asks_for_the_apps_menu_and_a_favorite_shows_under_favorites() {
     h.move_to(steam.center());
     h.right_press();
     assert_eq!(settle(&mut h, &mut l), Outcome::Menu(2));
-    assert_eq!(l.selected, 2, "the row the menu is about stays lit");
+    assert_eq!(l.selected, Some(2), "the row the menu is about stays lit");
     assert!(!l.is_favorite("steam"));
     l.toggle_favorite("steam");
     assert!(l.is_favorite("steam"));
@@ -194,4 +198,134 @@ fn quick_kill_asks_to_start_over_and_steps_aside_for_a_power_question() {
     click(&mut h, &mut l, panel(|p| p.with("Restart")));
     assert_eq!(l.confirm, Some(PowerAction::Restart));
     assert!(h.rect_of(panel(|p| p.with("Quick Kill"))).is_none(), "the question has the whole row");
+}
+
+/// The launcher open on its three apps as a grid, on "All apps".
+fn grid() -> (Harness, Launcher) {
+    let (mut h, mut l) = open();
+    l.follow(LauncherOptions { layout: Layout::Grid, ..LauncherOptions::default() });
+    settle(&mut h, &mut l);
+    pick(&mut h, &mut l, "All apps");
+    (h, l)
+}
+
+/// The tile of the app at `index`.
+fn tile(index: usize) -> WidgetId {
+    panel(|p| p.with_index(1).with("tile").with_index(index))
+}
+
+#[test]
+fn the_grid_lays_the_apps_out_as_tiles_and_a_click_starts_one() {
+    let (mut h, mut l) = grid();
+    let tiles: Vec<_> = (0..3).map(|i| h.rect_of(tile(i)).expect("a tile")).collect();
+    assert!(tiles.iter().all(|t| t.min.y == tiles[0].min.y), "side by side on one row");
+    assert!(tiles[0].max.x <= tiles[1].min.x && tiles[1].max.x <= tiles[2].min.x, "left to right in order");
+    assert!(h.rect_of(panel(|p| p.with_index(1).with("app").with_index(0))).is_none(), "no rows");
+    assert_eq!(click(&mut h, &mut l, tile(2)), Outcome::Launch("steam".into()));
+}
+
+#[test]
+fn in_the_grid_the_arrows_go_tile_to_tile_and_enter_starts_the_one_picked() {
+    let (mut h, mut l) = grid();
+    for _ in 0..3 {
+        h.key(Key::ArrowRight);
+    }
+    settle(&mut h, &mut l);
+    assert_eq!(l.selected, Some(2), "the first press lit the first tile");
+    h.key(Key::ArrowLeft);
+    h.key(Key::Enter);
+    assert_eq!(settle(&mut h, &mut l), Outcome::Launch("firefox-bin".into()));
+}
+
+#[test]
+fn in_the_list_left_and_right_stay_the_search_fields() {
+    let (mut h, mut l) = open();
+    settle(&mut h, &mut l);
+    pick(&mut h, &mut l, "All apps");
+    h.key(Key::ArrowRight);
+    settle(&mut h, &mut l);
+    assert_eq!(l.selected, None, "no move in the list");
+}
+
+#[test]
+fn the_buttons_by_the_search_switch_the_layout_at_once_and_ask_to_keep_it() {
+    let (mut h, mut l) = open();
+    settle(&mut h, &mut l);
+    pick(&mut h, &mut l, "All apps");
+    let button = |word: &'static str| panel(move |p| p.with_index(1).with(word));
+    assert_eq!(click(&mut h, &mut l, button("list")), Outcome::Stay, "already the list");
+    assert_eq!(click(&mut h, &mut l, button("grid")), Outcome::Layout(Layout::Grid));
+    settle(&mut h, &mut l);
+    assert_eq!(l.options.layout, Layout::Grid);
+    assert!(h.rect_of(tile(0)).is_some(), "the apps as tiles at once");
+    // The settings catching up with the file change nothing.
+    l.follow(LauncherOptions { layout: Layout::Grid, ..LauncherOptions::default() });
+    settle(&mut h, &mut l);
+    assert!(h.rect_of(tile(0)).is_some());
+    assert_eq!(click(&mut h, &mut l, button("list")), Outcome::Layout(Layout::List));
+}
+
+/// The rect of the list row of the app at `index`.
+fn row(index: usize) -> WidgetId {
+    panel(|p| p.with_index(1).with("app").with_index(index))
+}
+
+#[test]
+fn the_light_follows_the_pointer_and_leaves_with_it_off_the_apps() {
+    let (mut h, mut l) = open();
+    settle(&mut h, &mut l);
+    pick(&mut h, &mut l, "All apps");
+    let firefox = h.rect_of(row(1)).expect("Firefox's row").center();
+    h.move_to(firefox);
+    settle(&mut h, &mut l);
+    assert_eq!(l.selected, Some(1), "lit under the pointer");
+    h.key(Key::Enter);
+    assert_eq!(settle(&mut h, &mut l), Outcome::Launch("firefox-bin".into()), "Enter starts what the pointer lit");
+    let steam = h.rect_of(row(2)).expect("Steam's row").center();
+    h.move_to(steam);
+    settle(&mut h, &mut l);
+    assert_eq!(l.selected, Some(2));
+    // Off the apps, onto the sidebar: the pointer's light goes with it.
+    let side = h.rect_of(panel(|p| p.with_index(0).with("Favorites"))).expect("the sidebar").center();
+    h.move_to(side);
+    settle(&mut h, &mut l);
+    assert_eq!(l.selected, None);
+    // The keyboard's light stays under a pointer at rest, and off the apps.
+    h.key(Key::ArrowDown);
+    settle(&mut h, &mut l);
+    assert_eq!(l.selected, Some(0));
+    h.move_to(side + lntrn_math::Vec2::new(0.0, 4.0));
+    settle(&mut h, &mut l);
+    assert_eq!(l.selected, Some(0), "a light the keyboard lit isn't the pointer's to put out");
+}
+
+#[test]
+fn in_the_grid_the_light_follows_the_pointer_too() {
+    let (mut h, mut l) = grid();
+    assert_eq!(l.selected, None);
+    let steam = h.rect_of(tile(2)).expect("Steam's tile").center();
+    h.move_to(steam);
+    settle(&mut h, &mut l);
+    assert_eq!(l.selected, Some(2));
+    let code = h.rect_of(tile(0)).expect("Code's tile").center();
+    h.move_to(code);
+    settle(&mut h, &mut l);
+    assert_eq!(l.selected, Some(0), "tile to tile");
+    assert_eq!(click(&mut h, &mut l, tile(1)), Outcome::Launch("firefox-bin".into()), "one click starts one");
+}
+
+#[test]
+fn a_menu_opening_under_a_resting_pointer_lights_nothing() {
+    let (mut h, mut l) = open();
+    settle(&mut h, &mut l);
+    pick(&mut h, &mut l, "All apps");
+    let firefox = h.rect_of(row(1)).expect("Firefox's row").center();
+    // Open again with the pointer already over Firefox's row: where it
+    // first turns up isn't a move.
+    l.close();
+    l.load(l.apps.clone());
+    l.view = View::All;
+    h.move_to(firefox);
+    settle(&mut h, &mut l);
+    assert_eq!(l.selected, None);
 }

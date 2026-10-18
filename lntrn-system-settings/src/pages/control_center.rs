@@ -12,7 +12,7 @@
 use lntrn_math::{Color, Rect, Vec2};
 use lntrn_ui::Ui;
 
-use crate::config::{CC_DATE_STYLES, CC_GAPS_BELOW, CC_GAPS_SIDES, CC_HEIGHTS, CC_HIDE_DELAYS, CC_MONITOR_RATES, CC_MONITOR_SPANS, CC_PEEKS, CC_RADII, CC_SLIDES, CC_VISIBILITIES, CC_WEEK_STARTS, Config, PANELS};
+use crate::config::{CC_DATE_STYLES, CC_GAPS_BELOW, CC_GAPS_SIDES, CC_GRID_ICONS, CC_HEIGHTS, CC_HIDE_DELAYS, CC_LAUNCHER_VIEWS, CC_MONITOR_RATES, CC_MONITOR_SPANS, CC_PEEKS, CC_RADII, CC_SLIDES, CC_VISIBILITIES, CC_WEEK_STARTS, Config, PANELS};
 use crate::kit::{self, look, pixels};
 use crate::machine;
 
@@ -99,6 +99,20 @@ pub fn draw(cfg: &mut Config, ui: &mut Ui) -> bool {
         }
     });
     kit::note(ui, "Auto hide keeps the bar out of sight until you push the pointer against the bottom edge of the screen. A Super tap only peeks at it: up for a look at the clock, then away again after the peek time unless the pointer goes to it. Tap again while it's up to open the launcher. It never covers a window: windows make room as it slides up, and take the room back as it slides away.");
+
+    kit::caption(ui, "App launcher");
+    kit::card(ui, "launcher", |c| {
+        let labels: Vec<&str> = CC_LAUNCHER_VIEWS.iter().map(|(_, shown)| *shown).collect();
+        let mut index = CC_LAUNCHER_VIEWS.iter().position(|(word, _)| *word == cc.launcher_view).unwrap_or(0);
+        if c.dropdown("View", "How its apps are laid out.", &mut index, &labels) {
+            cc.launcher_view = CC_LAUNCHER_VIEWS[index].0.to_owned();
+            changed = true;
+        }
+        if cc.launcher_view == "grid" {
+            changed |= c.slider_int("Grid icon size", "As many columns as fit.", &mut cc.launcher_grid_icon, CC_GRID_ICONS, 8, pixels);
+        }
+    });
+    kit::note(ui, "The two buttons beside the launcher's search field switch between the list and the grid too.");
 
     kit::caption(ui, "Clock");
     kit::card(ui, "clock", |c| {

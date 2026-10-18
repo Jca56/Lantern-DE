@@ -1,17 +1,18 @@
 //! The menu's panel: anchored above the bar's left end on a surface that
-//! covers the monitor, the search field across its top, the favorites,
-//! all apps and the groups down its left, the apps beside them, the power
+//! covers the monitor, the search field across its top with the list and
+//! grid buttons at its end, the favorites, all apps and the groups down
+//! its left, the apps beside them as a list or a grid (`grid`), the power
 //! row along its bottom with Quick Kill at its end. The keyboard stays in
-//! the search field, so the list keeps its own selection (arrows, Enter)
-//! and its own scroll, to keep that selection in view. A right-click on
+//! the search field, so the apps keep their own selection (arrows, Enter)
+//! and their own scroll, to keep that selection in view. A right-click on
 //! an app asks the app for its menu, which the shell draws over the panel.
 
-use lntrn_apps::Icons;
+use lntrn_apps::{App, Icons};
 use lntrn_math::{Rect, Vec2};
 use lntrn_text::TextStyle;
 use lntrn_ui::{FILL, Key, Metrics, Sense, Ui};
 
-use super::{Launcher, View, power};
+use super::{Launcher, Layout, View, grid, power, toggle};
 use crate::bar::Look;
 
 /// The panel's size, logical; less on a small screen.
@@ -28,7 +29,7 @@ const ROW_H: f64 = 56.0;
 const APP_ICON: f64 = 40.0;
 const POWER_H: f64 = 56.0;
 /// Text, logical: names at 20, what is beside them at the 18 floor.
-const NAME: f64 = 20.0;
+pub(super) const NAME: f64 = 20.0;
 const DIM: f64 = 18.0;
 /// The search field's well and focus ring, logical: the bar's theme has
 /// no lines at all, which left the ring as four arcs at its corners.
@@ -46,11 +47,14 @@ pub enum Outcome {
     Power(power::Action),
     /// Start the bar over, the newest build of it.
     QuickKill,
+    /// The buttons by the search field switched the apps to this layout
+    /// (shown already): keep it.
+    Layout(Layout),
 }
 
-/// What a frame's pointer or keys did to the list.
+/// What a frame's pointer or keys did to the apps.
 #[derive(Clone, Copy)]
-enum Hit {
+pub(super) enum Hit {
     Launch(usize),
     Menu(usize),
 }
@@ -78,10 +82,17 @@ pub fn draw(l: &mut Launcher, icons: &mut Icons, ui: &mut Ui, place: Place, look
     if ui.state.pressed && !panel.contains(ui.state.pointer) && !on_popup {
         return Outcome::Close;
     }
-    let keys = keys(l, ui);
+    let keys = keys(l, ui, l.options.layout == Layout::Grid);
     if keys.close {
         return Outcome::Close;
     }
+    // The pointer pointing anew: moved since the frame before (where it
+    // first turns up is no move, so a menu opening under a resting pointer
+    // lights nothing), or wheeling what is under it. Not while an app's
+    // menu is up over the panel.
+    let at = ui.state.pointer_in_window.then_some(ui.state.pointer);
+    let pointed = ui.state.popup.is_none() && at.is_some() && (l.pointer.is_some_and(|p| Some(p) != at) || ui.state.wheel != Vec2::ZERO);
+    l.pointer = at;
 
     if look.glass {
         crate::glass::pane(panel, m.px(RADIUS));
@@ -97,12 +108,27 @@ pub fn draw(l: &mut Launcher, icons: &mut Icons, ui: &mut Ui, place: Place, look
     let mut child = Ui::new(&mut *ui.draw, &mut *ui.text, ui.theme, lined, &mut *ui.state, inner, inner, id, layer);
     child.set_window_rect(surface);
     // The field keeps the keyboard whatever was clicked (a group, say), so
-    // typing always searches.
-    let field = child.id("search");
-    child.state.focus = Some(field);
-    if child.text_field_hint("search", &mut l.query, "Search apps…").changed {
-        (l.selected, l.scroll) = (0, 0.0);
-    }
+    // typing always searches. The list and grid buttons at its end, each
+    // as wide as the field is tall.
+    let mut switched = None;
+    let button_w = child.m.widget_h;
+    child.columns(&[FILL, button_w * 2.0], |ui, col| {
+        if col == 0 {
+            let field = ui.id("search");
+            ui.state.focus = Some(field);
+            if ui.text_field_hint("search", &mut l.query, "Search apps…").changed {
+                l.restart();
+            }
+            return;
+        }
+        let rect = ui.alloc(Vec2::new(FILL, ui.m.widget_h));
+        if let Some(layout) = toggle::draw(ui, rect, l.options.layout) {
+            // Over at once: the apps below draw in it this very frame.
+            l.options.layout = layout;
+            (l.scroll, l.reveal) = (0.0, true);
+            switched = Some(layout);
+        }
+    });
     child.space(m.px(12.0));
     let body_h = (child.remaining_height() - m.px(POWER_H) - m.px(12.0)).max(0.0);
     let mut hit = None;
@@ -114,13 +140,38 @@ pub fn draw(l: &mut Launcher, icons: &mut Icons, ui: &mut Ui, place: Place, look
         }
         // What shows now, after this frame's typing and the sidebar.
         let shown = l.shown();
-        if keys.step != 0 {
-            let to = l.selected.saturating_add_signed(keys.step);
-            (l.selected, l.reveal) = (to.min(shown.len().saturating_sub(1)), true);
+        if shown.is_empty() {
+            empty(l, ui, rect);
+            return;
         }
-        hit = list(l, icons, ui, rect, &shown);
+        // The arrows move the light: a row in the list, along the grid.
+        // With nothing lit, the first press lights the first app.
+        let moved = keys.rows != 0 || keys.across != 0;
+        let (from, rows, across) = match l.selected {
+            Some(s) => (s, keys.rows, keys.across),
+            None if keys.across != 0 => (0, keys.rows, keys.across - keys.across.signum()),
+            None => (0, keys.rows - keys.rows.signum(), 0),
+        };
+        match l.options.layout {
+            Layout::List => {
+                if moved {
+                    let to = from.saturating_add_signed(rows).min(shown.len() - 1);
+                    (l.selected, l.by_pointer, l.reveal) = (Some(to), false, true);
+                }
+                hit = list(l, icons, ui, rect, &shown, pointed);
+            }
+            Layout::Grid => {
+                let line_h = f64::from(TextStyle::new(m.px(NAME) as f32).line_height());
+                let fit = grid::fit(rect.width() - m.px(10.0), m.px(f64::from(l.options.grid_icon)), line_h, m);
+                if moved {
+                    let to = grid::moved(from, shown.len(), fit.cols, rows, across);
+                    (l.selected, l.by_pointer, l.reveal) = (Some(to), false, true);
+                }
+                hit = grid::draw(l, icons, ui, rect, &shown, fit, pointed);
+            }
+        }
         if keys.enter {
-            hit = hit.or(shown.get(l.selected).copied().map(Hit::Launch));
+            hit = hit.or(l.selected.and_then(|s| shown.get(s)).copied().map(Hit::Launch));
         }
     });
     child.space(m.px(12.0));
@@ -130,6 +181,9 @@ pub fn draw(l: &mut Launcher, icons: &mut Icons, ui: &mut Ui, place: Place, look
     let power = power::draw(&mut child, icons, row, &mut l.confirm);
     child.finish();
 
+    if let Some(layout) = switched {
+        return Outcome::Layout(layout);
+    }
     match (hit, power) {
         (Some(Hit::Launch(i)), _) => Outcome::Launch(l.apps[i].command.clone()),
         (Some(Hit::Menu(i)), _) => Outcome::Menu(i),
@@ -146,13 +200,16 @@ struct Keys {
     /// Start the selected app.
     enter: bool,
     /// Rows to move the selection by.
-    step: isize,
+    rows: isize,
+    /// Tiles to move it by, along the grid.
+    across: isize,
 }
 
 /// Escape (puts a question away, then clears the search, then closes),
 /// the arrows (move the selection) and Enter (starts the selected app),
-/// every press of them this frame.
-fn keys(l: &mut Launcher, ui: &mut Ui) -> Keys {
+/// every press of them this frame. Left and Right only in the `grid`:
+/// in the list they stay the search field's.
+fn keys(l: &mut Launcher, ui: &mut Ui, grid: bool) -> Keys {
     let mut keys = Keys::default();
     let mut take = |key: Key| ui.state.take_key(|k| k.key == key && k.mods.is_empty()).is_some();
     while take(Key::Escape) {
@@ -163,13 +220,19 @@ fn keys(l: &mut Launcher, ui: &mut Ui) -> Keys {
             keys.close = true;
         }
         l.query.clear();
-        (l.selected, l.scroll) = (0, 0.0);
+        l.restart();
     }
     while take(Key::ArrowDown) {
-        keys.step += 1;
+        keys.rows += 1;
     }
     while take(Key::ArrowUp) {
-        keys.step -= 1;
+        keys.rows -= 1;
+    }
+    while grid && take(Key::ArrowRight) {
+        keys.across += 1;
+    }
+    while grid && take(Key::ArrowLeft) {
+        keys.across -= 1;
     }
     while take(Key::Enter) {
         keys.enter = true;
@@ -194,7 +257,7 @@ fn sidebar(l: &mut Launcher, ui: &mut Ui, rect: Rect) {
         if r.clicked {
             l.view = entry;
             l.query.clear();
-            (l.selected, l.scroll) = (0, 0.0);
+            l.restart();
             // The rows above were drawn with the group before.
             ui.state.request_rebuild = true;
         }
@@ -207,46 +270,107 @@ fn sidebar(l: &mut Launcher, ui: &mut Ui, rect: Rect) {
     }
 }
 
-/// The apps that show, scrolled by the wheel and to keep the selection
-/// in view. Returns the app clicked or right-clicked, by index; a
-/// right-click puts the selection on its row too, so the row the menu is
-/// about stays lit under it.
-fn list(l: &mut Launcher, icons: &mut Icons, ui: &mut Ui, rect: Rect, shown: &[usize]) -> Option<Hit> {
+/// What the apps' side says when nothing shows: how to get favorites, or
+/// that the search or the group has none.
+fn empty(l: &Launcher, ui: &mut Ui, rect: Rect) {
     let m = ui.m;
-    let row_h = m.px(ROW_H);
-    let (ink, dim, accent) = (ui.theme.text, ui.theme.text_dim, ui.theme.accent);
-    if shown.is_empty() {
-        let name = TextStyle::new(m.px(NAME) as f32);
-        if l.query.trim().is_empty() && l.view == View::Favorites {
-            // How to get some, under what is missing.
-            let small = TextStyle::new(m.px(DIM) as f32);
-            let (mid, h) = (rect.center().y, f64::from(name.line_height()));
-            ui.text_centered("No favorites yet", &name, Rect::new(Vec2::new(rect.min.x, mid - h), Vec2::new(rect.max.x, mid)), ink);
-            ui.text_centered("Right-click any app to add it here", &small, Rect::new(Vec2::new(rect.min.x, mid), Vec2::new(rect.max.x, mid + h)), dim);
-            return None;
-        }
-        let what = if l.query.trim().is_empty() { "No apps here.".to_owned() } else { format!("Nothing matches “{}”.", l.query.trim()) };
-        ui.text_centered(&what, &name, rect, dim);
-        return None;
+    let (ink, dim) = (ui.theme.text, ui.theme.text_dim);
+    let name = TextStyle::new(m.px(NAME) as f32);
+    if l.query.trim().is_empty() && l.view == View::Favorites {
+        // How to get some, under what is missing.
+        let small = TextStyle::new(m.px(DIM) as f32);
+        let (mid, h) = (rect.center().y, f64::from(name.line_height()));
+        ui.text_centered("No favorites yet", &name, Rect::new(Vec2::new(rect.min.x, mid - h), Vec2::new(rect.max.x, mid)), ink);
+        ui.text_centered("Right-click any app to add it here", &small, Rect::new(Vec2::new(rect.min.x, mid), Vec2::new(rect.max.x, mid + h)), dim);
+        return;
     }
-    let max = (shown.len() as f64 * row_h - rect.height()).max(0.0);
+    let what = if l.query.trim().is_empty() { "No apps here.".to_owned() } else { format!("Nothing matches “{}”.", l.query.trim()) };
+    ui.text_centered(&what, &name, rect, dim);
+}
+
+/// The wheel over `rect`, then the lit app's row (`selected`: its top and
+/// height in the `content` px the apps take) brought into view when asked,
+/// and the scroll held to what there is. How far it can scroll.
+pub(super) fn scroll(l: &mut Launcher, ui: &mut Ui, rect: Rect, content: f64, selected: Option<(f64, f64)>) -> f64 {
+    let max = (content - rect.height()).max(0.0);
     if rect.contains(ui.state.pointer) && ui.state.wheel.y != 0.0 {
         l.scroll -= ui.state.wheel.y;
         ui.state.wheel = Vec2::ZERO;
     }
-    l.selected = l.selected.min(shown.len() - 1);
-    if std::mem::take(&mut l.reveal) {
-        let top = l.selected as f64 * row_h;
-        l.scroll = l.scroll.min(top).max(top + row_h - rect.height());
+    if std::mem::take(&mut l.reveal)
+        && let Some((top, h)) = selected
+    {
+        l.scroll = l.scroll.min(top).max(top + h - rect.height());
     }
     l.scroll = l.scroll.clamp(0.0, max);
+    max
+}
+
+/// The pointer's word on the light once the apps are laid out: having
+/// `pointed` anew, it lights the app it is over (`hovered`, by its place
+/// among those showing) or, off the apps, puts out a light it lit. The
+/// keyboard's light stays under a pointer at rest. A change draws the
+/// frame again: the apps were drawn lit as they were.
+pub(super) fn follow(l: &mut Launcher, ui: &mut Ui, pointed: bool, hovered: Option<usize>) {
+    if !pointed {
+        return;
+    }
+    let (to, by_pointer) = match hovered {
+        Some(pos) => (Some(pos), true),
+        None if l.by_pointer => (None, false),
+        None => return,
+    };
+    if (to, by_pointer) != (l.selected, l.by_pointer) {
+        (l.selected, l.by_pointer) = (to, by_pointer);
+        ui.state.request_rebuild = true;
+    }
+}
+
+/// Where the view is, along `rect`'s right edge, when there is more.
+pub(super) fn scrollbar(ui: &mut Ui, rect: Rect, scroll: f64, max: f64, content: f64) {
+    if max <= 0.0 {
+        return;
+    }
+    let m = ui.m;
+    let track = rect.height();
+    let thumb = (track * rect.height() / content).max(m.px(32.0));
+    let y = rect.min.y + (track - thumb) * (scroll / max);
+    ui.draw.rounded_rect(Rect::from_min_size(Vec2::new(rect.max.x - m.px(4.0), y), Vec2::new(m.px(4.0), thumb)), m.px(2.0), ui.theme.text_dim.fade(0.5));
+}
+
+/// `app`'s picture in `pic`; while it is on its way, or for an app
+/// without one, its initial on a tile.
+pub(super) fn picture(ui: &mut Ui, icons: &mut Icons, app: &App, pic: Rect) {
+    match icons.get(&app.icon) {
+        Some(handle) => ui.draw.image(pic, handle, 0.0, lntrn_math::Color::WHITE),
+        None => {
+            let (ink, dim) = (ui.theme.text, ui.theme.text_dim);
+            ui.draw.rounded_rect(pic, (pic.width() * 0.22).round(), ink.fade(0.12));
+            let initial: String = app.name.chars().take(1).collect();
+            let style = TextStyle::new((pic.height() * 0.45).max(ui.m.px(NAME)) as f32);
+            ui.text_centered(&initial, &style, pic, dim);
+        }
+    }
+}
+
+/// The apps that show, a row each, scrolled by the wheel and to keep the
+/// lit one in view, the light following a pointer that `pointed`. Returns
+/// the app clicked or right-clicked, by index; a right-click lights its
+/// row too, so the row the menu is about stays lit under it.
+fn list(l: &mut Launcher, icons: &mut Icons, ui: &mut Ui, rect: Rect, shown: &[usize], pointed: bool) -> Option<Hit> {
+    let m = ui.m;
+    let row_h = m.px(ROW_H);
+    let (ink, dim, accent) = (ui.theme.text, ui.theme.text_dim, ui.theme.accent);
+    let content = shown.len() as f64 * row_h;
+    l.selected = l.selected.map(|s| s.min(shown.len() - 1));
+    let max = scroll(l, ui, rect, content, l.selected.map(|s| (s as f64 * row_h, row_h)));
 
     let name = TextStyle::new(m.px(NAME) as f32);
     let small = TextStyle::new(m.px(DIM) as f32);
     let icon = m.px(APP_ICON);
     let first = (l.scroll / row_h).floor() as usize;
     let last = (((l.scroll + rect.height()) / row_h).ceil() as usize).min(shown.len());
-    let mut hit = None;
+    let (mut hit, mut hovered) = (None, None);
     ui.draw.push_clip(rect);
     for (pos, &i) in shown.iter().enumerate().take(last).skip(first) {
         let row = Rect::from_min_size(Vec2::new(rect.min.x, rect.min.y + pos as f64 * row_h - l.scroll), Vec2::new(rect.width() - m.px(10.0), row_h));
@@ -254,27 +378,21 @@ fn list(l: &mut Launcher, icons: &mut Icons, ui: &mut Ui, rect: Rect, shown: &[u
         if r.clicked {
             hit = Some(Hit::Launch(i));
         }
+        if r.hovered {
+            hovered = Some(pos);
+        }
         if r.hovered && ui.state.right_pressed {
-            l.selected = pos;
+            (l.selected, l.by_pointer) = (Some(pos), true);
             hit = Some(Hit::Menu(i));
         }
-        if pos == l.selected {
+        if Some(pos) == l.selected {
             ui.draw.rounded_rect(row, m.px(10.0), accent.fade(0.20));
         } else if r.hovered {
             ui.draw.rounded_rect(row, m.px(10.0), lntrn_math::Color::WHITE.fade(0.06));
         }
         let app = &l.apps[i];
         let pic = Rect::from_min_size(Vec2::new(row.min.x + m.px(10.0), (row.center().y - icon * 0.5).round()), Vec2::new(icon, icon));
-        match icons.get(&app.icon) {
-            Some(handle) => ui.draw.image(pic, handle, 0.0, lntrn_math::Color::WHITE),
-            None => {
-                // A stand-in while the picture is on its way, or for an
-                // app without one: its initial on a tile.
-                ui.draw.rounded_rect(pic, m.px(9.0), ink.fade(0.12));
-                let initial: String = app.name.chars().take(1).collect();
-                ui.text_centered(&initial, &name, pic, dim);
-            }
-        }
+        picture(ui, icons, app, pic);
         let text = Rect::new(Vec2::new(pic.max.x + m.px(14.0), row.min.y), Vec2::new(row.max.x - m.px(10.0), row.max.y));
         ui.text_in_rect(&app.name, &name, text, ink);
         if !app.generic.is_empty() && app.generic != app.name {
@@ -285,12 +403,7 @@ fn list(l: &mut Launcher, icons: &mut Icons, ui: &mut Ui, rect: Rect, shown: &[u
         }
     }
     ui.draw.pop_clip();
-    // Where the view is, along the right edge, when there is more.
-    if max > 0.0 {
-        let track = rect.height();
-        let thumb = (track * rect.height() / (shown.len() as f64 * row_h)).max(m.px(32.0));
-        let y = rect.min.y + (track - thumb) * (l.scroll / max);
-        ui.draw.rounded_rect(Rect::from_min_size(Vec2::new(rect.max.x - m.px(4.0), y), Vec2::new(m.px(4.0), thumb)), m.px(2.0), dim.fade(0.5));
-    }
+    scrollbar(ui, rect, l.scroll, max, content);
+    follow(l, ui, pointed, hovered);
     hit
 }

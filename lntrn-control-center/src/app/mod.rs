@@ -122,7 +122,9 @@ impl App {
         let dock = Dock::new(lntrn_apps::installed());
         let mut calendar = Calendar::default();
         calendar.follow(settings.calendar);
-        Self { settings, look, output, changed: Arc::new(AtomicBool::new(false)), link: Link::new(), docked: false, morph: Morph::at(false), reveal: Reveal::new(), sent, region: None, launcher: Launcher::new(), dock, icons: Icons::new(ICON_PX), overlay: overlay::Overlay::default(), tray: Tray::default(), monitors: Monitors::default(), calendar, icons_sent: None, told: Told::default(), waker: None }
+        let mut launcher = Launcher::new();
+        launcher.follow(settings.launcher);
+        Self { settings, look, output, changed: Arc::new(AtomicBool::new(false)), link: Link::new(), docked: false, morph: Morph::at(false), reveal: Reveal::new(), sent, region: None, launcher, dock, icons: Icons::new(ICON_PX), overlay: overlay::Overlay::default(), tray: Tray::default(), monitors: Monitors::default(), calendar, icons_sent: None, told: Told::default(), waker: None }
     }
 
     /// Head for docked or floating when the compositor's word changed. The
@@ -384,6 +386,7 @@ impl App {
         self.tray.follow(new.tray);
         self.monitors.follow(new.monitors);
         self.calendar.follow(new.calendar);
+        self.launcher.follow(new.launcher);
         self.settings = new;
         restyled
     }
