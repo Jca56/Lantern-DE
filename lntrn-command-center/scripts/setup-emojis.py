@@ -16,7 +16,8 @@ What it does:
  3. Shallow-clones googlefonts/noto-emoji into /tmp with sparse-checkout
     of png/128 only (for the actual PNGs).
  4. Installs PNGs to ~/.lantern/emojis/png/{unicode}.png
- 5. Generates lntrn-command-center/src/emojis/data.rs, sorted by
+ 5. Generates lntrn-emoji/src/data.rs (the table the Command Center and the
+    Control Center share), sorted by
     (category, canonical emoji-test rank).
 
 Subsequent runs are idempotent: caches/clones reused if intact.
@@ -40,7 +41,7 @@ CLDR_CACHE = Path("/tmp/cldr-en-annotations.xml")
 HOME = Path.home()
 EMOJI_DIR = HOME / ".lantern" / "emojis" / "png"
 CRATE_ROOT = Path(__file__).resolve().parent.parent
-DATA_RS = CRATE_ROOT / "src" / "emojis" / "data.rs"
+DATA_RS = CRATE_ROOT.parent / "lntrn-emoji" / "src" / "data.rs"
 
 # Map Unicode CLDR group strings to compact category enum names.
 # "Component" (skin tone modifiers etc.) is intentionally dropped —

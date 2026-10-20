@@ -18,6 +18,7 @@ use lntrn_ui::{Anchor, AreaCx, KeyboardMode, LayerConfig, NewWindow, Shell, Shel
 
 use super::{APP_ID, App, RESTART, actions};
 use crate::calendar;
+use crate::clipboard::ClipOp;
 use crate::clock;
 use crate::dock::{self, CardPress, Entry, Popup, Thumb};
 use crate::glass;
@@ -244,6 +245,23 @@ impl App {
             }
             Outcome::Layout(layout) => {
                 launcher::keep(layout);
+                false
+            }
+            // An emoji: into the window last worked in, the compositor
+            // typing it while the menu keeps the keyboard.
+            Outcome::Type(text) => {
+                self.link.send(&format!("type:{text}"));
+                false
+            }
+            Outcome::Clip(op) => {
+                self.launcher.run_clip(op);
+                // Copied back: off to paste it.
+                matches!(op, ClipOp::Copy(_))
+            }
+            Outcome::ClipMenu(id) => {
+                if let Some(entry) = self.launcher.clip_entry(id) {
+                    cx.request(ShellRequest::ContextMenu(Box::new(actions::clip_menu(&entry, ui.state.pointer))));
+                }
                 false
             }
             Outcome::QuickKill => {

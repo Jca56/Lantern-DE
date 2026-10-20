@@ -10,7 +10,8 @@ use lntrn_math::Vec2;
 use lntrn_ui::testing::Harness;
 use lntrn_ui::{Key, Ui, WidgetId};
 
-use super::{Launcher, LauncherOptions, Layout, Outcome, Place, PowerAction, View, menu};
+use super::{Launcher, LauncherOptions, Layout, Outcome, Page, Place, PowerAction, View, menu};
+use crate::clipboard::{ClipEntry, ClipHistory, ClipOp};
 use crate::idlist::IdList;
 use crate::bar::{self, Look};
 
@@ -252,7 +253,7 @@ fn the_buttons_by_the_search_switch_the_layout_at_once_and_ask_to_keep_it() {
     let (mut h, mut l) = open();
     settle(&mut h, &mut l);
     pick(&mut h, &mut l, "All apps");
-    let button = |word: &'static str| panel(move |p| p.with_index(1).with(word));
+    let button = |word: &'static str| panel(move |p| p.with_index(2).with(word));
     assert_eq!(click(&mut h, &mut l, button("list")), Outcome::Stay, "already the list");
     assert_eq!(click(&mut h, &mut l, button("grid")), Outcome::Layout(Layout::Grid));
     settle(&mut h, &mut l);
@@ -328,4 +329,116 @@ fn a_menu_opening_under_a_resting_pointer_lights_nothing() {
     h.move_to(firefox);
     settle(&mut h, &mut l);
     assert_eq!(l.selected, None);
+}
+
+/// A header button by its id: the emoji and clipboard ones.
+fn header(word: &'static str) -> WidgetId {
+    panel(move |p| p.with_index(1).with(word))
+}
+
+/// The tile of the emoji at `index` in the table.
+fn glyph(index: usize) -> WidgetId {
+    panel(|p| p.with_index(1).with("glyph").with_index(index))
+}
+
+#[test]
+fn the_emoji_button_turns_to_the_emoji_page_and_a_click_types_one_staying_up() {
+    let (mut h, mut l) = open();
+    settle(&mut h, &mut l);
+    click(&mut h, &mut l, header("emoji"));
+    settle(&mut h, &mut l);
+    assert_eq!(l.page, Page::Emoji);
+    let grinning = lntrn_emoji::position("😀").unwrap();
+    assert_eq!(click(&mut h, &mut l, glyph(grinning)), Outcome::Type("😀".into()));
+    assert_eq!(l.page, Page::Emoji, "up for more");
+    // The lit button again: back to the apps.
+    click(&mut h, &mut l, header("emoji"));
+    settle(&mut h, &mut l);
+    assert_eq!(l.page, Page::Apps);
+    assert_eq!(l.emoji.recent(), [lntrn_emoji::EMOJIS[grinning].unicode], "settled into the recent ones");
+}
+
+#[test]
+fn a_search_on_the_emoji_page_finds_by_keyword_and_enter_types_the_first() {
+    let (mut h, mut l) = open();
+    settle(&mut h, &mut l);
+    click(&mut h, &mut l, header("emoji"));
+    settle(&mut h, &mut l);
+    h.type_text("cheerful");
+    settle(&mut h, &mut l);
+    h.key(Key::Enter);
+    assert_eq!(settle(&mut h, &mut l), Outcome::Type("😀".into()));
+}
+
+#[test]
+fn in_the_emoji_grid_the_arrows_go_tile_to_tile() {
+    let (mut h, mut l) = open();
+    settle(&mut h, &mut l);
+    click(&mut h, &mut l, header("emoji"));
+    settle(&mut h, &mut l);
+    for _ in 0..3 {
+        h.key(Key::ArrowRight);
+    }
+    h.key(Key::Enter);
+    let third = lntrn_emoji::visible("", lntrn_emoji::Category::Smileys)[2];
+    assert_eq!(settle(&mut h, &mut l), Outcome::Type(lntrn_emoji::EMOJIS[third].glyph.into()));
+}
+
+fn clip(id: u64, text: &str, pinned: bool) -> ClipEntry {
+    ClipEntry { id, text: text.into(), image: None, at_ms: 0, pinned }
+}
+
+/// The launcher on its clipboard page, the history holding two entries.
+fn clipboard() -> (Harness, Launcher) {
+    let (mut h, mut l) = open();
+    l.clip.history = ClipHistory::holding(vec![clip(2, "kept", true), clip(9, "hello world", false)]);
+    settle(&mut h, &mut l);
+    click(&mut h, &mut l, header("clipboard"));
+    settle(&mut h, &mut l);
+    assert_eq!(l.page, Page::Clipboard);
+    (h, l)
+}
+
+fn clip_row(id: u64) -> WidgetId {
+    panel(|p| p.with_index(1).with("clip").with_index(id as usize))
+}
+
+#[test]
+fn a_click_on_a_clipboard_entry_copies_it_back_and_a_right_click_asks_for_its_menu() {
+    let (mut h, mut l) = clipboard();
+    assert_eq!(click(&mut h, &mut l, clip_row(9)), Outcome::Clip(ClipOp::Copy(9)));
+    let kept = h.rect_of(clip_row(2)).expect("the pinned entry").center();
+    h.move_to(kept);
+    h.right_press();
+    assert_eq!(settle(&mut h, &mut l), Outcome::ClipMenu(2));
+    // Enter copies the one lit.
+    h.key(Key::Enter);
+    assert_eq!(settle(&mut h, &mut l), Outcome::Clip(ClipOp::Copy(2)));
+}
+
+#[test]
+fn clear_all_asks_first_and_escape_puts_the_question_away() {
+    let (mut h, mut l) = clipboard();
+    let side = |id: &'static str| panel(move |p| p.with_index(0).with(id));
+    assert_eq!(click(&mut h, &mut l, side("clear")), Outcome::Stay, "a question, not a clear");
+    settle(&mut h, &mut l);
+    h.key(Key::Escape);
+    assert_eq!(settle(&mut h, &mut l), Outcome::Stay, "the question goes, the menu stays");
+    settle(&mut h, &mut l);
+    click(&mut h, &mut l, side("clear"));
+    settle(&mut h, &mut l);
+    assert_eq!(click(&mut h, &mut l, side("clear-yes")), Outcome::Clip(ClipOp::Clear));
+}
+
+#[test]
+fn the_clipboard_search_and_pinned_view_pick_what_shows() {
+    let (mut h, mut l) = clipboard();
+    h.type_text("hello");
+    settle(&mut h, &mut l);
+    assert!(h.rect_of(clip_row(9)).is_some() && h.rect_of(clip_row(2)).is_none());
+    h.key(Key::Escape);
+    settle(&mut h, &mut l);
+    click(&mut h, &mut l, panel(|p| p.with_index(0).with("Pinned")));
+    settle(&mut h, &mut l);
+    assert!(h.rect_of(clip_row(2)).is_some() && h.rect_of(clip_row(9)).is_none());
 }

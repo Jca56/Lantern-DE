@@ -4,13 +4,17 @@
 //! them (right-click one for what can be done with it) as a list or a
 //! grid of tiles (`[control_center] launcher_view`, which the two buttons
 //! beside the search field switch too), and the power buttons along the
-//! bottom. A menu can't open inside the bar, so it is
+//! bottom. Two more buttons there turn the menu into an emoji picker
+//! (`emoji`) or the clipboard's history (`clip`), the search searching
+//! whichever page is up. A menu can't open inside the bar, so it is
 //! drawn in the overlay (`app::overlay`), a surface over the whole monitor,
 //! see-through but for its panel, taking the keyboard so typing searches
 //! at once; a click anywhere off the panel closes it, as Escape does and
 //! starting an app.
 
 mod button;
+mod clip;
+mod emoji;
 mod find;
 mod grid;
 mod menu;
@@ -19,12 +23,16 @@ mod power;
 mod tests;
 mod toggle;
 
+use lntrn_app::Waker;
+use lntrn_app::lntrn_render::{Gpu, Images};
 use lntrn_apps::{App, Group};
 use lntrn_core::log_warn;
 use lntrn_data::Doc;
 use lntrn_math::Vec2;
 
 pub use button::button;
+use clip::ClipPage;
+use emoji::EmojiPage;
 pub use menu::{Outcome, Place, draw as menu};
 pub use power::Action as PowerAction;
 
@@ -47,6 +55,15 @@ impl View {
             View::Group(g) => g.label(),
         }
     }
+}
+
+/// What the menu shows under its search field.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Page {
+    #[default]
+    Apps,
+    Emoji,
+    Clipboard,
 }
 
 /// How the menu lays its apps out: `[control_center] launcher_view`.
@@ -109,6 +126,9 @@ pub struct Launcher {
     pub open: bool,
     /// List or grid, and the grid's icon size.
     options: LauncherOptions,
+    page: Page,
+    emoji: EmojiPage,
+    clip: ClipPage,
     apps: Vec<App>,
     /// Each app's groups, beside `apps`.
     app_groups: Vec<Vec<Group>>,
@@ -136,7 +156,7 @@ pub struct Launcher {
 
 impl Launcher {
     pub fn new() -> Self {
-        Self { open: false, options: LauncherOptions::default(), apps: Vec::new(), app_groups: Vec::new(), groups: Vec::new(), view: View::Favorites, favorites: IdList::default(), query: String::new(), selected: None, by_pointer: false, pointer: None, scroll: 0.0, reveal: false, confirm: None }
+        Self { open: false, options: LauncherOptions::default(), page: Page::Apps, emoji: EmojiPage::new(), clip: ClipPage::new(), apps: Vec::new(), app_groups: Vec::new(), groups: Vec::new(), view: View::Favorites, favorites: IdList::default(), query: String::new(), selected: None, by_pointer: false, pointer: None, scroll: 0.0, reveal: false, confirm: None }
     }
 
     /// Open the menu on `apps` (read afresh, so one installed since
@@ -144,6 +164,7 @@ impl Launcher {
     /// favorites, from the top.
     pub fn open(&mut self, apps: Vec<App>) {
         self.favorites = IdList::load(idlist::FAVORITES);
+        self.emoji.load();
         self.load(apps);
     }
 
@@ -153,6 +174,8 @@ impl Launcher {
         self.app_groups = self.apps.iter().map(|a| Group::of(&a.categories)).collect();
         self.groups = Group::ALL.into_iter().filter(|g| self.app_groups.iter().any(|gs| gs.contains(g))).collect();
         self.view = View::Favorites;
+        self.page = Page::Apps;
+        self.clip.unask();
         self.query.clear();
         (self.selected, self.by_pointer, self.pointer) = (None, false, None);
         (self.scroll, self.reveal, self.confirm) = (0.0, false, None);
@@ -171,6 +194,44 @@ impl Launcher {
     pub fn close(&mut self) {
         self.open = false;
         self.confirm = None;
+        self.emoji.settle();
+        self.clip.unask();
+    }
+
+    /// Turn to `page`, from the top with nothing searched or lit.
+    fn go(&mut self, page: Page) {
+        if self.page == Page::Emoji {
+            self.emoji.settle();
+        }
+        self.page = page;
+        self.query.clear();
+        self.restart();
+        match page {
+            Page::Apps => {}
+            Page::Emoji => self.emoji.open(),
+            Page::Clipboard => self.clip.open(),
+        }
+    }
+
+    /// The loop's waker, for the clipboard's answers and its pictures.
+    pub fn set_waker(&self, waker: Waker) {
+        self.clip.history.set_waker(waker.clone());
+        self.clip.thumbs.set_waker(waker);
+    }
+
+    /// Hand the clipboard's pictures to the GPU. Whether any went up.
+    pub fn upload(&mut self, gpu: &Gpu, images: &mut Images) -> bool {
+        self.clip.thumbs.upload(gpu, images)
+    }
+
+    /// The clipboard entry called `id`, as last read.
+    pub fn clip_entry(&self, id: u64) -> Option<crate::clipboard::ClipEntry> {
+        self.clip.history.entries()?.into_iter().find(|e| e.id == id)
+    }
+
+    /// Do `op` to the clipboard's history.
+    pub fn run_clip(&self, op: crate::clipboard::ClipOp) {
+        self.clip.history.run(op);
     }
 
     /// Light nothing, or the first found while there is a search, and

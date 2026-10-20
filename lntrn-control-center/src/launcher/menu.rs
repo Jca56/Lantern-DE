@@ -1,19 +1,22 @@
 //! The menu's panel: anchored above the bar's left end on a surface that
-//! covers the monitor, the search field across its top with the list and
-//! grid buttons at its end, the favorites, all apps and the groups down
-//! its left, the apps beside them as a list or a grid (`grid`), the power
-//! row along its bottom with Quick Kill at its end. The keyboard stays in
-//! the search field, so the apps keep their own selection (arrows, Enter)
-//! and their own scroll, to keep that selection in view. A right-click on
-//! an app asks the app for its menu, which the shell draws over the panel.
+//! covers the monitor, the search field across its top with the emoji and
+//! clipboard buttons and the list and grid buttons at its end, the page
+//! below (the favorites, all apps and the groups down its left and the
+//! apps beside them as a list or a grid (`grid`); or the emoji page; or
+//! the clipboard's), the power row along its bottom with Quick Kill at its
+//! end. The keyboard stays in the search field, so each page keeps its own
+//! selection (arrows, Enter) and its own scroll, to keep that selection in
+//! view. A right-click on an app asks the app for its menu, which the
+//! shell draws over the panel.
 
 use lntrn_apps::{App, Icons};
 use lntrn_math::{Rect, Vec2};
 use lntrn_text::TextStyle;
 use lntrn_ui::{FILL, Key, Metrics, Sense, Ui};
 
-use super::{Launcher, Layout, View, grid, power, toggle};
+use super::{Launcher, Layout, Page, View, clip, emoji, grid, power, toggle};
 use crate::bar::Look;
+use crate::clipboard::ClipOp;
 
 /// The panel's size, logical; less on a small screen.
 const PANEL_W: f64 = 780.0;
@@ -24,13 +27,13 @@ const PAD: f64 = 18.0;
 const ABOVE_BAR: f64 = 10.0;
 const RADIUS: f64 = 16.0;
 const SIDEBAR_W: f64 = 230.0;
-const GROUP_H: f64 = 48.0;
+pub(super) const GROUP_H: f64 = 48.0;
 const ROW_H: f64 = 56.0;
 const APP_ICON: f64 = 40.0;
 const POWER_H: f64 = 56.0;
 /// Text, logical: names at 20, what is beside them at the 18 floor.
 pub(super) const NAME: f64 = 20.0;
-const DIM: f64 = 18.0;
+pub(super) const DIM: f64 = 18.0;
 /// The search field's well and focus ring, logical: the bar's theme has
 /// no lines at all, which left the ring as four arcs at its corners.
 const FIELD_BORDER: f64 = 1.5;
@@ -50,6 +53,13 @@ pub enum Outcome {
     /// The buttons by the search field switched the apps to this layout
     /// (shown already): keep it.
     Layout(Layout),
+    /// Type this into the window last worked in (an emoji); the menu
+    /// stays up.
+    Type(String),
+    /// Do this to the clipboard's history (a copy back closes the menu).
+    Clip(ClipOp),
+    /// Show what can be done with this clipboard entry (a right-click).
+    ClipMenu(u64),
 }
 
 /// What a frame's pointer or keys did to the apps.
@@ -82,7 +92,7 @@ pub fn draw(l: &mut Launcher, icons: &mut Icons, ui: &mut Ui, place: Place, look
     if ui.state.pressed && !panel.contains(ui.state.pointer) && !on_popup {
         return Outcome::Close;
     }
-    let keys = keys(l, ui, l.options.layout == Layout::Grid);
+    let keys = keys(l, ui, l.page == Page::Emoji || (l.page == Page::Apps && l.options.layout == Layout::Grid));
     if keys.close {
         return Outcome::Close;
     }
@@ -108,71 +118,68 @@ pub fn draw(l: &mut Launcher, icons: &mut Icons, ui: &mut Ui, place: Place, look
     let mut child = Ui::new(&mut *ui.draw, &mut *ui.text, ui.theme, lined, &mut *ui.state, inner, inner, id, layer);
     child.set_window_rect(surface);
     // The field keeps the keyboard whatever was clicked (a group, say), so
-    // typing always searches. The list and grid buttons at its end, each
-    // as wide as the field is tall.
+    // typing always searches the page up. The emoji and clipboard buttons
+    // at its end, then the list and grid ones, each as wide as the field is
+    // tall.
     let mut switched = None;
     let button_w = child.m.widget_h;
-    child.columns(&[FILL, button_w * 2.0], |ui, col| {
+    child.columns(&[FILL, button_w * 2.0, button_w * 2.0], |ui, col| {
         if col == 0 {
             let field = ui.id("search");
             ui.state.focus = Some(field);
-            if ui.text_field_hint("search", &mut l.query, "Search apps…").changed {
+            let hint = match l.page {
+                Page::Apps => "Search apps…",
+                Page::Emoji => "Search emoji…",
+                Page::Clipboard => "Search the clipboard…",
+            };
+            if ui.text_field_hint("search", &mut l.query, hint).changed {
                 l.restart();
             }
             return;
         }
         let rect = ui.alloc(Vec2::new(FILL, ui.m.widget_h));
-        if let Some(layout) = toggle::draw(ui, rect, l.options.layout) {
-            // Over at once: the apps below draw in it this very frame.
-            l.options.layout = layout;
-            (l.scroll, l.reveal) = (0.0, true);
-            switched = Some(layout);
+        if col == 1 {
+            if let Some(page) = toggle::pages(ui, rect, l.page) {
+                // Over at once below; the field was drawn with the page before.
+                l.go(page);
+                ui.state.request_rebuild = true;
+            }
+            return;
+        }
+        if let Some(layout) = toggle::draw(ui, rect, l.options.layout, l.page == Page::Apps) {
+            // Over at once: the apps below draw in it this very frame,
+            // from another page too.
+            if l.page != Page::Apps {
+                l.go(Page::Apps);
+                ui.state.request_rebuild = true;
+            }
+            if layout != l.options.layout {
+                l.options.layout = layout;
+                (l.scroll, l.reveal) = (0.0, true);
+                switched = Some(layout);
+            }
         }
     });
     child.space(m.px(12.0));
     let body_h = (child.remaining_height() - m.px(POWER_H) - m.px(12.0)).max(0.0);
-    let mut hit = None;
+    let mut out = None;
     child.columns(&[m.px(SIDEBAR_W), FILL], |ui, col| {
         let rect = ui.alloc(Vec2::new(FILL, body_h));
-        if col == 0 {
-            sidebar(l, ui, rect);
-            return;
-        }
-        // What shows now, after this frame's typing and the sidebar.
-        let shown = l.shown();
-        if shown.is_empty() {
-            empty(l, ui, rect);
-            return;
-        }
-        // The arrows move the light: a row in the list, along the grid.
-        // With nothing lit, the first press lights the first app.
-        let moved = keys.rows != 0 || keys.across != 0;
-        let (from, rows, across) = match l.selected {
-            Some(s) => (s, keys.rows, keys.across),
-            None if keys.across != 0 => (0, keys.rows, keys.across - keys.across.signum()),
-            None => (0, keys.rows - keys.rows.signum(), 0),
+        let got = match (l.page, col) {
+            (Page::Apps, 0) => {
+                sidebar(l, ui, rect);
+                None
+            }
+            (Page::Emoji, 0) => {
+                emoji::sidebar(l, ui, rect);
+                None
+            }
+            (Page::Clipboard, 0) => clip::sidebar(l, ui, rect),
+            (Page::Apps, _) => apps(l, icons, ui, rect, &keys, pointed),
+            (Page::Emoji, _) => emoji_side(l, ui, rect, &keys, pointed),
+            (Page::Clipboard, _) => clip_side(l, ui, rect, &keys, pointed),
         };
-        match l.options.layout {
-            Layout::List => {
-                if moved {
-                    let to = from.saturating_add_signed(rows).min(shown.len() - 1);
-                    (l.selected, l.by_pointer, l.reveal) = (Some(to), false, true);
-                }
-                hit = list(l, icons, ui, rect, &shown, pointed);
-            }
-            Layout::Grid => {
-                let line_h = f64::from(TextStyle::new(m.px(NAME) as f32).line_height());
-                let fit = grid::fit(rect.width() - m.px(10.0), m.px(f64::from(l.options.grid_icon)), line_h, m);
-                if moved {
-                    let to = grid::moved(from, shown.len(), fit.cols, rows, across);
-                    (l.selected, l.by_pointer, l.reveal) = (Some(to), false, true);
-                }
-                hit = grid::draw(l, icons, ui, rect, &shown, fit, pointed);
-            }
-        }
-        if keys.enter {
-            hit = hit.or(l.selected.and_then(|s| shown.get(s)).copied().map(Hit::Launch));
-        }
+        out = out.take().or(got);
     });
     child.space(m.px(12.0));
     let row = child.alloc(Vec2::new(FILL, m.px(POWER_H)));
@@ -184,13 +191,82 @@ pub fn draw(l: &mut Launcher, icons: &mut Icons, ui: &mut Ui, place: Place, look
     if let Some(layout) = switched {
         return Outcome::Layout(layout);
     }
-    match (hit, power) {
-        (Some(Hit::Launch(i)), _) => Outcome::Launch(l.apps[i].command.clone()),
-        (Some(Hit::Menu(i)), _) => Outcome::Menu(i),
-        (None, Some(action)) => Outcome::Power(action),
-        (None, None) if kill => Outcome::QuickKill,
-        (None, None) => Outcome::Stay,
+    if let Some(out) = out {
+        return out;
     }
+    match power {
+        Some(action) => Outcome::Power(action),
+        None if kill => Outcome::QuickKill,
+        None => Outcome::Stay,
+    }
+}
+
+/// The arrows move the light among `len` things `cols` across (one: a
+/// list). With nothing lit, the first press lights the first.
+fn step(l: &mut Launcher, keys: &Keys, len: usize, cols: usize) {
+    if keys.rows == 0 && keys.across == 0 {
+        return;
+    }
+    let (from, rows, across) = match l.selected {
+        Some(s) => (s, keys.rows, keys.across),
+        None if keys.across != 0 => (0, keys.rows, keys.across - keys.across.signum()),
+        None => (0, keys.rows - keys.rows.signum(), 0),
+    };
+    (l.selected, l.by_pointer, l.reveal) = (Some(grid::moved(from, len, cols, rows, across)), false, true);
+}
+
+/// The apps side: what shows after this frame's typing and the sidebar,
+/// as a list or a grid. Enter starts the app lit.
+fn apps(l: &mut Launcher, icons: &mut Icons, ui: &mut Ui, rect: Rect, keys: &Keys, pointed: bool) -> Option<Outcome> {
+    let m = ui.m;
+    let shown = l.shown();
+    if shown.is_empty() {
+        empty(l, ui, rect);
+        return None;
+    }
+    let hit = match l.options.layout {
+        Layout::List => {
+            step(l, keys, shown.len(), 1);
+            list(l, icons, ui, rect, &shown, pointed)
+        }
+        Layout::Grid => {
+            let line_h = f64::from(TextStyle::new(m.px(NAME) as f32).line_height());
+            let fit = grid::fit(rect.width() - m.px(10.0), m.px(f64::from(l.options.grid_icon)), line_h, m);
+            step(l, keys, shown.len(), fit.cols);
+            grid::draw(l, icons, ui, rect, &shown, fit, pointed)
+        }
+    };
+    let entered = || l.selected.and_then(|s| shown.get(s)).copied().map(Hit::Launch);
+    match hit.or_else(|| if keys.enter { entered() } else { None })? {
+        Hit::Launch(i) => Some(Outcome::Launch(l.apps[i].command.clone())),
+        Hit::Menu(i) => Some(Outcome::Menu(i)),
+    }
+}
+
+/// The emoji side: what the search or the view shows, as tiles. Enter
+/// types the emoji lit.
+fn emoji_side(l: &mut Launcher, ui: &mut Ui, rect: Rect, keys: &Keys, pointed: bool) -> Option<Outcome> {
+    let shown = l.emoji.shown(&l.query);
+    if shown.is_empty() {
+        emoji::empty(l, ui, rect);
+        return None;
+    }
+    step(l, keys, shown.len(), emoji::columns(rect.width() - ui.m.px(10.0), ui.m));
+    let out = emoji::body(l, ui, rect, &shown, pointed);
+    if keys.enter { out.or_else(|| emoji::enter(l, &shown, ui.now())) } else { out }
+}
+
+/// The clipboard side: the history's entries the view and the search
+/// leave, a row each. Enter copies the one lit back.
+fn clip_side(l: &mut Launcher, ui: &mut Ui, rect: Rect, keys: &Keys, pointed: bool) -> Option<Outcome> {
+    let shown = l.clip.shown(&l.query).unwrap_or_default();
+    if shown.is_empty() {
+        clip::empty(l, ui, rect);
+        return None;
+    }
+    step(l, keys, shown.len(), 1);
+    let out = clip::body(l, ui, rect, &shown, pointed);
+    if keys.enter { out.or_else(|| clip::enter(l, &shown)) } else { out }
 }
 
 /// What the keys the menu takes before the search field sees them ask.
@@ -206,14 +282,15 @@ struct Keys {
 }
 
 /// Escape (puts a question away, then clears the search, then closes),
-/// the arrows (move the selection) and Enter (starts the selected app),
-/// every press of them this frame. Left and Right only in the `grid`:
-/// in the list they stay the search field's.
+/// the arrows (move the selection) and Enter (does what a click on the one
+/// lit does), every press of them this frame. Left and Right only in a
+/// `grid` (the apps' or the emoji): in a list they stay the search
+/// field's.
 fn keys(l: &mut Launcher, ui: &mut Ui, grid: bool) -> Keys {
     let mut keys = Keys::default();
     let mut take = |key: Key| ui.state.take_key(|k| k.key == key && k.mods.is_empty()).is_some();
     while take(Key::Escape) {
-        if l.confirm.take().is_some() {
+        if l.confirm.take().is_some() || l.clip.unask() {
             continue;
         }
         if l.query.is_empty() {

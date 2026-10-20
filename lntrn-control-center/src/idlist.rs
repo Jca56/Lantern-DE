@@ -1,6 +1,6 @@
 //! Lists of apps by desktop-file id, each in a file of its own under
 //! `~/.lantern/config/control-center/`: the launcher's favorites and the
-//! dock's pins. One id to a line with `#` comments, the way the Command
+//! dock's pins (and, by codepoints, the emoji used lately). One id to a line with `#` comments, the way the Command
 //! Center keeps its pins: a list of names needs no more than that, and it
 //! reads and edits by hand. Written whole to a file beside it and renamed
 //! into place, so a crash mid-write never leaves half a list.
@@ -31,6 +31,15 @@ pub const PINS: ListFile = ListFile {
     header: "# lntrn-control-center dock pins\n\
 # One app id per line (the .desktop file's name, without .desktop).\n\
 # Lines starting with # are comments. The dock shows them in this order.\n\n",
+};
+
+/// The emoji typed from the launcher lately, the latest first, by their
+/// codepoints: some glyphs (#️⃣) start like a comment.
+pub const RECENT_EMOJI: ListFile = ListFile {
+    name: "emoji-recent.toml",
+    header: "# lntrn-control-center emoji used lately\n\
+# One emoji per line by its codepoints (1f600), the latest first.\n\
+# Lines starting with # are comments.\n\n",
 };
 
 #[derive(Debug, Default)]
@@ -75,6 +84,14 @@ impl IdList {
         };
         self.save_or_say();
         now
+    }
+
+    /// Put `id` first, keep the first `cap`, and save.
+    pub fn bump(&mut self, id: &str, cap: usize) {
+        self.ids.retain(|f| f != id);
+        self.ids.insert(0, id.to_owned());
+        self.ids.truncate(cap);
+        self.save_or_say();
     }
 
     /// Put `id` at `index` (counted without it), and save. Returns whether
@@ -134,6 +151,15 @@ mod tests {
     fn a_list_reads_one_id_a_line_comments_and_doubles_left_out() {
         assert_eq!(parse("# mine\n\nfirefox\n  lntrn-code  \n# steam\nfirefox\n"), vec!["firefox", "lntrn-code"]);
         assert!(parse("").is_empty());
+    }
+
+    #[test]
+    fn a_bump_puts_it_first_once_and_keeps_the_cap() {
+        let mut l = IdList::in_memory(&["a", "b", "c"]);
+        l.bump("c", 3);
+        assert_eq!(l.ids(), ["c", "a", "b"]);
+        l.bump("d", 3);
+        assert_eq!(l.ids(), ["d", "c", "a"], "the oldest falls off");
     }
 
     #[test]

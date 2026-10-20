@@ -4,69 +4,15 @@
 //! and lays them out in a category-tabbed, filterable grid. See
 //! `lntrn-command-center/scripts/setup-emojis.py` for the one-time asset/data-table install.
 
-pub mod data;
 pub mod render;
+
+/// The table and its groups, from the shared crate (the launcher's emoji
+/// page uses them too).
+pub use lntrn_emoji as data;
+pub use lntrn_emoji::Category;
 
 use lntrn_render::Rect;
 use std::path::PathBuf;
-
-/// Top-level emoji groupings (Unicode CLDR groups).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Category {
-    Smileys,
-    People,
-    AnimalsNature,
-    FoodDrink,
-    Activities,
-    TravelPlaces,
-    Objects,
-    Symbols,
-    Flags,
-}
-
-impl Category {
-    pub const ALL: [Category; 9] = [
-        Category::Smileys,
-        Category::People,
-        Category::AnimalsNature,
-        Category::FoodDrink,
-        Category::Activities,
-        Category::TravelPlaces,
-        Category::Objects,
-        Category::Symbols,
-        Category::Flags,
-    ];
-
-    #[allow(dead_code)] // used in tooltips planned for phase 2
-    pub fn label(self) -> &'static str {
-        match self {
-            Category::Smileys => "Smileys & Emotion",
-            Category::People => "People & Body",
-            Category::AnimalsNature => "Animals & Nature",
-            Category::FoodDrink => "Food & Drink",
-            Category::Activities => "Activities",
-            Category::TravelPlaces => "Travel & Places",
-            Category::Objects => "Objects",
-            Category::Symbols => "Symbols",
-            Category::Flags => "Flags",
-        }
-    }
-
-    /// Codepoint used as the visual tab icon for this category.
-    pub fn icon_unicode(self) -> &'static str {
-        match self {
-            Category::Smileys => "1f600",       // 😀
-            Category::People => "1f44b",        // 👋
-            Category::AnimalsNature => "1f436", // 🐶
-            Category::FoodDrink => "1f355",     // 🍕
-            Category::Activities => "26bd",     // ⚽
-            Category::TravelPlaces => "1f697",  // 🚗
-            Category::Objects => "1f4a1",       // 💡
-            Category::Symbols => "1f4af",       // 💯
-            Category::Flags => "1f1fa-1f1f8",   // 🇺🇸
-        }
-    }
-}
 
 /// Logical-px layout constants. Scaled by `scale` at draw time.
 pub const FILTER_BAR_H: f32 = 56.0;
@@ -179,21 +125,7 @@ impl EmojisState {
 
 /// The actual filter walk behind [`EmojisState::visible_indices`].
 fn compute_visible(query: &str, category: Category) -> Vec<usize> {
-    let needle = query.to_lowercase();
-    let needle = needle.trim();
-    data::EMOJIS
-        .iter()
-        .enumerate()
-        .filter(|(_, e)| {
-            if needle.is_empty() {
-                e.category == category
-            } else {
-                e.name.to_lowercase().contains(needle)
-                    || e.keywords.iter().any(|k| k.to_lowercase().contains(needle))
-            }
-        })
-        .map(|(i, _)| i)
-        .collect()
+    lntrn_emoji::visible(query, category)
 }
 
 // ── Layout ──────────────────────────────────────────────────────────────────

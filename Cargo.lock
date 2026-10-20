@@ -2448,6 +2448,7 @@ dependencies = [
  "image",
  "libc",
  "lntrn-dbus",
+ "lntrn-emoji",
  "lntrn-icons",
  "lntrn-render 0.1.0",
  "nix 0.29.0",
@@ -2499,6 +2500,7 @@ dependencies = [
  "lntrn-apps",
  "lntrn-core",
  "lntrn-data",
+ "lntrn-emoji",
  "lntrn-image",
  "lntrn-kit",
  "lntrn-math",
@@ -2564,6 +2566,10 @@ dependencies = [
  "lntrn-gfx",
  "wgpu 28.0.0",
 ]
+
+[[package]]
+name = "lntrn-emoji"
+version = "0.1.0"
 
 [[package]]
 name = "lntrn-file-manager"

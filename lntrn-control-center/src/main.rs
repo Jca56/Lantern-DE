@@ -48,6 +48,7 @@
 mod app;
 mod bar;
 mod calendar;
+mod clipboard;
 mod clock;
 mod compositor;
 mod dock;
@@ -60,6 +61,7 @@ mod launcher;
 mod monitors;
 mod morph;
 mod settings;
+mod thumbs;
 #[cfg(test)]
 mod smoke;
 mod tray;

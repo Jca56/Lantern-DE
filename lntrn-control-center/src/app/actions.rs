@@ -1,6 +1,6 @@
-//! The menus a right-click opens, the launcher's on an app in its list
-//! and the dock's on an icon, and what their rows do (they come back to
-//! the app as actions, through `Host::run`).
+//! The menus a right-click opens, the launcher's on an app in its list or
+//! an entry of the clipboard's, and the dock's on an icon, and what their
+//! rows do (they come back to the app as actions, through `Host::run`).
 
 use lntrn_core::{log_info, log_warn};
 use lntrn_math::Vec2;
@@ -8,6 +8,7 @@ use lntrn_props::Value;
 use lntrn_ui::{Action, ContextMenu, HostCx, Item, ShellRequest};
 
 use super::App;
+use crate::clipboard::{ClipEntry, ClipOp};
 use crate::dock::Entry;
 
 /// The rows, as actions.
@@ -16,6 +17,9 @@ const FAVORITE: &str = "launcher.favorite";
 const NEW_WINDOW: &str = "dock.new";
 const PIN: &str = "dock.pin";
 const CLOSE: &str = "dock.close";
+const CLIP_COPY: &str = "clip.copy";
+const CLIP_PIN: &str = "clip.pin";
+const CLIP_DELETE: &str = "clip.delete";
 
 /// Start an app with its desktop entry's `command`.
 pub fn launch(command: &str) {
@@ -64,6 +68,21 @@ pub fn dock_menu(entry: &Entry, favorite: bool, pinned: bool, at: Vec2) -> Conte
         rows.push(Item::danger(&label, Action::new(CLOSE).with("windows", Value::Str(ids.join(",")))));
     }
     ContextMenu::new(entry.name(), at).tab("App", rows)
+}
+
+/// What can be done with an entry of the clipboard's history: copy it
+/// back, pin or unpin it, delete it.
+pub fn clip_menu(entry: &ClipEntry, at: Vec2) -> ContextMenu {
+    let id = || Value::Str(entry.id.to_string());
+    let pin = if entry.pinned { "Unpin" } else { "Pin" };
+    let rows = vec![
+        Item::action("Copy", Action::new(CLIP_COPY).with("id", id())),
+        Item::action(pin, Action::new(CLIP_PIN).with("id", id()).with("pin", Value::Bool(!entry.pinned))),
+        Item::Separator,
+        Item::danger("Delete", Action::new(CLIP_DELETE).with("id", id())),
+    ];
+    let title = if entry.image.is_some() { "Picture".to_owned() } else { entry.text.chars().take(40).collect() };
+    ContextMenu::new(&title, at).tab("Clipboard", rows)
 }
 
 /// How many rows [`dock_menu`] has for `entry`, a separator counted as one.
@@ -118,6 +137,20 @@ impl App {
                 for id in text("windows").unwrap_or_default().split(',').filter_map(|id| id.parse::<u64>().ok()) {
                     self.link.send(&format!("close:{id}"));
                 }
+            }
+            CLIP_COPY | CLIP_PIN | CLIP_DELETE => {
+                let Some(id) = text("id").and_then(|id| id.parse::<u64>().ok()) else { return };
+                let op = match action.id.as_str() {
+                    CLIP_COPY => ClipOp::Copy(id),
+                    CLIP_PIN => ClipOp::Pin(id, matches!(action.arg("pin"), Some(Value::Bool(true)))),
+                    _ => ClipOp::Delete(id),
+                };
+                self.launcher.run_clip(op);
+                if matches!(op, ClipOp::Copy(_)) {
+                    // Copied back: the menu goes, off to paste it.
+                    cx.request(ShellRequest::CloseWindow);
+                }
+                cx.rebuild();
             }
             _ => {}
         }

@@ -34,8 +34,13 @@ const WRITE_TIMEOUT: Duration = Duration::from_millis(100);
 
 /// Where the compositor listens: `/run/user/<uid>/lntrn-workspaces.sock`.
 fn socket_path() -> PathBuf {
+    compositor_socket("lntrn-workspaces.sock")
+}
+
+/// The compositor's socket called `name`: `/run/user/<uid>/<name>`.
+pub fn compositor_socket(name: &str) -> PathBuf {
     // SAFETY: a plain syscall that can't fail.
-    PathBuf::from(format!("/run/user/{}/lntrn-workspaces.sock", unsafe { getuid() }))
+    PathBuf::from(format!("/run/user/{}/{name}", unsafe { getuid() }))
 }
 
 /// An open window, as the compositor tells it.

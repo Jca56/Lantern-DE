@@ -33,6 +33,7 @@ members = [
     "lntrn-control-center",
     "lntrn-apps",
     "lntrn-status",
+    "lntrn-emoji",
     "lntrn-keychain",
     "lntrn-keys",
     "lntrn-kit",

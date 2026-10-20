@@ -1,0 +1,8 @@
+[package]
+name = "lntrn-emoji"
+version = "0.1.0"
+description = "Lantern DE - every emoji with its name, group and keywords, and the search over them"
+authors = ["Alva"]
+edition = "2024"
+
+[dependencies]

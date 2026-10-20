@@ -23,3 +23,4 @@ lntrn-image = { path = "../../lantern-ui-2/crates/lntrn-image" }
 lntrn-kit = { path = "../lntrn-kit" }
 lntrn-apps = { path = "../lntrn-apps" }
 lntrn-status = { path = "../lntrn-status" }
+lntrn-emoji = { path = "../lntrn-emoji" }

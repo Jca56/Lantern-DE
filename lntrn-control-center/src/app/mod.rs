@@ -465,6 +465,7 @@ impl AppHost for App {
         settings::watch(self.changed.clone(), waker.clone());
         clock::watch(waker.clone());
         self.icons.set_waker(waker.clone());
+        self.launcher.set_waker(waker.clone());
         self.link.start(self.output.clone(), waker.clone());
         self.tray.start(waker.clone(), self.settings.tray);
         self.monitors.start(waker.clone(), self.settings.monitors);
@@ -476,7 +477,7 @@ impl AppHost for App {
     /// overlay's rebuild, a dock menu that went takes the overlay with it.
     fn after_rebuild(&mut self, gpu: &Gpu, images: &mut Images, shell: &mut Shell<Self>) -> bool {
         let again = shell.title.is_some() && self.after_overlay(shell);
-        let glyphs = self.tray.glyphs.upload(gpu, images) | self.tray.app_icons.upload(gpu, images);
+        let glyphs = self.tray.glyphs.upload(gpu, images) | self.tray.app_icons.upload(gpu, images) | self.launcher.upload(gpu, images);
         self.icons.upload(gpu, images) || glyphs || again
     }
 }

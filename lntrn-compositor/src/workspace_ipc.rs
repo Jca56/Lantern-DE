@@ -22,6 +22,11 @@
 //!   `activate:<id>`               # show and focus a window, wherever it is
 //!   `summon`                      # what a Super tap does: the panel the
 //!                                 # session runs (`[session] panel`)
+//!   `type:<text>`                 # type <text> into the window last
+//!                                 # worked in (the launcher's emoji
+//!                                 # picker), as if on the keyboard; see
+//!                                 # `text_inject.rs`. Lines are trimmed,
+//!                                 # so no whitespace at either end
 //!   `minimize:<id>` / `close:<id>`
 //!   `icons:<namespace>\t<app_id> <x> <y> <w> <h>\t…`  # where each app's
 //!                                 # icon is on the layer surface called
@@ -92,6 +97,8 @@ pub enum IpcCommand {
     Edge { namespace: String, on: bool },
     /// What a Super tap does (lntrn-desktop's hub asks for it).
     Summon,
+    /// Type this into the window last worked in.
+    Type(String),
 }
 
 /// Where to blur what's behind a layer surface: a rect in its logical
@@ -314,6 +321,10 @@ fn parse_command(msg: &str) -> Option<IpcCommand> {
     if msg.trim() == "summon" {
         return Some(IpcCommand::Summon);
     }
+    // Before the `:`-split below: the text may hold colons of its own.
+    if let Some(text) = msg.strip_prefix("type:") {
+        return (!text.is_empty()).then(|| IpcCommand::Type(text.to_owned()));
+    }
     if let Some(cmd) = parse_window_command(msg) {
         return Some(cmd);
     }
@@ -487,5 +498,12 @@ mod tests {
         // The old commands still read.
         assert!(matches!(parse_command("switch:DP-1:3"), Some(IpcCommand::Switch { target: 3, .. })));
         assert!(matches!(parse_command("summon"), Some(IpcCommand::Summon)));
+    }
+
+    #[test]
+    fn type_takes_its_text_whole_colons_and_all() {
+        assert!(matches!(parse_command("type:😀"), Some(IpcCommand::Type(t)) if t == "😀"));
+        assert!(matches!(parse_command("type:a:b:c"), Some(IpcCommand::Type(t)) if t == "a:b:c"));
+        assert!(parse_command("type:").is_none(), "nothing to type");
     }
 }

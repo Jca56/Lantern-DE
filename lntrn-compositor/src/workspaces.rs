@@ -1053,6 +1053,12 @@ impl Lantern {
                     self.switch_workspace_on(&output, target);
                 }
                 crate::workspace_ipc::IpcCommand::Summon => self.summon_panel(),
+                // The launcher's emoji picker: the window last worked in
+                // takes it while the launcher keeps the keyboard.
+                crate::workspace_ipc::IpcCommand::Type(text) => {
+                    self.type_text_into_focused_window(&text);
+                    self.schedule_render();
+                }
                 // The window commands, done above.
                 _ => {}
             }
