@@ -28,7 +28,7 @@ members = [
     "lntrn-sysmon",
     "lntrn-icons",
     "lntrn-icon-theme",
-    "lntrn-screencopy",
+    "lntrn-screen-capture",
     "lntrn-command-center",
     "lntrn-control-center",
     "lntrn-apps",

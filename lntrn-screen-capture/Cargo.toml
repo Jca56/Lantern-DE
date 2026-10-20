@@ -1,0 +1,17 @@
+[package]
+name = "lntrn-screen-capture"
+version = "0.1.0"
+description = "Lantern DE - screen recorder: pick an area, record it on the GPU's video engine, on Lantern UI 2"
+authors = ["Alva"]
+edition = "2024"
+
+[dependencies]
+lntrn-app = { path = "../../lantern-ui-2/crates/lntrn-app" }
+lntrn-ui = { path = "../../lantern-ui-2/crates/lntrn-ui" }
+lntrn-core = { path = "../../lantern-ui-2/crates/lntrn-core" }
+lntrn-math = { path = "../../lantern-ui-2/crates/lntrn-math" }
+lntrn-video = { path = "../../lantern-ui-2/crates/lntrn-video" }
+lntrn-kit = { path = "../lntrn-kit" }
+libc = "0.2"
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }

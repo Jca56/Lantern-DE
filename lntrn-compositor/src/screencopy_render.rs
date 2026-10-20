@@ -23,10 +23,10 @@ use wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_frame_v1;
 use crate::handlers::screencopy::PendingScreencopy;
 use crate::udev::BG_COLOR;
 
-/// Layer-shell namespace of lntrn-screencopy's on-screen recording badge.
+/// Layer-shell namespace of lntrn-screen-capture's on-screen recording badge.
 /// Surfaces with this namespace are composited to the display but excluded
 /// from screencopy, so the badge never shows up in its own recording.
-pub const NO_CAPTURE_NAMESPACE: &str = "lntrn-screencopy-indicator";
+pub const NO_CAPTURE_NAMESPACE: &str = "lntrn-screen-capture-badge";
 
 /// Cached offscreen target for badge-free captures: one full-output
 /// texture plus its own damage tracker, so successive captured frames

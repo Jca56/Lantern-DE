@@ -29,7 +29,7 @@ BINARIES := \
 	lntrn-sysmon \
 	lntrn-snapshot \
 	lntrn-snapshot-gui \
-	lntrn-screencopy \
+	lntrn-screen-capture \
 	lntrn-afterglow \
 	lntrn-lockscreen
 

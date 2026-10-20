@@ -519,7 +519,7 @@ impl Lantern {
                     && keysym.modified_sym().raw() == xkb::KEY_Print
                 {
                     tracing::info!("Super+Print pressed, toggling screencopy");
-                    spawn_detached("lntrn-screencopy", &data.socket_name);
+                    spawn_detached("lntrn-screen-capture", &data.socket_name);
                     return FilterResult::Intercept(());
                 }
 
