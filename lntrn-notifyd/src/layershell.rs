@@ -286,7 +286,10 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>, out: mpsc::UnboundedSen
     let mut text = TextRenderer::new(&gpu);
 
     let mut active: Vec<ActiveNotification> = Vec::new();
-    let mut needs_clear = true; // Force an initial transparent frame on first loop iteration
+    // The frame on screen may show toasts: true until one with none has
+    // been presented, so the overlay starts transparent, and a toast that
+    // goes (however it goes) never stays drawn after it.
+    let mut toasts_shown = true;
 
     // Set wayland fd to non-blocking for poll-based dispatch
     let wl_fd = conn.as_fd().as_raw_fd();
@@ -336,9 +339,10 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>, out: mpsc::UnboundedSen
                     }
                 }
                 NotifyEvent::Close(id) => {
-                    if active.iter().any(|a| a.id == id) {
-                        active.retain(|a| a.id != id);
-                        let _ = out.send(Outcome::Closed(id, CLOSED_BY_CALL));
+                    // Slides out like a dismissed one; the app hears it
+                    // closed once it's gone.
+                    if let Some(a) = active.iter_mut().find(|a| a.id == id) {
+                        a.dismiss(CLOSED_BY_CALL);
                     }
                 }
             }
@@ -377,18 +381,14 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>, out: mpsc::UnboundedSen
         }
 
         // Remove expired (after click handling so dismissed toasts still draw their slide-out)
-        let had_toasts = !active.is_empty();
         for a in active.iter().filter(|a| a.is_expired()) {
             let _ = out.send(Outcome::Closed(a.id, a.reason.unwrap_or(EXPIRED)));
         }
         active.retain(|a| !a.is_expired());
-        if had_toasts && active.is_empty() {
-            needs_clear = true;
-        }
 
         event_queue.flush()?;
 
-        if active.is_empty() && !needs_clear {
+        if active.is_empty() && !toasts_shown {
             std::thread::sleep(std::time::Duration::from_millis(50));
             continue;
         }
@@ -451,6 +451,7 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>, out: mpsc::UnboundedSen
                 );
                 text.render_queued(&gpu, frame.encoder_mut(), &view);
                 frame.submit(&gpu.queue);
+                toasts_shown = !toasts.is_empty();
             }
             Err(SurfaceError::Lost | SurfaceError::Outdated) => {
                 gpu.resize(pw, ph);
@@ -460,7 +461,6 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>, out: mpsc::UnboundedSen
 
         surface.frame(&qh, ());
         surface.commit();
-        needs_clear = false;
     }
 
     Ok(())
