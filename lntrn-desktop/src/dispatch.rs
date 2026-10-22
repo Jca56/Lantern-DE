@@ -262,9 +262,11 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 surface_y,
                 ..
             } => {
+                // Not a repaint by itself: the loop repaints only if the
+                // move changed something drawn (see `input::on_cursor_move`).
                 state.cursor_x = surface_x;
                 state.cursor_y = surface_y;
-                state.frame_done = true;
+                state.pointer_moved = true;
             }
             wl_pointer::Event::Button {
                 button,

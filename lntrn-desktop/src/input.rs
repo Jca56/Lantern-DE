@@ -154,6 +154,8 @@ pub fn on_left_press(
     let _ = dims;
 }
 
+/// Track the pointer. Returns whether anything drawn changed: moving over
+/// bare wallpaper changes nothing, and must not repaint the whole desktop.
 pub fn on_cursor_move(
     state: &mut DesktopState,
     cx: f32,
@@ -161,7 +163,7 @@ pub fn on_cursor_move(
     dims: (i32, i32),
     surface_w: f32,
     surface_h: f32,
-) {
+) -> bool {
     // Widget drag wins over everything else.
     if let Some(wd) = &state.widget_drag {
         let new_x = (cx - wd.offset_x)
@@ -170,25 +172,34 @@ pub fn on_cursor_move(
         let new_y = (cy - wd.offset_y)
             .max(0.0)
             .min((surface_h - crate::rainbow::WIDGET_H).max(0.0));
+        let moved =
+            state.widgets.rainbow_x != Some(new_x) || state.widgets.rainbow_y != Some(new_y);
         state.widgets.rainbow_x = Some(new_x);
         state.widgets.rainbow_y = Some(new_y);
-        return;
+        return moved;
     }
 
     // Update hover state when no drag and no rubber band.
-    state.hover = crate::layout::hit_test(cx, cy, &state.cells);
+    let hover = crate::layout::hit_test(cx, cy, &state.cells);
+    let mut changed = hover != state.hover;
+    state.hover = hover;
 
     // Update menu hover.
     if let Some(menu) = &mut state.menu {
-        menu.hover = render::menu_hit(menu, cx, cy);
+        let h = render::menu_hit(menu, cx, cy);
+        changed |= h != menu.hover;
+        menu.hover = h;
     }
 
     // Update radial-menu hover.
     if state.radial.is_some() {
         let h = radial_menu::hit(state.radial.as_ref().unwrap(), &state.radial_items, cx, cy);
-        state.radial.as_mut().unwrap().hover = h;
+        let radial = state.radial.as_mut().unwrap();
+        changed |= h != radial.hover;
+        radial.hover = h;
     }
 
+    // A dragged icon and a rubber band follow the pointer itself.
     if let Some(drag) = &mut state.drag {
         drag.cursor_x = cx;
         drag.cursor_y = cy;
@@ -196,9 +207,11 @@ pub fn on_cursor_move(
         if dist > DRAG_THRESHOLD {
             drag.moved = true;
         }
+        changed = true;
     }
 
     if let Some(rb) = &mut state.rubber_band {
+        changed = true;
         rb.cur_x = cx;
         rb.cur_y = cy;
         let rect = (
@@ -216,6 +229,7 @@ pub fn on_cursor_move(
     }
 
     let _ = dims;
+    changed
 }
 
 pub fn on_left_release(state: &mut DesktopState, _cx: f32, _cy: f32, _dims: (i32, i32)) {

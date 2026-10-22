@@ -72,6 +72,9 @@ pub struct State {
     pub cursor_x: f64,
     pub cursor_y: f64,
     pub pointer_in_surface: bool,
+    /// The pointer moved since the loop last looked; repaints only if that
+    /// changed something drawn.
+    pub pointer_moved: bool,
     pub pointer_serial: u32,
     pub enter_serial: u32,
     pub left_pressed: bool,
@@ -106,6 +109,7 @@ impl State {
             cursor_x: 0.0,
             cursor_y: 0.0,
             pointer_in_surface: false,
+            pointer_moved: false,
             pointer_serial: 0,
             enter_serial: 0,
             left_pressed: false,
@@ -289,6 +293,17 @@ pub fn run() -> Result<()> {
         if let Err(e) = dispatch_with_timeout(&mut event_queue, &mut state, timeout) {
             tracing::error!("[desktop] dispatch error: {e}");
             break;
+        }
+
+        // Pointer motion repaints only when it changed something drawn
+        // (hover, a drag, a menu). Repainting on every motion event drew the
+        // whole desktop at the refresh rate and woke the GPU to full clocks.
+        if std::mem::take(&mut state.pointer_moved) && state.pointer_in_surface {
+            let (w, h) = (state.width as f32, state.height as f32);
+            let (cx, cy) = (state.cursor_x as f32, state.cursor_y as f32);
+            if input::on_cursor_move(&mut app, cx, cy, grid_dims(w, h), w, h) {
+                state.frame_done = true;
+            }
         }
 
         // Periodically drain inotify (do this even if frame_done is unset so we
