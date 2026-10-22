@@ -60,6 +60,11 @@ pub struct WallpaperState {
 }
 
 impl WallpaperState {
+    /// The size of every output-sized buffer held, for the VRAM ledger.
+    pub fn buffer_sizes(&self) -> impl Iterator<Item = (i32, i32)> + '_ {
+        self.cache.keys().map(|(_, w, h)| (*w, *h))
+    }
+
     /// Read the configured paths. No decoding happens here (or anywhere on
     /// the main thread) — buffers are produced on demand by `buffer_for`.
     pub fn load_from_config() -> Self {

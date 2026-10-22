@@ -451,6 +451,8 @@ pub fn init_udev(
         },
     )?;
 
+    crate::vram_ledger::install(&event_loop.handle());
+
     event_loop.run(None, state, |state| {
         let loop_start = if state.debug_counters.enabled {
             state.debug_counters.loop_iters += 1;

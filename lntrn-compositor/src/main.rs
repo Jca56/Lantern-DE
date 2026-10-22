@@ -46,6 +46,7 @@ mod switcher;
 mod text_inject;
 pub mod udev;
 mod udev_device;
+mod vram_ledger;
 mod vrr;
 mod wallpaper;
 mod window_ext;

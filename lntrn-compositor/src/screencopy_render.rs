@@ -38,6 +38,13 @@ pub struct OffscreenCapture {
     tracker: OutputDamageTracker,
 }
 
+impl OffscreenCapture {
+    /// Size of the capture texture, for the VRAM ledger.
+    pub fn size(&self) -> Size<i32, BufferCoord> {
+        self.texture.size()
+    }
+}
+
 /// Where an in-flight readback's pixels will come from at delivery time.
 enum InflightKind {
     /// Raw PBO readback of the just-rendered framebuffer (plain captures).
@@ -395,6 +402,11 @@ fn deliver_pixels(pending: Vec<PendingScreencopy>, pixels: &[u8], phys_w: usize,
 }
 
 impl ScreencopyPbo {
+    /// Bytes the GL buffer object holds, for the VRAM ledger.
+    pub fn bytes(&self) -> u64 {
+        self.capacity as u64
+    }
+
     /// Free the GL buffer object and fail any capture still waiting on it.
     /// Called when its output goes away — the raw `pbo` id is otherwise
     /// leaked on the GPU with every unplug.
