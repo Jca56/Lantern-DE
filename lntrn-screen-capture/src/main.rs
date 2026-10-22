@@ -1,6 +1,7 @@
 //! Lantern's screen recorder. Super+Print brings up the picker on every
 //! monitor; the area chosen there is recorded, H.264 on the GPU's own
-//! video engine (`lntrn-video`) into an MP4 in `~/Videos`, under a badge
+//! video engine (`lntrn-video`) with the desktop's sound and the mic as
+//! AAC (`lntrn-audio`), into a fragmented MP4 in `~/Videos`, under a badge
 //! with Stop. Super+Print again stops it too. Once it's saved, a
 //! notification offers to open it. On Lantern UI 2.
 //!
@@ -10,12 +11,15 @@
 //!   or a whole screen, on any monitor.
 //! - `capture/` — the screen, through wlr-screencopy.
 //! - `record.rs` — the recording's thread: frames to the encoder, the file.
+//! - `audio/` — the sound: its sources, mixed and encoded, kept in sync.
 //! - `badge.rs` — the badge while it records.
 //! - `ipc.rs` — the socket that lets one hotkey start and stop.
 //! - `control.rs` — stop, and waking the UI, across threads.
 //! - `notify.rs` — the notification at the end; `files.rs` — names, sizes.
 //! - `look.rs` — the desktop's look, and how the surfaces are made.
+//! - `settings.rs` — the sound switches, kept between recordings.
 
+mod audio;
 mod badge;
 mod capture;
 mod control;
@@ -25,6 +29,7 @@ mod look;
 mod notify;
 mod picker;
 mod record;
+mod settings;
 
 use std::path::PathBuf;
 
@@ -65,6 +70,9 @@ fn parse_args() -> Result<Args, String> {
 
 fn main() {
     lntrn_kit::startup::log_panics(look::APP_ID);
+    if std::env::args().nth(1).as_deref() == Some(audio::desktop::FLAG) {
+        audio::desktop::serve();
+    }
     let args = parse_args().unwrap_or_else(|e| {
         eprintln!("lntrn-screen-capture: {e}\n\n{USAGE}");
         std::process::exit(2);
@@ -81,12 +89,13 @@ fn main() {
         Err(e) => return notify::failed(&e),
     };
     let desktop = Desktop::read();
-    let Some(choice) = picker::pick(&monitors, &desktop) else {
+    let Some(choice) = picker::pick(&monitors, &desktop, settings::load()) else {
         log_info!("screen-capture: cancelled");
         return;
     };
+    settings::save(choice.sound);
     let status = Status::new();
-    let job = Job { output: choice.output.clone(), area: choice.area, path: args.path.unwrap_or_else(files::default_path), fps: args.fps };
+    let job = Job { output: choice.output.clone(), area: choice.area, path: args.path.unwrap_or_else(files::default_path), fps: args.fps, sound: choice.sound };
     let recording = record::start(job, status.clone());
     // Until the file is saved. Without a badge (the compositor took it),
     // the recording goes on until Super+Print stops it.

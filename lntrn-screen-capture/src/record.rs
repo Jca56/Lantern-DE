@@ -5,24 +5,36 @@
 //! Frames are asked for at most `fps` times a second, and after the first
 //! only once the screen changed, so each is kept on screen as long as it
 //! really was: a frame's length is known when the next one comes, so one
-//! is always held back, in the other of two textures.
+//! is always held back, in the other of two textures. A screen still for
+//! a second puts the held frame in anyway, so keyframes (every two
+//! seconds) and the file's fragments keep coming. The sound (`audio`)
+//! goes in beside the frames as it's mixed; the file is fragmented, so a
+//! recording cut short by a crash still plays.
 
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
+use lntrn_audio::aac::FRAME_LEN;
 use lntrn_core::{log_info, log_warn};
+use lntrn_video::mp4::Layout;
 use lntrn_video::wgpu;
 use lntrn_video::{EncoderConfig, VideoEngine, VideoWriter};
 
-use crate::capture::Screen;
+use crate::audio::{self, Sound, Sources};
+use crate::capture::{Screen, Shot};
 use crate::control;
 
 /// Failed copies in a row before the recording gives up.
 const RETRIES: u32 = 5;
+/// A screen still this long puts the frame held in again.
+const STILL: Duration = Duration::from_secs(1);
+/// The longest from one keyframe to the next: where a player can seek
+/// to, and where each fragment of the file starts.
+const KEY_EVERY: Duration = Duration::from_secs(2);
 /// The smallest area worth recording, a side, in pixels.
 pub const SMALLEST: u32 = 64;
 
@@ -55,6 +67,7 @@ pub struct Job {
     pub area: Area,
     pub path: PathBuf,
     pub fps: u32,
+    pub sound: Sources,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,8 +121,9 @@ pub struct Saved {
     pub path: PathBuf,
     pub seconds: f64,
     pub bytes: u64,
-    /// Why it ended before it was stopped, when it did.
-    pub cut_short: Option<String>,
+    /// What went wrong on the way: it ended before it was stopped, a
+    /// source of sound never came.
+    pub notes: Vec<String>,
 }
 
 /// Start recording on a thread of its own. Its result says what was saved.
@@ -129,6 +143,8 @@ pub fn start(job: Job, status: Arc<Status>) -> JoinHandle<Result<Saved, String>>
 }
 
 fn record(job: &Job, status: &Status) -> Result<Saved, String> {
+    // The sound first, so its sources are listening by the first frame.
+    let (sound, mut notes) = if job.sound.any() { Sound::start(job.sound) } else { (None, Vec::new()) };
     let mut screen = Screen::open(&job.output)?;
     let area = job.area.fit(screen.width, screen.height)?;
     let (_adapter, device, queue) = lntrn_video::open_headless().map_err(|e| format!("the GPU: {e}"))?;
@@ -140,8 +156,11 @@ fn record(job: &Job, status: &Status) -> Result<Saved, String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     let fps = job.fps.clamp(1, 240);
-    let mut writer = VideoWriter::create(&job.path, &engine, EncoderConfig::new(area.w, area.h, fps)).map_err(|e| format!("the encoder: {e}"))?;
-    log_info!("screen-capture: {}×{} at ({}, {}) of {}, {fps} fps, to {}", area.w, area.h, area.x, area.y, job.output, job.path.display());
+    // Keyframes go by time (`KEY_EVERY`), not by frames counted: frames
+    // come only when the screen changes.
+    let config = EncoderConfig { keyframe_interval: u32::MAX, ..EncoderConfig::new(area.w, area.h, fps) };
+    let mut writer = VideoWriter::create_with(&job.path, &engine, config, sound.as_ref().map(Sound::track), Layout::Fragmented).map_err(|e| format!("the encoder: {e}"))?;
+    log_info!("screen-capture: {}×{} at ({}, {}) of {}, {fps} fps, sound {:?}, to {}", area.w, area.h, area.x, area.y, job.output, job.sound, job.path.display());
 
     let pictures = [picture(&device, area), picture(&device, area)];
     let interval = Duration::from_secs_f64(1.0 / f64::from(fps));
@@ -152,7 +171,9 @@ fn record(job: &Job, status: &Status) -> Result<Saved, String> {
     let mut asked: Option<Instant> = None;
     let mut failed = 0;
     let mut frames = 0u64;
+    let mut last_key = Duration::ZERO;
     let mut cut_short = None;
+    let rate = || sound.as_ref().map_or(1.0, Sound::rate);
     loop {
         if let Some(at) = asked
             && !wait_until(at + interval)
@@ -160,9 +181,21 @@ fn record(job: &Job, status: &Status) -> Result<Saved, String> {
             break;
         }
         asked = Some(Instant::now());
-        let grab = match screen.grab(held.is_some()) {
-            Ok(Some(grab)) => grab,
-            Ok(None) => break,
+        let grab = match screen.grab(held.is_some().then_some(STILL)) {
+            Ok(Shot::Frame(grab)) => grab,
+            Ok(Shot::Stopped) => break,
+            Ok(Shot::Still) => {
+                // Nothing changed: the frame held goes in for as long as it
+                // has shown, and is held on.
+                if let Some((slot, at)) = held {
+                    let now = audio::now();
+                    put_frame(&mut writer, &pictures[slot], (at, now), interval, rate(), &mut last_key)?;
+                    held = Some((slot, now));
+                    frames += 1;
+                }
+                put_sound(&mut writer, sound.as_ref())?;
+                continue;
+            }
             Err(e) if failed < RETRIES => {
                 failed += 1;
                 log_warn!("screen-capture: {e}; trying again");
@@ -177,16 +210,21 @@ fn record(job: &Job, status: &Status) -> Result<Saved, String> {
         upload(&queue, &pictures[next], &screen, area, grab.flipped, &mut scratch);
         match held {
             Some((slot, at)) => {
-                writer.add(&pictures[slot], length(at, grab.at, interval)).map_err(|e| format!("encoding: {e}"))?;
+                put_frame(&mut writer, &pictures[slot], (at, grab.at), interval, rate(), &mut last_key)?;
                 frames += 1;
             }
             None => {
                 *status.started.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
+                if let Some(s) = &sound {
+                    s.begin(grab.at);
+                }
+                last_key = grab.at;
                 status.set(Phase::Recording);
             }
         }
         held = Some((next, grab.at));
         next = 1 - next;
+        put_sound(&mut writer, sound.as_ref())?;
         // Lets wgpu take back the staging memory of finished uploads.
         let _ = device.poll(wgpu::PollType::Poll);
     }
@@ -194,9 +232,17 @@ fn record(job: &Job, status: &Status) -> Result<Saved, String> {
     let Some((slot, at)) = held else {
         return Err(cut_short.unwrap_or_else(|| "stopped before the first frame".into()));
     };
-    // The last frame stays until the moment it was stopped.
-    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
-    writer.add(&pictures[slot], length(at, now, interval)).map_err(|e| format!("encoding: {e}"))?;
+    // The last frame stays until the moment it was stopped, and the sound
+    // goes on to it.
+    let end = audio::now();
+    put_frame(&mut writer, &pictures[slot], (at, end), interval, rate(), &mut last_key)?;
+    if let Some(sound) = sound {
+        let (units, said) = sound.finish(end);
+        for unit in units {
+            writer.add_audio(&unit, FRAME_LEN as u32).map_err(|e| format!("writing the sound: {e}"))?;
+        }
+        notes.extend(said);
+    }
     let mut out = writer.finish().map_err(|e| format!("finishing the file: {e}"))?;
     out.flush().map_err(|e| format!("writing {}: {e}", job.path.display()))?;
     let file = out.into_inner().map_err(|e| format!("writing {}: {}", job.path.display(), e.error()))?;
@@ -204,7 +250,29 @@ fn record(job: &Job, status: &Status) -> Result<Saved, String> {
     let bytes = file.metadata().map(|m| m.len()).unwrap_or(0);
     let seconds = status.elapsed().as_secs_f64();
     log_info!("screen-capture: {} frames, {seconds:.1} s, {bytes} bytes", frames + 1);
-    Ok(Saved { path: job.path.clone(), seconds, bytes, cut_short })
+    if let Some(why) = cut_short {
+        notes.insert(0, format!("It stopped early: {why}"));
+    }
+    Ok(Saved { path: job.path.clone(), seconds, bytes, notes })
+}
+
+/// The frame held, shown from `span.0` to `span.1` (the compositor's
+/// clock), into the file: its length stretched by `rate` to the sound
+/// card's clock, and a keyframe when the last was long enough ago.
+fn put_frame(writer: &mut VideoWriter, texture: &wgpu::Texture, (from, to): (Duration, Duration), interval: Duration, rate: f64, last_key: &mut Duration) -> Result<(), String> {
+    if from.saturating_sub(*last_key) >= KEY_EVERY {
+        writer.force_keyframe();
+        *last_key = from;
+    }
+    writer.add(texture, length(from, to, interval).mul_f64(rate)).map_err(|e| format!("encoding: {e}"))
+}
+
+/// The sound mixed since last time, into the file.
+fn put_sound(writer: &mut VideoWriter, sound: Option<&Sound>) -> Result<(), String> {
+    for unit in sound.into_iter().flat_map(Sound::units) {
+        writer.add_audio(&unit, FRAME_LEN as u32).map_err(|e| format!("writing the sound: {e}"))?;
+    }
+    Ok(())
 }
 
 /// How long a frame that came `from` stayed until the next came `to`

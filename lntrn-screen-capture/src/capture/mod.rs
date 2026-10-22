@@ -4,14 +4,15 @@
 //!
 //! A frame is the whole monitor (the compositor copies no smaller
 //! region); the recorder takes its area straight out of the buffer. The
-//! first frame is copied as it is; after that `damage` waits for the
-//! screen to change, so a still screen costs nothing. Every wait looks at
-//! the stop flag ten times a second.
+//! first frame is copied as it is; after that a frame waits for the
+//! screen to change, so a still screen costs nothing, and a screen still
+//! for long enough says so ([`Shot::Still`]). Every wait looks at the
+//! stop flag ten times a second.
 
 mod wl;
 
 use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use wayland_client::globals::{GlobalList, registry_queue_init};
 use wayland_client::protocol::{wl_buffer, wl_output, wl_shm, wl_shm_pool};
@@ -32,6 +33,23 @@ pub struct Monitor {
     pub name: String,
     pub width: u32,
     pub height: u32,
+}
+
+/// What came of asking for a frame.
+pub enum Shot {
+    /// A frame, copied into [`Screen::pixels`].
+    Frame(Grab),
+    /// The screen didn't change for as long as it was waited for.
+    Still,
+    /// Stopped while waiting.
+    Stopped,
+}
+
+/// How a wait ended.
+enum Waited {
+    Done,
+    Stopped,
+    Late,
 }
 
 /// One frame, copied into [`Screen::pixels`].
@@ -108,9 +126,9 @@ impl Screen {
         let first = manager.capture_output(1, &output, &qh, ());
         // Before version 3 there is no `buffer_done`: the offer is the end.
         let v3 = manager.version() >= 3;
-        let heard = Probe { conn: &conn, queue: &mut queue, state: &mut state }.wait(|f| f.failed || if v3 { f.buffer_done } else { f.layout.is_some() });
+        let heard = Probe { conn: &conn, queue: &mut queue, state: &mut state }.wait(|f| f.failed || if v3 { f.buffer_done } else { f.layout.is_some() }, None);
         first.destroy();
-        if !heard? {
+        if !matches!(heard?, Waited::Done) {
             return Err("stopped".into());
         }
         if state.frame.failed {
@@ -137,20 +155,20 @@ impl Screen {
         unsafe { std::slice::from_raw_parts(self.map, self.len) }
     }
 
-    /// Copy a frame in: at once, or with `damage` once the screen has
-    /// changed. `None` when stopped while waiting.
-    pub fn grab(&mut self, damage: bool) -> Result<Option<Grab>, String> {
+    /// Copy a frame in: at once, or once the screen has changed, waiting
+    /// at most `patience` for it to.
+    pub fn grab(&mut self, patience: Option<Duration>) -> Result<Shot, String> {
         self.state.frame = wl::Frame::default();
         let frame = self.manager.capture_output(1, &self.output, &self.qh, ());
-        let result = self.copy(&frame, damage);
+        let result = self.copy(&frame, patience);
         frame.destroy();
         result
     }
 
-    fn copy(&mut self, frame: &ZwlrScreencopyFrameV1, damage: bool) -> Result<Option<Grab>, String> {
+    fn copy(&mut self, frame: &ZwlrScreencopyFrameV1, patience: Option<Duration>) -> Result<Shot, String> {
         let v3 = self.manager.version() >= 3;
-        if !self.probe().wait(|f| f.failed || if v3 { f.buffer_done } else { f.layout.is_some() })? {
-            return Ok(None);
+        if !matches!(self.probe().wait(|f| f.failed || if v3 { f.buffer_done } else { f.layout.is_some() }, None)?, Waited::Done) {
+            return Ok(Shot::Stopped);
         }
         if self.state.frame.failed {
             return Err("the compositor wouldn't copy a frame".into());
@@ -158,17 +176,18 @@ impl Screen {
         if self.state.frame.layout != Some(self.layout) {
             return Err("the monitor changed its size".into());
         }
-        if damage {
-            frame.copy_with_damage(&self.buffer);
-        } else {
-            frame.copy(&self.buffer);
+        match patience {
+            Some(_) => frame.copy_with_damage(&self.buffer),
+            None => frame.copy(&self.buffer),
         }
-        if !self.probe().wait(|f| f.failed || f.ready.is_some())? {
-            return Ok(None);
+        match self.probe().wait(|f| f.failed || f.ready.is_some(), patience.map(|p| Instant::now() + p))? {
+            Waited::Done => {}
+            Waited::Stopped => return Ok(Shot::Stopped),
+            Waited::Late => return Ok(Shot::Still),
         }
         let f = &self.state.frame;
         match f.ready {
-            Some(at) if !f.failed => Ok(Some(Grab { at, flipped: f.flipped })),
+            Some(at) if !f.failed => Ok(Shot::Frame(Grab { at, flipped: f.flipped })),
             _ => Err("the compositor couldn't copy a frame".into()),
         }
     }
@@ -197,16 +216,19 @@ struct Probe<'a> {
 }
 
 impl Probe<'_> {
-    /// Read events until `done` says the frame is where it should be.
-    /// `false` when stopped first.
-    fn wait(&mut self, done: impl Fn(&wl::Frame) -> bool) -> Result<bool, String> {
+    /// Read events until `done` says the frame is where it should be:
+    /// unless stopped first, or `deadline` passes.
+    fn wait(&mut self, done: impl Fn(&wl::Frame) -> bool, deadline: Option<Instant>) -> Result<Waited, String> {
         loop {
             self.queue.dispatch_pending(self.state).map_err(|e| format!("the compositor's events: {e}"))?;
             if done(&self.state.frame) {
-                return Ok(true);
+                return Ok(Waited::Done);
             }
             if control::stopped() {
-                return Ok(false);
+                return Ok(Waited::Stopped);
+            }
+            if deadline.is_some_and(|d| Instant::now() >= d) {
+                return Ok(Waited::Late);
             }
             self.conn.flush().map_err(|e| format!("talking to the compositor: {e}"))?;
             self.read(LOOK)?;

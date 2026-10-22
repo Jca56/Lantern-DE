@@ -15,6 +15,7 @@ use lntrn_kit::desktop::Desktop;
 use lntrn_math::{Rect, Vec2};
 use lntrn_ui::{Action, AreaCx, CursorIcon, Host, HostCx, Key, NewWindow, Shell, ShellRequest, Ui};
 
+use crate::audio::Sources;
 use crate::capture::Monitor;
 use crate::control;
 use crate::look;
@@ -22,19 +23,21 @@ use crate::record::{Area, SMALLEST};
 use area::Edge;
 use draw::{Bar, Press};
 
-/// What to record: where, on which monitor.
+/// What to record: where, on which monitor, and with what sound.
 pub struct Choice {
     pub output: String,
     pub area: Area,
+    pub sound: Sources,
 }
 
-/// Show the picker on every monitor; `None` when it was cancelled.
-pub fn pick(monitors: &[Monitor], desktop: &Desktop) -> Option<Choice> {
+/// Show the picker on every monitor, its sound switches set as `sound`
+/// says; `None` when it was cancelled.
+pub fn pick(monitors: &[Monitor], desktop: &Desktop, sound: Sources) -> Option<Choice> {
     let first = monitors.first()?;
     let chosen = Arc::new(Mutex::new(None));
     let mut shell = Shell::new(Editor::Screen(0));
     shell.prefs.theme = look::theme(desktop);
-    lntrn_app::run(look::config(desktop, look::picker_layer(&first.name)), Picker::new(monitors, chosen.clone()), shell);
+    lntrn_app::run(look::config(desktop, look::picker_layer(&first.name)), Picker::new(monitors, sound, chosen.clone()), shell);
     chosen.lock().unwrap_or_else(|e| e.into_inner()).take()
 }
 
@@ -82,13 +85,15 @@ struct Picker {
     drag: Drag,
     /// Each monitor's windows, bottom to top, while picking one.
     windows: Vec<Vec<windows::Win>>,
+    /// The sound switches.
+    sound: Sources,
     chosen: Arc<Mutex<Option<Choice>>>,
     /// Quitting: nothing more to draw.
     done: bool,
 }
 
 impl Picker {
-    fn new(monitors: &[Monitor], chosen: Arc<Mutex<Option<Choice>>>) -> Picker {
+    fn new(monitors: &[Monitor], sound: Sources, chosen: Arc<Mutex<Option<Choice>>>) -> Picker {
         Picker {
             editors: (0..monitors.len()).map(|i| Editor::Screen(i as u8)).collect(),
             surfaces: monitors.iter().map(|m| Rect::from_xywh(0.0, 0.0, f64::from(m.width), f64::from(m.height))).collect(),
@@ -98,6 +103,7 @@ impl Picker {
             sel: None,
             drag: Drag::None,
             windows: Vec::new(),
+            sound,
             chosen,
             done: false,
         }
@@ -121,7 +127,7 @@ impl Picker {
         ui.state.request_redraw_after(0.5);
         let surface = ui.clip();
         self.surfaces[i] = surface;
-        let was = (self.sel.map(|(s, _)| s), self.mode);
+        let was = (self.sel.map(|(s, _)| s), self.mode, self.sound);
 
         if ui.state.take_key(|k| k.key == Key::Escape && k.mods.is_empty()).is_some() {
             return self.finish(None, cx);
@@ -155,7 +161,8 @@ impl Picker {
         }
         draw::hint(ui, bar.panel, self.hint());
         let mut mode = self.mode as usize;
-        let press = draw::bar(ui, &bar, &mut mode, self.choice().is_some());
+        let can_record = self.choice().is_some();
+        let press = draw::bar(ui, &bar, &mut mode, &mut self.sound, can_record);
         if mode != self.mode as usize {
             self.set_mode(if mode == 1 { Mode::Window } else { Mode::Area });
         }
@@ -169,7 +176,7 @@ impl Picker {
             None => {}
         }
         // The other monitors show what changed on this one.
-        if (self.sel.map(|(s, _)| s), self.mode) != was {
+        if (self.sel.map(|(s, _)| s), self.mode, self.sound) != was {
             control::wake();
         }
     }
@@ -276,7 +283,7 @@ impl Picker {
     fn choice(&self) -> Option<Choice> {
         let (i, r) = self.sel?;
         let area = self.on_monitor(i, r);
-        (area.w >= SMALLEST && area.h >= SMALLEST).then(|| Choice { output: self.monitors[i].name.clone(), area })
+        (area.w >= SMALLEST && area.h >= SMALLEST).then(|| Choice { output: self.monitors[i].name.clone(), area, sound: self.sound })
     }
 
     fn finish(&mut self, choice: Option<Choice>, cx: &mut AreaCx<()>) {

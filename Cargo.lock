@@ -2415,6 +2415,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "lntrn-audio"
+version = "0.2.0"
+dependencies = [
+ "lntrn-core",
+]
+
+[[package]]
 name = "lntrn-calculator"
 version = "0.1.0"
 dependencies = [
@@ -2854,9 +2861,12 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "lntrn-app",
+ "lntrn-audio",
  "lntrn-core",
+ "lntrn-data",
  "lntrn-kit",
  "lntrn-math",
+ "lntrn-sys",
  "lntrn-ui 0.2.0",
  "lntrn-video",
  "wayland-client",

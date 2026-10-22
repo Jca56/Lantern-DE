@@ -14,13 +14,10 @@ const APP: &str = "Screen Capture";
 pub fn saved(saved: &Saved) {
     let name = saved.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let mut body = format!("{name}\n{} · {}", files::clock(saved.seconds), files::size(saved.bytes));
-    let title = match &saved.cut_short {
-        Some(why) => {
-            body.push_str(&format!("\nIt stopped early: {why}"));
-            "Recording saved, cut short"
-        }
-        None => "Recording saved",
-    };
+    for note in &saved.notes {
+        body.push_str(&format!("\n{note}"));
+    }
+    let title = if saved.notes.is_empty() { "Recording saved" } else { "Recording saved, with trouble" };
     let actions = ["-A", "default=Open", "-A", "open=Open", "-A", "folder=Show in folder"];
     let Ok(out) = Command::new("notify-send").args(["-a", APP]).args(actions).args([title, &body]).output() else { return };
     let folder = saved.path.parent().unwrap_or(Path::new("/"));
