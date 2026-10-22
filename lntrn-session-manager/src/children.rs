@@ -175,9 +175,7 @@ impl Children {
             // the compositor and go a moment before it is seen to be gone.
             // Whether this was a crash shows in what follows.
             log(&format!("🏮 {} (pid {pid}) ended: {exit}", daemon.name));
-            // A clean exit is its own decision and is left alone. That is
-            // also what an lntrn-desktop from before `--foreground` does: it
-            // forks, and the parent started here exits at once.
+            // A clean exit is its own decision and is left alone.
             if exit.is_clean() {
                 return;
             }

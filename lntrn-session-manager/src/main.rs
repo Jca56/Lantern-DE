@@ -35,7 +35,6 @@ extern "C" fn handle_signal(_: i32) {
 /// started again too; its own restarts (a new primary monitor, Quick Kill)
 /// exec in place, keeping its pid.
 const DAEMONS: &[(&str, &[&str])] = &[
-    ("lntrn-desktop", &["--foreground"]),
     ("lntrn-portal", &[]),
     ("lntrn-notifyd", &[]),
 ];
