@@ -50,3 +50,10 @@ fn an_entry_without_a_name_or_a_command_is_no_application() {
     // Keys outside the group do not count.
     assert!(parse_desktop_unfiltered(path, "[Other]\nName=N\nExec=prog\n").is_none());
 }
+
+#[test]
+fn lantern_documents_have_types_of_their_own() {
+    assert_eq!(mime_from_extension("lstudio"), "application/x-lstudio");
+    assert_eq!(mime_from_extension("lcut"), "application/x-lcut");
+    assert_eq!(mime_from_extension("LCUT"), "application/x-lcut");
+}

@@ -268,6 +268,7 @@ fn mime_from_extension(ext: &str) -> String {
         "lnote" => "application/x-lnote",
         "lantern" => "application/x-lantern",
         "lstudio" => "application/x-lstudio",
+        "lcut" => "application/x-lcut",
         "md" | "markdown" => "text/markdown",
         "html" | "htm" => "text/html",
         "css" => "text/css",
