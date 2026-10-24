@@ -106,8 +106,15 @@ pub fn render_frame(
         crate::visualizer::draw_bars(painter, app.visualizer.bars(), canvas, s, stops);
     } else if let Some(tex) = &app.video_texture {
         if app.video_width > 0 && app.video_height > 0 {
-            let fit = aspect_fit(app.video_width, app.video_height, canvas);
-            let mut draw = TextureDraw::new(tex, fit.x, fit.y, fit.w, fit.h);
+            let facing = app.video_orientation;
+            let (shown_w, shown_h) = if facing.swaps_axes() {
+                (app.video_height, app.video_width)
+            } else {
+                (app.video_width, app.video_height)
+            };
+            let fit = aspect_fit(shown_w, shown_h, canvas);
+            let mut draw = TextureDraw::new(tex, fit.x, fit.y, fit.w, fit.h)
+                .oriented(facing.quarter_turns, facing.mirror);
             draw.clip = Some([canvas.x, canvas.y, canvas.w, canvas.h]);
             tex_draws.push(draw);
         }

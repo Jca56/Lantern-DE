@@ -1,55 +1,8 @@
 use bytemuck::{Pod, Zeroable};
 use lntrn_gfx::GpuContext;
 
-// ── Shader ──────────────────────────────────────────────────────────────────
-
-const SHADER_TEX: &str = r#"
-struct Globals {
-    screen_size: vec2<f32>,
-    _pad: vec2<f32>,
-};
-
-@group(0) @binding(0) var<uniform> globals: Globals;
-@group(1) @binding(0) var tex: texture_2d<f32>;
-@group(1) @binding(1) var tex_sampler: sampler;
-
-struct InstanceInput {
-    @location(0) bounds: vec4<f32>,
-    @location(1) uv_rect: vec4<f32>,
-    @location(2) tint: vec4<f32>,
-};
-
-struct VOut {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-    @location(1) tint: vec4<f32>,
-};
-
-@vertex
-fn vs_main(@builtin(vertex_index) vi: u32, inst: InstanceInput) -> VOut {
-    let corner = vec2<f32>(f32(vi & 1u), f32((vi >> 1u) & 1u));
-    let px = inst.bounds.xy + corner * inst.bounds.zw;
-    let ndc = vec2<f32>(
-        px.x / globals.screen_size.x * 2.0 - 1.0,
-        1.0 - px.y / globals.screen_size.y * 2.0,
-    );
-    let uv = inst.uv_rect.xy + corner * (inst.uv_rect.zw - inst.uv_rect.xy);
-
-    var out: VOut;
-    out.position = vec4<f32>(ndc, 0.0, 1.0);
-    out.uv = uv;
-    out.tint = inst.tint;
-    return out;
-}
-
-@fragment
-fn fs_main(in: VOut) -> @location(0) vec4<f32> {
-    let texel = textureSample(tex, tex_sampler, in.uv);
-    let color = texel * in.tint;
-    // Premultiply for correct blending
-    return vec4<f32>(color.rgb * color.a, color.a);
-}
-"#;
+mod shader;
+use shader::SHADER_TEX;
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -59,6 +12,7 @@ struct TexInstance {
     bounds: [f32; 4],
     uv_rect: [f32; 4],
     tint: [f32; 4],
+    orient: u32,
 }
 
 #[repr(C)]
@@ -91,6 +45,11 @@ pub struct TextureDraw<'a> {
     pub uv: [f32; 4],
     /// Optional clip rectangle `[x, y, w, h]` in physical pixels.
     pub clip: Option<[f32; 4]>,
+    /// Quarter turns clockwise (0-3) the texture is shown at, e.g. a video
+    /// recorded on its side. The rect is the turned picture's.
+    pub quarter_turns: u8,
+    /// After the turn, mirror the picture left to right.
+    pub mirror: bool,
 }
 
 impl<'a> TextureDraw<'a> {
@@ -105,6 +64,8 @@ impl<'a> TextureDraw<'a> {
             opacity: 1.0,
             uv: [0.0, 0.0, 1.0, 1.0],
             clip: None,
+            quarter_turns: 0,
+            mirror: false,
         }
     }
 
@@ -115,6 +76,14 @@ impl<'a> TextureDraw<'a> {
 
     pub fn uv(mut self, u0: f32, v0: f32, u1: f32, v1: f32) -> Self {
         self.uv = [u0, v0, u1, v1];
+        self
+    }
+
+    /// Show the texture turned `quarter_turns` clockwise, then mirrored left
+    /// to right when `mirror` (the order camera orientation tags use).
+    pub fn oriented(mut self, quarter_turns: u8, mirror: bool) -> Self {
+        self.quarter_turns = quarter_turns % 4;
+        self.mirror = mirror;
         self
     }
 }
@@ -223,6 +192,11 @@ impl TexturePass {
                     format: wgpu::VertexFormat::Float32x4,
                     offset: 32,
                     shader_location: 2,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Uint32,
+                    offset: 48,
+                    shader_location: 3,
                 },
             ],
         };
@@ -432,6 +406,7 @@ impl TexturePass {
                 bounds: [d.x, d.y, d.w, d.h],
                 uv_rect: d.uv,
                 tint: [1.0, 1.0, 1.0, d.opacity],
+                orient: (d.quarter_turns % 4) as u32 | (d.mirror as u32) << 2,
             })
             .collect();
 

@@ -1,9 +1,14 @@
 //! The audio side of the pipeline: a bin that plays the sound and, on a
 //! second branch, feeds the visualizer's FFT.
 //!
-//! ghostpad-sink → tee ┬→ queue → autoaudiosink   (playback)
-//!                     └→ queue → audioconvert → audioresample →
-//!                          capsfilter(f32 mono 44.1k) → appsink (FFT)
+//! ghostpad-sink → audiobuffersplit → tee ┬→ queue → autoaudiosink (playback)
+//!                                        └→ queue → audioconvert → audioresample →
+//!                                             capsfilter(f32 mono 44.1k) → appsink (FFT)
+//!
+//! The split is there for cameras: a Sony ZV-E10 stores its PCM in
+//! half-second chunks, and pipewiresink renders each buffer exactly at its
+//! timestamp, so a chunk that lands a hair late costs a whole PipeWire
+//! cycle of silence (a click). Small buffers keep it fed.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -19,6 +24,8 @@ use crate::fft::SpectrumAnalyzer;
 const FFT_SIZE: usize = 1024;
 const FFT_SAMPLE_RATE: u32 = 44_100;
 const FFT_UPDATE_HZ: u32 = 30;
+/// Longest buffer handed on to the sink and the FFT, as a fraction of a second.
+const SPLIT_SECONDS: (i32, i32) = (1, 100);
 
 pub const SPECTRUM_BANDS: usize = 64;
 
@@ -116,9 +123,24 @@ pub fn build(waker: Waker) -> Result<AudioTap> {
     Element::link_many([&tee, &queue_play, &sink])?;
     Element::link_many([&tee, &queue_fft, &audioconvert, &audioresample, appsink_elem])?;
 
-    let pad = tee
+    // audiobuffersplit lives in gst-plugins-bad; without it the bin still
+    // plays, just with chunky camera audio arriving as it is.
+    let head = match make("audiobuffersplit") {
+        Ok(split) => {
+            let (num, den) = SPLIT_SECONDS;
+            split.set_property("output-buffer-duration", gst::Fraction::new(num, den));
+            bin.add(&split)?;
+            split.link(&tee)?;
+            split
+        }
+        Err(e) => {
+            eprintln!("[media-player] {e}; audio buffers go to the sink unsplit");
+            tee.clone()
+        }
+    };
+    let pad = head
         .static_pad("sink")
-        .ok_or_else(|| anyhow!("No sink pad on tee"))?;
+        .ok_or_else(|| anyhow!("No sink pad on the audio bin's head"))?;
     bin.add_pad(&gst::GhostPad::with_target(&pad)?)
         .map_err(|e| anyhow!("Failed to add ghost pad: {e}"))?;
 

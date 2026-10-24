@@ -9,6 +9,7 @@ mod transport;
 pub use transport::LoopMode;
 
 use crate::event_pump::Waker;
+use crate::orientation::Orientation;
 use crate::pipeline::MediaPipeline;
 use crate::position_store;
 use crate::visualizer::Visualizer;
@@ -36,8 +37,10 @@ const OSD_FADE: Duration = Duration::from_millis(300);
 pub struct App {
     pub pipeline: Option<MediaPipeline>,
     pub video_texture: Option<GpuTexture>,
+    /// The frame as decoded; `video_orientation` turns it upright on screen.
     pub video_width: u32,
     pub video_height: u32,
+    pub video_orientation: Orientation,
     pub file_path: Option<PathBuf>,
     pub file_name: String,
     /// Proper (escaped) `file://` URI of the open file, for MPRIS.
@@ -86,6 +89,7 @@ impl App {
             video_texture: None,
             video_width: 0,
             video_height: 0,
+            video_orientation: Orientation::default(),
             file_path: None,
             file_name: String::new(),
             file_uri: String::new(),
@@ -152,6 +156,7 @@ impl App {
         self.video_texture = None;
         self.video_width = 0;
         self.video_height = 0;
+        self.video_orientation = Orientation::default();
         self.position_ns = 0;
         self.duration_ns = 0;
         self.seeking = false;
@@ -275,10 +280,11 @@ impl App {
     /// hidden window does no per-frame work.
     pub fn prepare_frame(&mut self, gpu: &GpuContext, tex_pass: &TexturePass, now: Instant, dt: f32) {
         if let Some(pipe) = &self.pipeline {
-            if let Some((w, h)) = pipe.upload_frame(gpu, tex_pass, &mut self.video_texture) {
+            if let Some((w, h, facing)) = pipe.upload_frame(gpu, tex_pass, &mut self.video_texture) {
                 self.audio_only = false;
                 self.video_width = w;
                 self.video_height = h;
+                self.video_orientation = facing;
             }
         }
 

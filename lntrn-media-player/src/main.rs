@@ -6,6 +6,7 @@ mod fft;
 mod input;
 mod keyboard;
 mod mpris_server;
+mod orientation;
 mod pipeline;
 mod position_store;
 mod render;

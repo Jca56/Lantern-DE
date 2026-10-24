@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -12,6 +12,7 @@ use lntrn_render::{GpuContext, GpuTexture, TexturePass};
 
 use crate::audio_tap::{self, AudioTap};
 use crate::event_pump::Waker;
+use crate::orientation::Orientation;
 
 /// How long a Null transition may block the caller. Normal teardown is a few
 /// ms; anything longer means the audio sink is stuck waiting on the PipeWire
@@ -28,10 +29,10 @@ pub const PREROLL_TIMEOUT: Duration = Duration::from_secs(6);
 /// this long without one the next seek goes out anyway.
 const SEEK_PATIENCE: Duration = Duration::from_secs(1);
 
-/// The newest decoded video frame, straight from the appsink. Held as the
-/// GStreamer sample (a refcount, no pixel copy); the UI thread maps and
-/// uploads it only when it's about to draw.
-type FrameSlot = Arc<Mutex<Option<gst::Sample>>>;
+/// The newest decoded video frame, straight from the appsink, with the way
+/// it faces. Held as the GStreamer sample (a refcount, no pixel copy); the
+/// UI thread maps and uploads it only when it's about to draw.
+type FrameSlot = Arc<Mutex<Option<(gst::Sample, Orientation)>>>;
 
 // ── Pipeline ────────────────────────────────────────────────────────────────
 
@@ -85,22 +86,47 @@ impl MediaPipeline {
             .build();
         pipeline.set_property("video-sink", &appsink);
 
+        // The stream's orientation tag reaches the sink as an event before
+        // its first frame, on the same streaming thread, so every frame is
+        // stored with the orientation that applies to it.
+        let orientation = Arc::new(AtomicU8::new(0));
+        if let Some(pad) = appsink.static_pad("sink") {
+            let orientation = orientation.clone();
+            pad.add_probe(gst::PadProbeType::EVENT_DOWNSTREAM, move |_, info| {
+                if let Some(gst::PadProbeData::Event(event)) = &info.data {
+                    if let gst::EventView::Tag(tag) = event.view() {
+                        if let Some(value) = tag.tag().get::<gst::tags::ImageOrientation>() {
+                            match Orientation::from_tag(value.get()) {
+                                Some(o) => orientation.store(o.pack(), Ordering::Relaxed),
+                                None => eprintln!(
+                                    "[media-player] unknown image-orientation {:?}",
+                                    value.get()
+                                ),
+                            }
+                        }
+                    }
+                }
+                gst::PadProbeReturn::Ok
+            });
+        }
+
         let frame: FrameSlot = Arc::new(Mutex::new(None));
         // Playing frames arrive as samples; a paused pipeline (a seek while
         // paused, the first frame of a paused open) delivers its picture as
         // a preroll. Both land in the same slot.
-        let store = |slot: FrameSlot, waker: Waker| {
+        let store = |slot: FrameSlot, orientation: Arc<AtomicU8>, waker: Waker| {
             move |sample: Result<gst::Sample, gst::glib::BoolError>| {
                 let sample = sample.map_err(|_| gst::FlowError::Eos)?;
+                let facing = Orientation::unpack(orientation.load(Ordering::Relaxed));
                 if let Ok(mut lock) = slot.lock() {
-                    *lock = Some(sample);
+                    *lock = Some((sample, facing));
                 }
                 waker.wake();
                 Ok(gst::FlowSuccess::Ok)
             }
         };
-        let on_sample = store(frame.clone(), waker.clone());
-        let on_preroll = store(frame.clone(), waker.clone());
+        let on_sample = store(frame.clone(), orientation.clone(), waker.clone());
+        let on_preroll = store(frame.clone(), orientation, waker.clone());
         appsink.set_callbacks(
             gst_app::AppSinkCallbacks::builder()
                 .new_sample(move |sink| on_sample(sink.pull_sample()))
@@ -359,15 +385,16 @@ impl MediaPipeline {
 
     /// Upload the newest decoded frame into `slot`, reusing its texture when
     /// the resolution is unchanged (the common case) so playback doesn't
-    /// churn VRAM. Returns the frame's size when one was uploaded. Called
-    /// only when a frame is about to be drawn: a hidden window costs nothing.
+    /// churn VRAM. Returns the frame's stored size and the way it faces when
+    /// one was uploaded (turning it happens when it's drawn). Called only
+    /// when a frame is about to be drawn: a hidden window costs nothing.
     pub fn upload_frame(
         &self,
         gpu: &GpuContext,
         tex_pass: &TexturePass,
         slot: &mut Option<GpuTexture>,
-    ) -> Option<(u32, u32)> {
-        let sample = self.frame.lock().ok()?.take()?;
+    ) -> Option<(u32, u32, Orientation)> {
+        let (sample, facing) = self.frame.lock().ok()?.take()?;
         let info = gst_video::VideoInfo::from_caps(sample.caps()?).ok()?;
         let map = sample.buffer()?.map_readable().ok()?;
         let (width, height) = (info.width(), info.height());
@@ -391,7 +418,7 @@ impl MediaPipeline {
             }
             tex_pass.upload_reuse(gpu, slot, &rgba, width, height);
         }
-        Some((width, height))
+        Some((width, height, facing))
     }
 
     /// Safe before `play()` (no streaming threads yet) and after preroll; in
