@@ -199,7 +199,7 @@ pub fn draw_item(app: &mut App, key: &str, ui: &mut Ui, cx: &mut HostCx) -> bool
         if r.hovered {
             ui.state.cursor_icon = CursorIcon::Pointer;
         }
-        let ring = if current == Some(color) { ui.theme.accent } else if r.hovered { look::text() } else { look::track() };
+        let ring = if current == Some(color) { look::accent_ink(ui.theme.accent) } else if r.hovered { look::text() } else { look::track() };
         ui.draw.rounded_rect(rect, m.px(12.0), ring);
         let inner = rect.shrink(m.px(3.0));
         match color {
@@ -207,7 +207,7 @@ pub fn draw_item(app: &mut App, key: &str, ui: &mut Ui, cx: &mut HostCx) -> bool
             None => {
                 // None: an empty chip, struck through.
                 ui.draw.rounded_rect(inner, m.px(9.0), look::card());
-                ui.draw.line(Vec2::new(inner.min.x + m.px(8.0), inner.max.y - m.px(8.0)), Vec2::new(inner.max.x - m.px(8.0), inner.min.y + m.px(8.0)), m.px(2.5), look::BAD);
+                ui.draw.line(Vec2::new(inner.min.x + m.px(8.0), inner.max.y - m.px(8.0)), Vec2::new(inner.max.x - m.px(8.0), inner.min.y + m.px(8.0)), m.px(2.5), look::bad());
             }
         }
         if r.clicked {

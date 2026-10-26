@@ -52,7 +52,7 @@ pub fn banner(ui: &mut Ui, id: &str, text: &str, color: Color) -> bool {
     ui.key_click(id, &mut r);
     if r.hovered {
         ui.state.cursor_icon = CursorIcon::Pointer;
-        ui.draw.rounded_rect(hit, m.px(10.0), Color::WHITE.fade(0.1));
+        ui.draw.rounded_rect(hit, m.px(10.0), look::wash(0.1));
     }
     let (c, s) = (hit.center(), m.px(8.0));
     ui.draw.line(c - Vec2::splat(s), c + Vec2::splat(s), m.px(2.5), look::text());

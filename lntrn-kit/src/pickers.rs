@@ -42,7 +42,7 @@ pub fn dropdown(ui: &mut Ui, id: WidgetId, slot: Rect, selected: &mut usize, opt
 
     let open = *ui.state.open(id);
     let radius = m.px(12.0);
-    let face = if r.hovered || open { look::button().scale_rgb(1.35) } else { look::button() };
+    let face = if r.hovered || open { look::lift(look::button(), 1.35) } else { look::button() };
     ui.draw.rounded_rect(rect, radius, face);
     ui.draw.stroke_rect(rect, m.px(1.0), radius, if r.hovered || open { ui.theme.accent } else { look::track() });
     let style = ui.text_style();

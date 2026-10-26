@@ -304,6 +304,8 @@ impl App {
     /// Everything above, once a frame of `shell` is built. `true` when
     /// the frame should be built again with what changed.
     pub fn tick(&mut self, shell: &mut Shell<Self>) -> bool {
+        // A page changed below asks for another frame, which takes it up.
+        self.follow.set_light(self.settings.paper);
         let mut again = self.follow.apply(shell);
         again |= self.sync_settings(shell);
         if let Some(files) = self.incoming.as_ref().and_then(|rx| rx.try_recv().ok()) {

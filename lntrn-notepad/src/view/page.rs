@@ -190,7 +190,8 @@ pub fn page(ui: &mut Ui, ed: &mut Editor, view: &mut View, height: f64, mut p: P
     // ---- the desk, the sheet on it ----
     ui.draw.push_clip(desk);
     ui.draw.rect(desk, look::bg().fade(ui.state.opacity));
-    ui.draw.shadow(place.sheet, 0.0, m.px(18.0), Color::BLACK.fade(0.45));
+    // A sheet on a pale desk needs less shadow to lift off it.
+    ui.draw.shadow(place.sheet, 0.0, m.px(18.0), Color::BLACK.fade(if look::worn().light { 0.16 } else { 0.45 }));
     ui.draw.rect(place.sheet, ink(p.inks.page));
     let (from, to) = (ed.layout.para_at((view.scroll - PAGE_TOP * m.scale) as f32), ed.layout.para_at((view.scroll + desk.height()) as f32));
     let at = |x: f32, y: f32| place.origin + Vec2::new(f64::from(x), f64::from(y));
@@ -242,7 +243,7 @@ pub fn page(ui: &mut Ui, ed: &mut Editor, view: &mut View, height: f64, mut p: P
     // A picture that is selected: its edge, and the corner that sizes it.
     if let Some((_, rect)) = picture_corner(ed, &place) {
         let frame = picture_rect(ed, &place).unwrap_or(rect);
-        ui.draw.stroke_rect(frame, m.px(2.0), 0.0, ui.theme.accent);
+        ui.draw.stroke_rect(frame, m.px(2.0), 0.0, look::accent_ink(ui.theme.accent));
         ui.draw.rect(rect, ui.theme.accent);
     }
     // The caret, steady just after it moved and blinking at rest.
@@ -261,7 +262,7 @@ pub fn page(ui: &mut Ui, ed: &mut Editor, view: &mut View, height: f64, mut p: P
     for (side, x) in sides.iter().zip([place.sheet.min.x, place.sheet.max.x]) {
         if side.hovered || side.held {
             ui.state.cursor_icon = CursorIcon::EwResize;
-            ui.draw.rect(Rect::new(Vec2::new(x - m.px(1.5), desk.min.y), Vec2::new(x + m.px(1.5), desk.max.y)), ui.theme.accent.fade(0.8));
+            ui.draw.rect(Rect::new(Vec2::new(x - m.px(1.5), desk.min.y), Vec2::new(x + m.px(1.5), desk.max.y)), look::accent_ink(ui.theme.accent).fade(0.8));
         }
     }
     // The scroll bar, when there is somewhere to scroll to.

@@ -54,9 +54,9 @@ pub struct Graph<'a> {
 /// when it nearly is.
 pub fn heat(frac: f64, accent: Color) -> Color {
     if frac >= 0.9 {
-        look::BAD
+        look::bad()
     } else if frac >= 0.75 {
-        look::WARN
+        look::warn()
     } else {
         accent
     }
@@ -250,7 +250,7 @@ pub fn tile(ui: &mut Ui, id: WidgetId, rect: Rect, t: &Tile) -> bool {
         ui.state.cursor_icon = CursorIcon::Pointer;
     }
     let radius = m.px(15.0);
-    ui.draw.rounded_rect(rect, radius, if r.hovered { look::card().scale_rgb(1.25) } else { look::card() });
+    ui.draw.rounded_rect(rect, radius, if r.hovered { look::lift(look::card(), 1.25) } else { look::card() });
     ui.draw.stroke_rect(rect, m.px(1.0), radius, if r.hovered { t.color } else { look::line() });
 
     let pad = m.px(20.0);
@@ -322,7 +322,7 @@ mod tests {
         assert_eq!(filled(track, 0.01).width(), 12.0, "never thinner than it is tall");
         assert_eq!(filled(track, 7.0).width(), 200.0);
         assert_eq!(heat(0.2, look::GOLD), look::GOLD);
-        assert_eq!(heat(0.8, look::GOLD), look::WARN);
-        assert_eq!(heat(0.95, look::GOLD), look::BAD);
+        assert_eq!(heat(0.8, look::GOLD), look::warn());
+        assert_eq!(heat(0.95, look::GOLD), look::bad());
     }
 }

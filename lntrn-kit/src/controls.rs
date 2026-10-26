@@ -34,7 +34,7 @@ pub fn switch(ui: &mut Ui, id: WidgetId, hit: Rect, slot: Rect, value: &mut bool
     if r.hovered {
         ui.state.cursor_icon = CursorIcon::Pointer;
         let glow = Rect::new(Vec2::new(hit.min.x + m.px(8.0), hit.min.y), Vec2::new(hit.max.x - m.px(8.0), hit.max.y));
-        ui.draw.rounded_rect(glow, m.px(10.0), Color::WHITE.fade(0.04));
+        ui.draw.rounded_rect(glow, m.px(10.0), look::wash(0.04));
     }
     let t = ui.animate(id.with("on"), if *value { 1.0 } else { 0.0 }, 0.12);
     let accent = ui.theme.accent;
@@ -170,7 +170,7 @@ pub fn segmented(ui: &mut Ui, id: WidgetId, slot: Rect, selected: &mut usize, op
     ui.draw.rounded_rect(rect, radius, look::well());
     ui.draw.stroke_rect(rect, m.px(1.0), radius, look::line());
     if let Some(i) = hovered.filter(|i| *i != *selected) {
-        ui.draw.rounded_rect(segment(i).shrink(inset), radius - inset, Color::WHITE.fade(0.06));
+        ui.draw.rounded_rect(segment(i).shrink(inset), radius - inset, look::wash(0.06));
     }
     let x = ui.animate(id.with("thumb"), *selected as f64, 0.12);
     let thumb = Rect::from_min_size(Vec2::new(rect.min.x + part * x, rect.min.y), Vec2::new(part, h)).shrink(inset);
@@ -235,9 +235,9 @@ pub fn button_of(ui: &mut Ui, id: WidgetId, rect: Rect, text: &str, kind: Kind, 
     };
     let accent = ui.theme.accent;
     let (face, edge, ink) = match kind {
-        Kind::Plain => (look::button().scale_rgb(lit), if r.hovered { accent } else { look::track() }, look::text()),
+        Kind::Plain => (look::lift(look::button(), lit), if r.hovered { accent } else { look::track() }, look::text()),
         Kind::Primary => (accent.scale_rgb(if r.held { 0.85 } else { 1.0 }), accent, ui.theme.accent_text),
-        Kind::Danger => (look::BAD.lerp(look::card(), if r.hovered || r.held { 0.55 } else { 0.8 }), look::BAD, look::BAD.lerp(Color::WHITE, 0.35)),
+        Kind::Danger => (look::bad().lerp(look::card(), if r.hovered || r.held { 0.55 } else { 0.8 }), look::bad(), look::accent_ink(look::bad().lerp(Color::WHITE, 0.35))),
     };
     if kind == Kind::Primary && r.hovered && !r.held {
         ui.draw.shadow(rect, radius, m.px(14.0), accent.fade(0.45));
@@ -268,7 +268,7 @@ pub fn glyph_button(ui: &mut Ui, id: WidgetId, rect: Rect, glyph: IconFn, tip: &
         1.0
     };
     let radius = m.px(RADIUS);
-    ui.draw.rounded_rect(rect, radius, look::button().scale_rgb(lit));
+    ui.draw.rounded_rect(rect, radius, look::lift(look::button(), lit));
     ui.draw.stroke_rect(rect, m.px(1.0), radius, if r.hovered { ui.theme.accent } else { look::track() });
     let side = rect.width().min(rect.height()) * 0.5;
     glyph(ui.draw, Rect::from_center_size(rect.center(), Vec2::splat(side)), if r.hovered { ui.theme.accent } else { look::text() }, m.px(2.5));

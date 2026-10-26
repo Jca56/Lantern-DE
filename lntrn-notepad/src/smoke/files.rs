@@ -180,6 +180,15 @@ fn settings_are_kept_and_followed() {
     rig.act("view.paper", None);
     assert_eq!(rig.app.inks().page, 0xFCFBF9);
     rig.wait(0.6);
+    // The whole window went light with the page, in the style's light
+    // twin; the dark page brings the dark window back.
+    let light = lntrn_kit::look::Palette::LANTERN_LIGHT;
+    assert_eq!((lntrn_kit::look::worn(), rig.shell.prefs.theme.bg, rig.shell.prefs.theme.text), (light, light.bg, light.text));
+    rig.act("view.dark", None);
+    rig.wait(0.1);
+    assert_eq!((lntrn_kit::look::worn(), rig.shell.prefs.theme.bg), (lntrn_kit::look::Palette::LANTERN, lntrn_kit::look::Palette::LANTERN.bg));
+    rig.act("view.paper", None);
+    rig.wait(0.1);
     let doc = lntrn_kit::desktop::read_doc();
     assert_eq!((doc.path("notepad.theme").and_then(lntrn_data::Doc::as_str), doc.path("appearance.accent").and_then(lntrn_data::Doc::as_str)), (Some("paper"), Some("#2563EB")));
     // A change made in System Settings is taken up while running.

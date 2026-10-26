@@ -126,7 +126,7 @@ pub fn caption_action(ui: &mut Ui, s: &str, action: &str) -> bool {
     ui.key_click(id, &mut resp);
     if resp.hovered {
         ui.state.cursor_icon = CursorIcon::Pointer;
-        ui.draw.rounded_rect(rect, m.px(8.0), Color::WHITE.fade(0.08));
+        ui.draw.rounded_rect(rect, m.px(8.0), look::wash(0.08));
     }
     ui.text_centered(action, &style, rect, ui.theme.accent);
     ui.focus_ring(id, rect);

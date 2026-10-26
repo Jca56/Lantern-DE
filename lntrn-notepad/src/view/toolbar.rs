@@ -100,11 +100,11 @@ fn button(ui: &mut Ui, id: WidgetId, rect: Rect, face: Face, on: bool, tip: &str
     let radius = m.px(10.0);
     if on {
         ui.draw.rounded_rect(rect, radius, accent.fade(0.22));
-        ui.draw.stroke_rect(rect, m.px(1.5), radius, accent);
+        ui.draw.stroke_rect(rect, m.px(1.5), radius, look::accent_ink(accent));
     } else if r.hovered || r.held {
-        ui.draw.rounded_rect(rect, radius, Color::WHITE.fade(if r.held { 0.12 } else { 0.07 }));
+        ui.draw.rounded_rect(rect, radius, look::wash(if r.held { 0.12 } else { 0.07 }));
     }
-    let ink = if on { accent.lerp(Color::WHITE, 0.25) } else { look::text() };
+    let ink = if on { look::accent_ink(accent.lerp(Color::WHITE, 0.25)) } else { look::text() };
     match face {
         Face::Icon(icon) => icon(ui.draw, Rect::from_center_size(rect.center(), Vec2::splat(rect.height() * 0.42)), ink, m.px(2.2)),
         Face::Letter(letter, style, bar) => {
@@ -178,7 +178,7 @@ pub fn toolbar(ui: &mut Ui, ed: &mut Editor, fonts: &[String], body: f32) -> Too
     if value.hovered {
         ui.state.cursor_icon = CursorIcon::Pointer;
     }
-    ui.text_centered(&format!("{}", size.round()), &style, third(1), if value.hovered { ui.theme.accent } else { look::text() });
+    ui.text_centered(&format!("{}", size.round()), &style, third(1), if value.hovered { look::accent_ink(ui.theme.accent) } else { look::text() });
     ui.tooltip(&value, "Text size");
     if value.clicked {
         *ui.state.open(sizes) = !*ui.state.open(sizes);

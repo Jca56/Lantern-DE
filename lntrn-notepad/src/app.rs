@@ -152,8 +152,11 @@ impl App {
         bind(&mut keys, Key::F(3), Modifiers::NONE, "find.next");
         bind(&mut keys, Key::F(3), Modifiers::SHIFT, "find.prev");
         bind(&mut keys, Key::Escape, Modifiers::NONE, "find.close");
-        let follow = Follow::default();
-        App { settings: Settings::load(), seen_reads: follow.reads(), follow, settings_dirty: false, save_at: None, clip: None, pictures: HashMap::new(), fonts: Vec::new(), ops: Vec::new(), front: Weak::new(), front_area: None, took_focus: None, refocus: false, keys, named: Vec::new(), saver: Saver::default(), open: Vec::new(), session_at: None, remembers: true, primary: false, incoming: None, swatch: Swatch::Text, asked: Weak::new(), close_after: Weak::new(), export_pdf: None, export_as: "txt" }
+        // A paper page dresses the whole window in the style's light twin.
+        let settings = Settings::load();
+        let mut follow = Follow::default();
+        follow.set_light(settings.paper);
+        App { settings, seen_reads: follow.reads(), follow, settings_dirty: false, save_at: None, clip: None, pictures: HashMap::new(), fonts: Vec::new(), ops: Vec::new(), front: Weak::new(), front_area: None, took_focus: None, refocus: false, keys, named: Vec::new(), saver: Saver::default(), open: Vec::new(), session_at: None, remembers: true, primary: false, incoming: None, swatch: Swatch::Text, asked: Weak::new(), close_after: Weak::new(), export_pdf: None, export_as: "txt" }
     }
 
     /// A new document with nothing in it, under the first name no open
@@ -186,10 +189,10 @@ impl App {
         };
         ui.text_in_rect(&left, &style, inner, look::text_dim());
         let (state, color) = match (d.ed.modified(), &d.path) {
-            (false, Some(_)) => ("Saved \u{2713}", look::GOOD),
+            (false, Some(_)) => ("Saved \u{2713}", look::good()),
             (false, None) => ("", look::text_dim()),
-            (true, Some(_)) => ("Edited \u{00B7} draft kept", look::WARN),
-            (true, None) => ("Not saved yet \u{00B7} draft kept", look::WARN),
+            (true, Some(_)) => ("Edited \u{00B7} draft kept", look::warn()),
+            (true, None) => ("Not saved yet \u{00B7} draft kept", look::warn()),
         };
         ui.text_right(state, &style, inner, color);
     }

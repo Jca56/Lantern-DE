@@ -56,7 +56,7 @@ pub fn row_value(ui: &mut Ui, id: &str, label: &str, glyph: Option<IconFn>, show
     if showing {
         ui.draw.rounded_rect(rect, radius, ui.theme.accent);
     } else if r.hovered || r.held {
-        ui.draw.rounded_rect(rect, radius, Color::WHITE.fade(0.07));
+        ui.draw.rounded_rect(rect, radius, look::wash(0.07));
     }
     let ink = if showing { ui.theme.accent_text } else { look::text() };
     let mut text_x = rect.min.x + m.px(18.0);

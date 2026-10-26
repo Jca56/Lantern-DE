@@ -168,6 +168,8 @@ pub struct Follow {
     looked: f64,
     /// Counts the times the file has been read again.
     reads: u64,
+    /// Wearing the style's light twin instead ([`Follow::set_light`]).
+    light: bool,
 }
 
 fn stamp() -> Option<SystemTime> {
@@ -178,13 +180,29 @@ impl Default for Follow {
     fn default() -> Self {
         let now = Desktop::read();
         look::wear(now.palette());
-        Self { now, stamp: stamp(), looked: 0.0, reads: 0 }
+        Self { now, stamp: stamp(), looked: 0.0, reads: 0, light: false }
     }
 }
 
 impl Follow {
     pub fn desktop(&self) -> &Desktop {
         &self.now
+    }
+
+    /// The palette worn: the desktop's, or its style's light twin while
+    /// the app asks for light (which leaves out the window background
+    /// chosen: that is chosen for dark windows).
+    pub fn palette(&self) -> Palette {
+        if self.light { Palette::light_of(self.now.style) } else { self.now.palette() }
+    }
+
+    /// Wear the style's light twin (`true`) or the desktop's own palette,
+    /// from now on and at once.
+    pub fn set_light(&mut self, light: bool) {
+        if self.light != light {
+            self.light = light;
+            look::wear(self.palette());
+        }
     }
 
     /// How many times the file has been read again since the start: an
@@ -214,7 +232,7 @@ impl Follow {
         if (shell.opacity - self.now.opacity).abs() > 1e-3 {
             shell.opacity = self.now.opacity;
         }
-        let palette = self.now.palette();
+        let palette = self.palette();
         let repainted = look::wear(palette);
         let theme = palette.theme(self.now.accent);
         let restyled = shell.prefs.theme != theme;

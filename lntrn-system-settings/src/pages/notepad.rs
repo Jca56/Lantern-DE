@@ -6,6 +6,8 @@ use lntrn_math::{Color, Rect, Vec2};
 use lntrn_ui::Ui;
 
 use crate::config::{Config, NOTEPAD_PAGES};
+use crate::kit::desktop::Style;
+use crate::kit::look::Palette;
 use crate::kit::{self, look};
 
 const PAGES: [(&str, &str); 2] = [(NOTEPAD_PAGES[0], "Paper"), (NOTEPAD_PAGES[1], "Dark")];
@@ -24,17 +26,18 @@ fn inks(dark: bool) -> (Color, Color, Color) {
 }
 
 /// A sheet on its desk, as wide as chosen, with a heading and a line
-/// or two on it. It runs off the bottom of the desk, as a page does.
-fn sample(ui: &mut Ui, rect: Rect, dark: bool, wide: f64) {
+/// or two on it. It runs off the bottom of the desk, as a page does. The
+/// desk is in `around`, the palette Notepad's window wears for the page.
+fn sample(ui: &mut Ui, rect: Rect, dark: bool, wide: f64, around: &Palette) {
     let m = ui.m;
     let desk = rect.shrink(m.px(4.0));
-    ui.draw.rounded_rect(desk, m.px(10.0), look::bg());
+    ui.draw.rounded_rect(desk, m.px(10.0), around.bg);
     let (page, ink, dim) = inks(dark);
     let most = (desk.width() - m.px(28.0)).max(1.0);
     let w = most * (NARROWEST + (1.0 - NARROWEST) * wide.clamp(0.0, 1.0));
     let sheet = Rect::new(Vec2::new((desk.center().x - w * 0.5).round(), desk.min.y + m.px(16.0)), Vec2::new((desk.center().x + w * 0.5).round(), desk.max.y - m.px(1.0)));
     ui.draw.rect(sheet, page);
-    ui.draw.stroke_rect(desk, m.px(1.0), m.px(10.0), look::line());
+    ui.draw.stroke_rect(desk, m.px(1.0), m.px(10.0), around.line);
     // What is written on it, cut at the sheet's margins.
     let inner = Rect::new(Vec2::new(sheet.min.x + m.px(22.0), sheet.min.y + m.px(14.0)), Vec2::new(sheet.max.x - m.px(22.0), sheet.max.y));
     let mut heading = ui.text_style().bold();
@@ -52,6 +55,7 @@ fn sample(ui: &mut Ui, rect: Rect, dark: bool, wide: f64) {
 }
 
 pub fn draw(cfg: &mut Config, ui: &mut Ui) -> bool {
+    let style = Style::from_word(&cfg.appearance.theme);
     let n = &mut cfg.notepad;
     let mut changed = false;
 
@@ -59,7 +63,9 @@ pub fn draw(cfg: &mut Config, ui: &mut Ui) -> bool {
     kit::card(ui, "page", |c| {
         let h = c.ui.m.px(SAMPLE_H);
         let (dark, wide) = (n.theme == NOTEPAD_PAGES[1], n.page_width);
-        c.block(h, |ui, rect| sample(ui, rect, dark, wide));
+        // A paper page dresses Notepad's whole window in the style's light twin.
+        let around = if dark { look::worn() } else { Palette::light_of(style) };
+        c.block(h, |ui, rect| sample(ui, rect, dark, wide, &around));
         changed |= c.choice("Page", "What it writes on.", &mut n.theme, &PAGES);
         changed |= c.slider("Page width", "How much of its window the page takes.", &mut n.page_width, (0.0, 1.0), 0.01, percent);
     });
