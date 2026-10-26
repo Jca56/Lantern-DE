@@ -77,7 +77,7 @@ impl Identify {
         let plate = ui.clip();
         let accent = ui.theme.accent;
         // Solid whatever the windows' transparency is: it has to be read.
-        ui.draw.rect(plate, look::BG);
+        ui.draw.rect(plate, look::bg());
         ui.draw.stroke_rect(plate.shrink(m.px(5.0)), m.px(8.0), m.px(22.0), accent);
         let mut big = kit::title_style(ui);
         big.size = (plate.height() * 0.55) as f32;
@@ -88,7 +88,7 @@ impl Identify {
         let top = (plate.center().y - (number_h + name_h) * 0.5).round();
         ui.text_centered(&(u32::from(index) + 1).to_string(), &big, Rect::from_min_size(Vec2::new(plate.min.x, top), Vec2::new(plate.width(), number_h)), accent);
         let said = self.names.get(usize::from(index)).map_or("", String::as_str);
-        ui.text_centered(said, &name, Rect::from_min_size(Vec2::new(plate.min.x, top + number_h), Vec2::new(plate.width(), name_h)), look::TEXT);
+        ui.text_centered(said, &name, Rect::from_min_size(Vec2::new(plate.min.x, top + number_h), Vec2::new(plate.width(), name_h)), look::text());
     }
 }
 

@@ -253,8 +253,8 @@ fn slot_row(ui: &mut Ui, rect: Rect, slot: &Slot, image: Option<ImageHandle>, in
             ui.draw.image(Rect::from_center_size(icon.center(), size).round(), image, 0.0, Color::WHITE);
         }
         None => {
-            ui.draw.circle(icon.center(), icon.width() * 0.5, look::BUTTON);
-            ui.draw.ring(icon.center(), icon.width() * 0.5, m.px(2.0), look::TRACK);
+            ui.draw.circle(icon.center(), icon.width() * 0.5, look::button());
+            ui.draw.ring(icon.center(), icon.width() * 0.5, m.px(2.0), look::track());
         }
     }
 
@@ -262,14 +262,14 @@ fn slot_row(ui: &mut Ui, rect: Rect, slot: &Slot, image: Option<ImageHandle>, in
     // A command is set in the monospace; what a desktop action does, in words.
     let (what, under, ink) = match slot.action {
         Action::Launch if !slot.live() => ("Nothing to run yet, so the desktop leaves it off.", kit::small_style(ui), look::WARN),
-        Action::Launch => (slot.command.as_str(), kit::mono_style(ui), look::TEXT_DIM),
-        other => (does(other), kit::small_style(ui), look::TEXT_DIM),
+        Action::Launch => (slot.command.as_str(), kit::mono_style(ui), look::text_dim()),
+        other => (does(other), kit::small_style(ui), look::text_dim()),
     };
     let (label_h, under_h) = (style.line_height() as f64, under.line_height() as f64);
     let text_x = icon.max.x + m.px(18.0);
     let text_w = (body.max.x - text_x).max(1.0);
     let top = (rect.center().y - (label_h + under_h) * 0.5).round();
-    let (name, name_ink) = if slot.label.trim().is_empty() { ("No name", look::TEXT_DIM) } else { (slot.label.as_str(), look::TEXT) };
+    let (name, name_ink) = if slot.label.trim().is_empty() { ("No name", look::text_dim()) } else { (slot.label.as_str(), look::text()) };
     let shown = kit::elide(ui, name, &style, text_w, Keep::Start);
     ui.text_in_rect(&shown, &style, Rect::from_min_size(Vec2::new(text_x, top), Vec2::new(text_w, label_h)), name_ink);
     let shown = kit::elide(ui, what, &under, text_w, Keep::Start);

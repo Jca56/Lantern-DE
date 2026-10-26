@@ -31,7 +31,7 @@ pub fn draw(app: &mut App, ui: &mut Ui, cx: &mut AreaCx<()>) {
         ui.space(m.px(6.0));
         let bar = ui.alloc(Vec2::new(FILL, m.px(controls::BUTTON_H)));
         let heading = small_style(ui).bold();
-        ui.text_in_rect(&format!("BRANCHES · {}", repo.branches.len()), &heading, Rect::new(Vec2::new(bar.min.x + m.px(5.0), bar.min.y), bar.max), look::TEXT_DIM);
+        ui.text_in_rect(&format!("BRANCHES · {}", repo.branches.len()), &heading, Rect::new(Vec2::new(bar.min.x + m.px(5.0), bar.min.y), bar.max), look::text_dim());
         let mut right = bar.max.x;
         for (key, text, kind, what) in [("new", "New Branch…", Kind::Primary, Act::New), ("merge", "Merge…", Kind::Plain, Act::Merge)] {
             let w = controls::button_width(ui, text);
@@ -93,14 +93,14 @@ fn row(ui: &mut Ui, rect: Rect, i: usize, branch: &Branch, base: &str, idle: boo
         let id = ui.id("switch").with_index(i);
         pressed = controls::button_of(ui, id, Rect::from_min_size(Vec2::new(right - w, (rect.center().y - h * 0.5).round()), Vec2::new(w, h)), "Switch", Kind::Plain, idle);
         right -= w + m.px(12.0);
-        ui.draw.ring(Vec2::new(rect.min.x + m.px(28.0), name_mid), m.px(7.0), m.px(2.0), look::TRACK);
+        ui.draw.ring(Vec2::new(rect.min.x + m.px(28.0), name_mid), m.px(7.0), m.px(2.0), look::track());
     }
 
     // The badges after the name take their room first; the name gets
     // what is left.
     let mut badges: Vec<(String, lntrn_math::Color)> = Vec::new();
     if branch.name == base {
-        badges.push(("base".to_owned(), look::TEXT_DIM));
+        badges.push(("base".to_owned(), look::text_dim()));
     } else if branch.ahead > 0 || branch.behind > 0 {
         badges.push((format!("+{}", branch.ahead), look::GOOD));
         badges.push((format!("−{}", branch.behind), look::WARN));
@@ -114,7 +114,7 @@ fn row(ui: &mut Ui, rect: Rect, i: usize, branch: &Branch, base: &str, idle: boo
     }
     let room = (right - left - badges_w - m.px(8.0)).max(m.px(60.0));
     let name = elide(ui, &branch.name, &style, room, Keep::Start);
-    ui.text_in_rect(&name, &style, Rect::from_min_size(Vec2::new(left, top), Vec2::new(room, name_h)), if branch.is_current { accent } else { look::TEXT });
+    ui.text_in_rect(&name, &style, Rect::from_min_size(Vec2::new(left, top), Vec2::new(room, name_h)), if branch.is_current { accent } else { look::text() });
     let mut x = left + ui.measure(&name, &style) + m.px(14.0);
     for (text, color) in &badges {
         x += bits::badge(ui, x, name_mid, text, *color) + m.px(8.0);
@@ -122,6 +122,6 @@ fn row(ui: &mut Ui, rect: Rect, i: usize, branch: &Branch, base: &str, idle: boo
 
     let said = if branch.last_commit.is_empty() { "No commits yet" } else { branch.last_commit.as_str() };
     let said = elide(ui, said, &small, right - left, Keep::Start);
-    ui.text_in_rect(&said, &small, Rect::from_min_size(Vec2::new(left, top + name_h + m.px(4.0)), Vec2::new((right - left).max(0.0), small_h)), look::TEXT_DIM);
+    ui.text_in_rect(&said, &small, Rect::from_min_size(Vec2::new(left, top + name_h + m.px(4.0)), Vec2::new((right - left).max(0.0), small_h)), look::text_dim());
     pressed
 }

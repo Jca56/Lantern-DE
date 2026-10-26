@@ -66,7 +66,7 @@ fn one(frame: &Frame, gpu: &Gpu, ui: &mut Ui) {
             for (n, fan) in gpu.fans.iter().enumerate() {
                 let label = if gpu.fans.len() > 1 { format!("Fan {}", n + 1) } else { "Fan".to_owned() };
                 let said = if *fan == 0 { "Stopped".to_owned() } else { format!("{fan}%") };
-                c.meter(&label, "", f64::from(*fan) / 100.0, &said, look::TEXT_DIM);
+                c.meter(&label, "", f64::from(*fan) / 100.0, &said, look::text_dim());
             }
             if let Some(mhz) = gpu.core_mhz {
                 c.value("Core clock", "", &format::clock(f64::from(mhz)));

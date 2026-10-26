@@ -42,16 +42,16 @@ pub fn dropdown(ui: &mut Ui, id: WidgetId, slot: Rect, selected: &mut usize, opt
 
     let open = *ui.state.open(id);
     let radius = m.px(12.0);
-    let face = if r.hovered || open { look::BUTTON.scale_rgb(1.35) } else { look::BUTTON };
+    let face = if r.hovered || open { look::button().scale_rgb(1.35) } else { look::button() };
     ui.draw.rounded_rect(rect, radius, face);
-    ui.draw.stroke_rect(rect, m.px(1.0), radius, if r.hovered || open { ui.theme.accent } else { look::TRACK });
+    ui.draw.stroke_rect(rect, m.px(1.0), radius, if r.hovered || open { ui.theme.accent } else { look::track() });
     let style = ui.text_style();
     let chevron = m.px(7.0);
     let inner = Rect::new(Vec2::new(rect.min.x + m.px(18.0), rect.min.y), Vec2::new(rect.max.x - m.px(24.0) - chevron * 2.0, rect.max.y));
-    ui.text_in_rect(options.get(*selected).copied().unwrap_or(""), &style, inner, look::TEXT);
+    ui.text_in_rect(options.get(*selected).copied().unwrap_or(""), &style, inner, look::text());
     let c = Vec2::new(rect.max.x - m.px(18.0) - chevron, rect.center().y);
     let tips = [Vec2::new(c.x - chevron, c.y - chevron * 0.5), Vec2::new(c.x, c.y + chevron * 0.5), Vec2::new(c.x + chevron, c.y - chevron * 0.5)];
-    ui.draw.polyline(&tips, m.px(2.5), look::TEXT_DIM, false);
+    ui.draw.polyline(&tips, m.px(2.5), look::text_dim(), false);
     ui.focus_ring(id, rect);
 
     if r.clicked {
@@ -98,14 +98,14 @@ pub fn color(ui: &mut Ui, label: &str, slot: Rect, hex: &mut String, fallback: C
     let open = *ui.state.open(id);
     let hot = open || (ui.state.pointer_in_window && swatch.contains(ui.state.pointer));
     let (c, r) = (swatch.center(), side * 0.5);
-    ui.draw.rect(swatch.expand(m.px(1.0)), look::CARD);
-    ui.draw.circle(c, r, if hot { look::TEXT } else { look::TRACK });
-    ui.draw.circle(c, r - m.px(3.0), look::CARD);
+    ui.draw.rect(swatch.expand(m.px(1.0)), look::card());
+    ui.draw.circle(c, r, if hot { look::text() } else { look::track() });
+    ui.draw.circle(c, r - m.px(3.0), look::card());
     ui.draw.circle(c, r - m.px(6.0), color);
     ui.focus_ring(id, swatch);
 
     let mono = ui.mono_style();
     let text = Rect::new(slot.min, Vec2::new(swatch.min.x - m.px(15.0), slot.max.y));
-    ui.text_right(&color.to_hex_string().to_uppercase(), &mono, text, look::TEXT_DIM);
+    ui.text_right(&color.to_hex_string().to_uppercase(), &mono, text, look::text_dim());
     changed
 }

@@ -38,7 +38,7 @@ pub fn draw(tray: &mut Tray, ui: &mut Ui, frame: &Frame) -> Option<Rect> {
     let text_w = ui.measure(&text, &style);
     ui.text_in_rect(&text, &style, big, ui.theme.text);
     let bar = Rect::new(Vec2::new(big.min.x + text_w + m.px(18.0), (big.center().y - m.px(7.0)).round()), Vec2::new(big.max.x, (big.center().y + m.px(7.0)).round()));
-    ui.draw.rounded_rect(bar, bar.height() * 0.5, lntrn_kit::look::TRACK);
+    ui.draw.rounded_rect(bar, bar.height() * 0.5, lntrn_kit::look::track());
     let fill = (bar.width() * f64::from(s.percent) / 100.0).max(bar.height());
     ui.draw.rounded_rect(Rect::new(bar.min, Vec2::new(bar.min.x + fill, bar.max.y)), bar.height() * 0.5, charge_color(&s));
 

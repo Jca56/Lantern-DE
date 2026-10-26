@@ -27,8 +27,8 @@ pub fn draw(app: &mut App, ui: &mut Ui, cx: &mut AreaCx<()>, height: f64) {
     let m = ui.m;
     let panel = Rect::from_min_size(ui.cursor(), Vec2::new(ui.avail_width(), height));
     let radius = m.px(RADIUS);
-    ui.draw.rounded_rect(panel, radius, look::WELL);
-    ui.draw.stroke_rect(panel, m.px(1.0), radius, look::LINE);
+    ui.draw.rounded_rect(panel, radius, look::well());
+    ui.draw.stroke_rect(panel, m.px(1.0), radius, look::line());
     ui.push_id("diff");
 
     let Some(repo) = &app.repo else { return ui.pop_id() };
@@ -36,7 +36,7 @@ pub fn draw(app: &mut App, ui: &mut Ui, cx: &mut AreaCx<()>, height: f64) {
         let rect = ui.alloc(Vec2::new(FILL, height));
         let style = small_style(ui);
         let text = if repo.status.as_ref().is_some_and(|s| s.files.is_empty()) { "No changes to show" } else { "Pick a file to see what changed" };
-        ui.text_centered(text, &style, rect, look::TEXT_DIM);
+        ui.text_centered(text, &style, rect, look::text_dim());
         return ui.pop_id();
     };
     let act = strip(ui, &file, repo.diff(), !app.busy);
@@ -46,7 +46,7 @@ pub fn draw(app: &mut App, ui: &mut Ui, cx: &mut AreaCx<()>, height: f64) {
         None => {
             let rect = ui.alloc(Vec2::new(FILL, body_h));
             let style = small_style(ui);
-            ui.text_centered("Reading the changes…", &style, rect, look::TEXT_DIM);
+            ui.text_centered("Reading the changes…", &style, rect, look::text_dim());
         }
     }
     ui.pop_id();
@@ -76,7 +76,7 @@ pub fn discard_words(file: &FileStatus) -> (&'static str, String, &'static str) 
 fn strip(ui: &mut Ui, file: &FileStatus, diff: Option<&Diff>, idle: bool) -> Option<Act> {
     let m = ui.m;
     let row = ui.alloc(Vec2::new(FILL, m.px(STRIP_H)));
-    ui.draw.hline(row.min.x + m.px(1.0), row.max.x - m.px(1.0), row.max.y, m.px(1.0), look::LINE);
+    ui.draw.hline(row.min.x + m.px(1.0), row.max.x - m.px(1.0), row.max.y, m.px(1.0), look::line());
     let h = m.px(controls::BUTTON_H - 4.0);
     let y = (row.center().y - h * 0.5).round();
     let mut right = row.max.x - m.px(10.0);
@@ -106,7 +106,7 @@ fn strip(ui: &mut Ui, file: &FileStatus, diff: Option<&Diff>, idle: bool) -> Opt
     let style = ui.text_style();
     let room = (right - x - counts_w - m.px(8.0)).max(0.0);
     let name = elide(ui, file.path.rsplit('/').next().unwrap_or(&file.path), &style, room, Keep::Start);
-    ui.text_in_rect(&name, &style, Rect::new(Vec2::new(x, row.min.y), Vec2::new(x + room, row.max.y)), look::TEXT);
+    ui.text_in_rect(&name, &style, Rect::new(Vec2::new(x, row.min.y), Vec2::new(x + room, row.max.y)), look::text());
     if let Some((added, removed)) = counts {
         x += ui.measure(&name, &style) + m.px(12.0);
         x += bits::badge(ui, x, mid, &added, look::GOOD) + m.px(6.0);
@@ -137,18 +137,18 @@ fn lines(ui: &mut Ui, diff: &Diff, height: f64) {
             let (tint, mark, ink) = match line.kind {
                 LineKind::Added => (Some(look::GOOD.fade(0.14)), "+", look::GOOD),
                 LineKind::Removed => (Some(look::BAD.fade(0.16)), "−", look::BAD),
-                LineKind::Hunk => (Some(look::LINE.fade(0.7)), "", look::TEXT_DIM),
-                LineKind::Same => (None, "", look::TEXT_DIM),
+                LineKind::Hunk => (Some(look::line().fade(0.7)), "", look::text_dim()),
+                LineKind::Same => (None, "", look::text_dim()),
             };
             if let Some(tint) = tint {
                 ui.draw.rect(band, tint);
             }
             if let Some(n) = line.number {
-                ui.text_right(&n.to_string(), &mono, Rect::new(Vec2::new(area.min.x, y), Vec2::new(area.min.x + numbers_w - advance, y + line_h)), look::TEXT_DIM.fade(0.8));
+                ui.text_right(&n.to_string(), &mono, Rect::new(Vec2::new(area.min.x, y), Vec2::new(area.min.x + numbers_w - advance, y + line_h)), look::text_dim().fade(0.8));
             }
             let x = area.min.x + numbers_w;
             ui.text_at(mark, &mono, Vec2::new(x, y + text_y), 1.0e6, ink);
-            let body = if line.kind == LineKind::Hunk { look::TEXT_DIM } else { look::TEXT };
+            let body = if line.kind == LineKind::Hunk { look::text_dim() } else { look::text() };
             ui.text_at(&line.text, &mono, Vec2::new(x + mark_w, y + text_y), 1.0e6, body);
         }
         if let Some(note) = &diff.note {
@@ -156,7 +156,7 @@ fn lines(ui: &mut Ui, diff: &Diff, height: f64) {
             // else under the last line.
             let small = small_style(ui);
             let under = Rect::from_min_size(Vec2::new(view.viewport.min.x, area.max.y - note_h), Vec2::new(view.viewport.width(), note_h));
-            ui.text_centered(note, &small, if diff.lines.is_empty() { view.viewport } else { under }, look::TEXT_DIM);
+            ui.text_centered(note, &small, if diff.lines.is_empty() { view.viewport } else { under }, look::text_dim());
         }
     });
 }

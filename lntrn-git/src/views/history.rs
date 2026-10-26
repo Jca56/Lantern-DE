@@ -24,8 +24,8 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
     let height = (ui.remaining_height() - m.px(4.0)).max(0.0);
     let panel = Rect::from_min_size(ui.cursor(), Vec2::new(ui.avail_width(), height));
     let radius = m.px(RADIUS);
-    ui.draw.rounded_rect(panel, radius, look::WELL);
-    ui.draw.stroke_rect(panel, m.px(1.0), radius, look::LINE);
+    ui.draw.rounded_rect(panel, radius, look::well());
+    ui.draw.stroke_rect(panel, m.px(1.0), radius, look::line());
     let words = match &repo.graph {
         None => Some("Reading the history…"),
         Some(g) if g.commits.is_empty() => Some("No commits yet"),
@@ -34,7 +34,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
     if let Some(words) = words {
         let rect = ui.alloc(Vec2::new(FILL, height));
         let style = small_style(ui);
-        ui.text_centered(words, &style, rect, look::TEXT_DIM);
+        ui.text_centered(words, &style, rect, look::text_dim());
         return;
     }
     let Some(graph) = &repo.graph else { return };
@@ -90,11 +90,11 @@ fn rows(ui: &mut Ui, graph: &Graph) {
             continue;
         }
         let dot = Vec2::new(lane_x(ui, area.min.x, node.lane), y);
-        ui.draw.circle(dot, m.px(8.0), look::WELL);
+        ui.draw.circle(dot, m.px(8.0), look::well());
         ui.draw.circle(dot, m.px(6.0), lane_color(node.lane));
 
         let line = Rect::new(Vec2::new(text_x, y - row_h * 0.5), Vec2::new(right, y + row_h * 0.5));
-        ui.text_in_rect(&commit.short_hash, &mono, line, look::TEXT_DIM);
+        ui.text_in_rect(&commit.short_hash, &mono, line, look::text_dim());
         // The refs on it come after what it says, which gives way to them.
         let labels: Vec<(String, bool)> = commit.decorations.iter().map(|d| (d.trim_start_matches("HEAD -> ").to_owned(), d.starts_with("HEAD"))).collect();
         let mut labels_w = 0.0;
@@ -104,7 +104,7 @@ fn rows(ui: &mut Ui, graph: &Graph) {
         let subject_x = text_x + hash_w;
         let room = (right - subject_x - labels_w - m.px(10.0)).max(m.px(80.0));
         let subject = elide(ui, &commit.subject, &style, room, Keep::Start);
-        ui.text_in_rect(&subject, &style, Rect::new(Vec2::new(subject_x, line.min.y), Vec2::new(subject_x + room, line.max.y)), look::TEXT);
+        ui.text_in_rect(&subject, &style, Rect::new(Vec2::new(subject_x, line.min.y), Vec2::new(subject_x + room, line.max.y)), look::text());
         let mut x = subject_x + ui.measure(&subject, &style) + m.px(12.0);
         let accent = ui.theme.accent;
         for (text, head) in &labels {

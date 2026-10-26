@@ -20,7 +20,7 @@ pub fn shade(ui: &mut Ui) {
     let (top, w) = (ui.cursor(), ui.avail_width());
     let rect = Rect::new(Vec2::new(top.x - m.pad, top.y - m.pad), Vec2::new(top.x + w, top.y + ui.remaining_height() + m.pad));
     ui.draw.rect(rect, Color::BLACK.fade(0.25));
-    ui.draw.vline(rect.max.x - m.px(1.0), rect.min.y, rect.max.y, m.px(1.0), look::LINE);
+    ui.draw.vline(rect.max.x - m.px(1.0), rect.min.y, rect.max.y, m.px(1.0), look::line());
 }
 
 /// A small heading over a group of rows.
@@ -29,7 +29,7 @@ pub fn caption(ui: &mut Ui, s: &str) {
     let style = small_style(ui).bold();
     let r = ui.alloc(Vec2::new(FILL, m.px(44.0)));
     let text = Rect::new(Vec2::new(r.min.x + m.px(16.0), r.min.y + m.px(8.0)), r.max);
-    ui.text_in_rect(&s.to_uppercase(), &style, text, look::TEXT_DIM);
+    ui.text_in_rect(&s.to_uppercase(), &style, text, look::text_dim());
 }
 
 /// A row: `label`, with `glyph` before it when there is one. The row
@@ -58,7 +58,7 @@ pub fn row_value(ui: &mut Ui, id: &str, label: &str, glyph: Option<IconFn>, show
     } else if r.hovered || r.held {
         ui.draw.rounded_rect(rect, radius, Color::WHITE.fade(0.07));
     }
-    let ink = if showing { ui.theme.accent_text } else { look::TEXT };
+    let ink = if showing { ui.theme.accent_text } else { look::text() };
     let mut text_x = rect.min.x + m.px(18.0);
     if let Some(glyph) = glyph {
         let picture = Rect::from_center_size(Vec2::new(rect.min.x + m.px(34.0), rect.center().y), Vec2::splat(m.px(30.0)));
@@ -70,7 +70,7 @@ pub fn row_value(ui: &mut Ui, id: &str, label: &str, glyph: Option<IconFn>, show
         let small = small_style(ui);
         let end = rect.max.x - m.px(14.0);
         text_end = end - ui.measure(value, &small) - m.px(8.0);
-        let dim = if showing { ink.fade(0.75) } else { look::TEXT_DIM };
+        let dim = if showing { ink.fade(0.75) } else { look::text_dim() };
         ui.text_right(value, &small, Rect::new(Vec2::new(text_end, rect.min.y), Vec2::new(end, rect.max.y)), dim);
     }
     let style = ui.text_style();

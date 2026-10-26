@@ -194,7 +194,7 @@ mod tests {
             let mut asked = None;
             h.frame(|ui| {
                 let mut frame = TrayFrame { rect: face, press: None, pressed: false };
-                super::face(tray, ui, face, 30.0, &app, lntrn_kit::look::BG, &mut icons, &mut frame);
+                super::face(tray, ui, face, 30.0, &app, lntrn_kit::look::bg(), &mut icons, &mut frame);
                 asked = frame.press;
             });
             asked

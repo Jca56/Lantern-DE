@@ -186,7 +186,7 @@ pub fn draw_item(app: &mut App, key: &str, ui: &mut Ui, cx: &mut HostCx) -> bool
     let current = app.front.upgrade().map(|d| d.borrow().ed.format_state()).map(|a| if which == Swatch::Text { a.color } else { a.highlight });
     let style = ui.text_style();
     let heading = ui.alloc(Vec2::new(FILL, style.line_height() as f64 + m.gap));
-    ui.text_in_rect(if which == Swatch::Text { "Text colour" } else { "Highlight" }, &style, heading, look::TEXT_DIM);
+    ui.text_in_rect(if which == Swatch::Text { "Text colour" } else { "Highlight" }, &style, heading, look::text_dim());
     // A grid of chips, the first of them for none.
     let (side, gap, per_row) = (m.px(48.0), m.px(8.0), 6);
     let rows = (colors.len() + 1).div_ceil(per_row);
@@ -199,14 +199,14 @@ pub fn draw_item(app: &mut App, key: &str, ui: &mut Ui, cx: &mut HostCx) -> bool
         if r.hovered {
             ui.state.cursor_icon = CursorIcon::Pointer;
         }
-        let ring = if current == Some(color) { ui.theme.accent } else if r.hovered { look::TEXT } else { look::TRACK };
+        let ring = if current == Some(color) { ui.theme.accent } else if r.hovered { look::text() } else { look::track() };
         ui.draw.rounded_rect(rect, m.px(12.0), ring);
         let inner = rect.shrink(m.px(3.0));
         match color {
             Some(rgb) => ui.draw.rounded_rect(inner, m.px(9.0), Color::hex(rgb)),
             None => {
                 // None: an empty chip, struck through.
-                ui.draw.rounded_rect(inner, m.px(9.0), look::CARD);
+                ui.draw.rounded_rect(inner, m.px(9.0), look::card());
                 ui.draw.line(Vec2::new(inner.min.x + m.px(8.0), inner.max.y - m.px(8.0)), Vec2::new(inner.max.x - m.px(8.0), inner.min.y + m.px(8.0)), m.px(2.5), look::BAD);
             }
         }

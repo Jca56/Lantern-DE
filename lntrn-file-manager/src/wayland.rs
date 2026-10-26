@@ -404,7 +404,7 @@ pub fn run(
         ));
     }
 
-    let mut palette = FoxPalette::from_variant(settings.theme_variant());
+    let mut palette = Settings::palette();
     let mut view_menu = ContextMenu::new(ContextMenuStyle::from_palette(&palette));
     let mut context_menu = ContextMenu::new(context_menu_style(&palette));
     view_menu.set_scale(scale_f);

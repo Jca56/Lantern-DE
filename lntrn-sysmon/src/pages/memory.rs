@@ -32,7 +32,7 @@ pub fn draw(frame: &Frame, ui: &mut Ui) {
             let bar = Rect::new(Vec2::new(top.min.x + pad, top.min.y + m.px(8.0)), Vec2::new(top.max.x - pad, top.max.y));
             chart::meter_parts(ui, bar, &[(mem.used() as f64 / total, MEMORY), (mem.cache() as f64 / total, cache_ink())]);
             let mut x = rect.min.x + pad;
-            for (color, label) in [(MEMORY, "In use"), (cache_ink(), "Kept handy"), (look::TRACK, "Free")] {
+            for (color, label) in [(MEMORY, "In use"), (cache_ink(), "Kept handy"), (look::track(), "Free")] {
                 x += chart::legend(ui, Vec2::new(x, under.min.y), color, label) + m.px(26.0);
             }
         });
@@ -53,7 +53,7 @@ pub fn draw(frame: &Frame, ui: &mut Ui) {
 
 /// The colour of what is only kept handy: memory's own, held back.
 fn cache_ink() -> Color {
-    MEMORY.lerp(look::CARD, 0.55)
+    MEMORY.lerp(look::card(), 0.55)
 }
 
 #[cfg(test)]

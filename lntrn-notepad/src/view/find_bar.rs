@@ -129,7 +129,7 @@ impl FindBar {
             (Some(i), n) => format!("{} of {n}", i + 1),
             (None, n) => format!("{n}"),
         };
-        ui.text_centered(&count, &style, next(&mut x, m.px(110.0), 0.0), if self.hits.is_empty() { look::BAD } else { look::TEXT_DIM });
+        ui.text_centered(&count, &style, next(&mut x, m.px(110.0), 0.0), if self.hits.is_empty() { look::BAD } else { look::text_dim() });
         for (name, text, by) in [("prev", "\u{2191}", -1), ("next", "\u{2193}", 1)] {
             if controls::button(ui, id.with(name), next(&mut x, h, 0.0), text) {
                 self.go(ed, by);
@@ -173,10 +173,10 @@ fn toggle(ui: &mut Ui, id: WidgetId, rect: Rect, text: &str, on: bool, tip: &str
         ui.state.cursor_icon = CursorIcon::Pointer;
     }
     let (accent, radius) = (ui.theme.accent, m.px(12.0));
-    ui.draw.rounded_rect(rect, radius, if on { accent.fade(0.22) } else if r.hovered { look::BUTTON.scale_rgb(1.35) } else { look::BUTTON });
-    ui.draw.stroke_rect(rect, m.px(1.0), radius, if on { accent } else { look::TRACK });
+    ui.draw.rounded_rect(rect, radius, if on { accent.fade(0.22) } else if r.hovered { look::button().scale_rgb(1.35) } else { look::button() });
+    ui.draw.stroke_rect(rect, m.px(1.0), radius, if on { accent } else { look::track() });
     let style = ui.text_style();
-    ui.text_centered(text, &style, rect, if on { accent.lerp(Color::WHITE, 0.25) } else { look::TEXT });
+    ui.text_centered(text, &style, rect, if on { accent.lerp(Color::WHITE, 0.25) } else { look::text() });
     ui.tooltip(&r, tip);
     r.clicked
 }

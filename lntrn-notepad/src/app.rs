@@ -166,7 +166,7 @@ impl App {
     }
 
     pub fn inks(&self) -> Inks {
-        if self.settings.paper { Inks::PAPER } else { Inks::DARK }
+        if self.settings.paper { Inks::PAPER } else { Inks::dark(&look::worn()) }
     }
 
     /// The line under the page: how much there is (or is selected), and
@@ -184,10 +184,10 @@ impl App {
             Some((a, b)) => format!("{} selected", count(Doc::from_text(&d.ed.doc.plain(a, b)).count())),
             None => count(d.ed.doc.count()),
         };
-        ui.text_in_rect(&left, &style, inner, look::TEXT_DIM);
+        ui.text_in_rect(&left, &style, inner, look::text_dim());
         let (state, color) = match (d.ed.modified(), &d.path) {
             (false, Some(_)) => ("Saved \u{2713}", look::GOOD),
-            (false, None) => ("", look::TEXT_DIM),
+            (false, None) => ("", look::text_dim()),
             (true, Some(_)) => ("Edited \u{00B7} draft kept", look::WARN),
             (true, None) => ("Not saved yet \u{00B7} draft kept", look::WARN),
         };

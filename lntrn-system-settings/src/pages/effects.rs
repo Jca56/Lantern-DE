@@ -102,8 +102,8 @@ fn glow_diagram(ui: &mut Ui, rect: Rect, a: &mut Appearance, seed: &str) -> bool
     // The clip is square; a band in the card's colour takes back what
     // spilled past the rounded corners.
     let band = m.px(8.0);
-    ui.draw.stroke_rect(window.expand(band), band, radius + band, look::CARD);
-    ui.draw.stroke_rect(window, m.px(2.0), radius, look::TRACK);
+    ui.draw.stroke_rect(window.expand(band), band, radius + band, look::card());
+    ui.draw.stroke_rect(window, m.px(2.0), radius, look::track());
 
     let mut changed = false;
     let dot = m.px(13.0);
@@ -129,11 +129,11 @@ fn glow_diagram(ui: &mut Ui, rect: Rect, a: &mut Appearance, seed: &str) -> bool
         }
         match Color::parse_hex(stop) {
             Some(color) => {
-                ui.draw.circle(c, dot, look::TEXT);
+                ui.draw.circle(c, dot, look::text());
                 ui.draw.circle(c, dot - m.px(3.0), color.with_alpha(1.0));
             }
             None => {
-                ui.draw.circle(c, dot, look::TEXT_DIM);
+                ui.draw.circle(c, dot, look::text_dim());
                 ui.draw.circle(c, dot - m.px(3.0), face);
             }
         }

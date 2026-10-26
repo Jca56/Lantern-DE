@@ -202,7 +202,7 @@ pub(super) fn transfer(ui: &mut Ui, rect: Rect, t: &Transfer) -> Option<Ask> {
     kit::line(ui, room, &said, &style, color);
     if t.end.is_none() {
         let track = Rect::new(Vec2::new(line.min.x, line.max.y + m.px(8.0)), Vec2::new(line.max.x, line.max.y + m.px(16.0)));
-        ui.draw.rounded_rect(track, track.height() * 0.5, look::TRACK);
+        ui.draw.rounded_rect(track, track.height() * 0.5, look::track());
         let fill = Rect::new(track.min, Vec2::new(track.min.x + (track.width() * share).max(track.height()), track.max.y));
         ui.draw.rounded_rect(fill, track.height() * 0.5, accent);
     }

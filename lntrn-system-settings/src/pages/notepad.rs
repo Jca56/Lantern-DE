@@ -20,7 +20,7 @@ fn percent(v: f64) -> String {
 
 /// The sheet and its ink, as Notepad has them.
 fn inks(dark: bool) -> (Color, Color, Color) {
-    if dark { (Color::hex(0x1D1914), Color::hex(0xE8DCC8), Color::hex(0xA99C86)) } else { (Color::hex(0xFCFBF9), Color::hex(0x1C1B18), Color::hex(0x706C64)) }
+    if dark { (look::card(), look::text(), look::text_dim()) } else { (Color::hex(0xFCFBF9), Color::hex(0x1C1B18), Color::hex(0x706C64)) }
 }
 
 /// A sheet on its desk, as wide as chosen, with a heading and a line
@@ -28,13 +28,13 @@ fn inks(dark: bool) -> (Color, Color, Color) {
 fn sample(ui: &mut Ui, rect: Rect, dark: bool, wide: f64) {
     let m = ui.m;
     let desk = rect.shrink(m.px(4.0));
-    ui.draw.rounded_rect(desk, m.px(10.0), look::BG);
+    ui.draw.rounded_rect(desk, m.px(10.0), look::bg());
     let (page, ink, dim) = inks(dark);
     let most = (desk.width() - m.px(28.0)).max(1.0);
     let w = most * (NARROWEST + (1.0 - NARROWEST) * wide.clamp(0.0, 1.0));
     let sheet = Rect::new(Vec2::new((desk.center().x - w * 0.5).round(), desk.min.y + m.px(16.0)), Vec2::new((desk.center().x + w * 0.5).round(), desk.max.y - m.px(1.0)));
     ui.draw.rect(sheet, page);
-    ui.draw.stroke_rect(desk, m.px(1.0), m.px(10.0), look::LINE);
+    ui.draw.stroke_rect(desk, m.px(1.0), m.px(10.0), look::line());
     // What is written on it, cut at the sheet's margins.
     let inner = Rect::new(Vec2::new(sheet.min.x + m.px(22.0), sheet.min.y + m.px(14.0)), Vec2::new(sheet.max.x - m.px(22.0), sheet.max.y));
     let mut heading = ui.text_style().bold();

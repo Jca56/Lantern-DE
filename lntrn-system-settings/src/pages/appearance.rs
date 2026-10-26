@@ -6,10 +6,11 @@ use lntrn_ui::Ui;
 
 use crate::config::Config;
 use crate::fonts;
+use crate::kit::desktop::Style;
 use crate::kit::{self, pixels};
 use crate::look;
 
-const STYLES: [(&str, &str); 2] = [("lantern", "Lantern"), ("fox-dark", "Fox")];
+const STYLES: [(&str, &str); 2] = [(Style::Lantern.word(), "Lantern"), (Style::Fox.word(), "Fox")];
 /// The background a custom one starts from.
 const BACKGROUND: &str = "#0E0E0E";
 
@@ -24,7 +25,12 @@ pub fn draw(cfg: &mut Config, families: &mut Vec<String>, ui: &mut Ui) -> bool {
 
     kit::caption(ui, "Style");
     kit::card(ui, "style", |c| {
-        changed |= c.choice("Window style", "The chrome every Lantern app draws.", &mut a.theme, &STYLES);
+        // Shown as the style it means: an older `fox` is Fox.
+        let mut style = Style::from_word(&a.theme).word().to_owned();
+        if c.choice("Window style", "Warm Lantern brown or neutral Fox charcoal.", &mut style, &STYLES) {
+            a.theme = style;
+            changed = true;
+        }
         changed |= c.color("Accent colour", "Highlights and switches, here and across the desktop.", &mut a.accent, look::GOLD);
         changed |= c.switch_string("Custom window background", "Off, windows take their style's own.", &mut a.background_color, BACKGROUND);
         if !a.background_color.is_empty() {

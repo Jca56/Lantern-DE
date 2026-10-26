@@ -61,8 +61,8 @@ fn corner_picker(ui: &mut Ui, id: WidgetId, slot: Rect, value: &mut String) -> b
     }
 
     let radius = m.px(12.0);
-    ui.draw.rounded_rect(screen, radius, look::WELL);
-    ui.draw.stroke_rect(screen, m.px(2.0), radius, look::TRACK);
+    ui.draw.rounded_rect(screen, radius, look::well());
+    ui.draw.stroke_rect(screen, m.px(2.0), radius, look::track());
     let toast = Vec2::new(m.px(88.0), m.px(34.0));
     let inset = m.px(14.0);
     let half = size * 0.5;
@@ -83,9 +83,9 @@ fn corner_picker(ui: &mut Ui, id: WidgetId, slot: Rect, value: &mut String) -> b
         let fill = if i == picked {
             ui.theme.accent
         } else if r.hovered {
-            look::TRACK.scale_rgb(1.5)
+            look::track().scale_rgb(1.5)
         } else {
-            look::TRACK
+            look::track()
         };
         ui.draw.rounded_rect(Rect::from_min_size(Vec2::new(x, y), toast), m.px(8.0), fill);
     }

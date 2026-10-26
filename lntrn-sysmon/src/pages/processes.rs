@@ -47,10 +47,10 @@ pub fn draw(app: &mut App, frame: &Frame, ui: &mut Ui, cx: &mut AreaCx<()>) {
 fn header(frame: &Frame, ui: &mut Ui) {
     ui.space(ui.m.px(15.0));
     let (big, small) = (title_style(ui), small_style(ui));
-    text_line(ui, "Processes", &big, look::TEXT);
+    text_line(ui, "Processes", &big, look::text());
     let kernel = frame.procs.len() - frame.programs();
     let said = format!("{} processes and {} threads, and {} of the kernel's own.", format::count(frame.programs() as u64), format::count(frame.threads()), format::count(kernel as u64));
-    text_line(ui, &said, &small, look::TEXT_DIM);
+    text_line(ui, &said, &small, look::text_dim());
 }
 
 /// The search field, the fold switch, and at the right the two ways to
@@ -138,7 +138,7 @@ fn cpu_ink(cpu: f32, threads: usize, plain: Color) -> Color {
     } else if processors >= 0.9 {
         look::WARN
     } else if cpu < 0.05 {
-        look::TEXT_DIM
+        look::text_dim()
     } else {
         plain
     }
@@ -151,8 +151,8 @@ fn cell(c: &mut Cell, table: WidgetId, l: &Line, selected: bool, threads: usize,
     let style = c.text_style();
     // A selected row is filled with the accent: its ink is the one that
     // reads on it, and the heat colours give way to it.
-    let ink = if selected { c.theme.selection_text } else { look::TEXT };
-    let dim = if selected { ink.fade(0.8) } else { look::TEXT_DIM };
+    let ink = if selected { c.theme.selection_text } else { look::text() };
+    let dim = if selected { ink.fade(0.8) } else { look::text_dim() };
     let rect = c.rect;
     match c.col {
         0 => {
@@ -178,14 +178,14 @@ fn cell(c: &mut Cell, table: WidgetId, l: &Line, selected: bool, threads: usize,
                 c.text_in_rect(l.name, &style, Rect::new(Vec2::new(x, rect.min.y), rect.max), ink);
                 x += w + m.px(12.0);
                 if x + m.px(40.0) < rect.max.x {
-                    bits::badge(c, x, rect.center().y, &count.to_string(), if selected { look::TEXT } else { look::TEXT_DIM });
+                    bits::badge(c, x, rect.center().y, &count.to_string(), if selected { look::text() } else { look::text_dim() });
                 }
             } else {
                 c.text_in_rect(l.name, &style, Rect::new(Vec2::new(x, rect.min.y), rect.max), if l.inside { dim } else { ink });
             }
         }
         1 => c.text_in_rect(l.user, &style, rect, dim),
-        2 => c.text_right(&format::percent(f64::from(l.cpu), true), &style, rect, if selected { ink } else { cpu_ink(l.cpu, threads, look::TEXT) }),
+        2 => c.text_right(&format::percent(f64::from(l.cpu), true), &style, rect, if selected { ink } else { cpu_ink(l.cpu, threads, look::text()) }),
         3 => c.text_right(&format::bytes(l.memory), &style, rect, ink),
         _ => c.text_right(&l.pid, &style, rect, dim),
     }
@@ -251,7 +251,7 @@ fn list(app: &mut App, frame: &Frame, ui: &mut Ui, cx: &mut AreaCx<()>) {
         let (_, body) = area.take_top(m.widget_h);
         let style = small_style(ui);
         let said = if p.view.search.trim().is_empty() { "Nothing is running that can be read.".to_owned() } else { format!("Nothing matches “{}”.", p.view.search.trim()) };
-        ui.text_centered(&said, &style, body, look::TEXT_DIM);
+        ui.text_centered(&said, &style, body, look::text_dim());
     }
 
     // A click picks; a second one on a folded program opens it.
@@ -319,9 +319,9 @@ mod tests {
 
     #[test]
     fn a_share_of_the_processors_is_coloured_by_how_many_it_is() {
-        let plain = look::TEXT;
+        let plain = look::text();
         // Of 28 threads: 3.6% is one of them flat out.
-        assert_eq!(cpu_ink(0.01, 28, plain), look::TEXT_DIM);
+        assert_eq!(cpu_ink(0.01, 28, plain), look::text_dim());
         assert_eq!(cpu_ink(1.0, 28, plain), plain);
         assert_eq!(cpu_ink(3.5, 28, plain), look::WARN);
         assert_eq!(cpu_ink(8.0, 28, plain), look::BAD);

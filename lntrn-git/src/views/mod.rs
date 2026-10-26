@@ -90,7 +90,7 @@ fn header(app: &mut App, ui: &mut Ui) {
     let style = title_style(ui);
     let room = (right - left - m.px(10.0)).max(0.0);
     let name = elide(ui, &repo.name(), &style, room, Keep::Start);
-    ui.text_in_rect(&name, &style, Rect::new(Vec2::new(left, row.min.y), Vec2::new(left + room, row.max.y)), look::TEXT);
+    ui.text_in_rect(&name, &style, Rect::new(Vec2::new(left, row.min.y), Vec2::new(left + room, row.max.y)), look::text());
 
     if back {
         app.back();
@@ -139,7 +139,7 @@ fn tabs(app: &mut App, ui: &mut Ui) {
     let slot = Rect::new(Vec2::new(row.max.x - width, row.min.y), row.max);
     let small = small_style(ui);
     if room - width > ui.measure("Branch", &small) + m.px(12.0) {
-        ui.text_right("Branch", &small, Rect::new(Vec2::new(row.min.x + tabs_w, row.min.y), Vec2::new(slot.min.x - m.px(12.0), row.max.y)), look::TEXT_DIM);
+        ui.text_right("Branch", &small, Rect::new(Vec2::new(row.min.x + tabs_w, row.min.y), Vec2::new(slot.min.x - m.px(12.0), row.max.y)), look::text_dim());
     }
     let id = ui.id("branch");
     let switch = (pickers::dropdown(ui, id, slot, &mut picked, &names) && picked != shown).then(|| names[picked].to_owned()).filter(|n| !n.starts_with('('));

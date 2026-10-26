@@ -18,7 +18,7 @@ pub fn draw(ui: &mut Ui, s: &LoadState, slots: usize, frame: &Frame, sysmon: &mu
     let m = ui.m;
     let mem = &s.mem;
     let blue = Kind::Ram.color();
-    let parts = [("Used", mem.used(), blue), ("Cache", mem.cache(), blue.fade(0.45)), ("Free", mem.free, look::TRACK)];
+    let parts = [("Used", mem.used(), blue), ("Cache", mem.cache(), blue.fade(0.45)), ("Free", mem.free, look::track())];
     let legend: Vec<(String, Color)> = parts.iter().map(|(what, b, color)| (format!("{what} {}", bytes(*b)), *color)).collect();
     let legend_rows = rows(ui, &legend, frame_inner(ui));
     let rows: Vec<(String, String)> = s.top.as_ref().map(|t| t.memory.iter().map(|(name, b)| (name.to_string(), bytes(*b))).collect()).unwrap_or_default();

@@ -167,7 +167,13 @@ fn settings_are_kept_and_followed() {
         assert_eq!(Settings::load(), Settings { paper: false, page_width: 0.5 });
         assert_eq!(Settings::reload(), Some(Settings { paper: false, page_width: 0.5 }));
     });
-    assert_eq!((rig.app.settings.paper, rig.app.inks().page), (false, 0x1D1914));
+    // A desktop that hasn't chosen a style is Fox, and so is the dark page;
+    // switched to Lantern, the page follows while running.
+    assert_eq!((rig.app.settings.paper, rig.app.inks().page), (false, 0x1C1C1C));
+    lntrn_kit::desktop::update("appearance", |t| t.insert("theme", lntrn_data::Doc::Str("lantern".into()))).unwrap();
+    rig.wait(1.2);
+    assert_eq!(rig.app.inks(), crate::view::paint::Inks::DARK);
+    std::thread::sleep(std::time::Duration::from_millis(20));
     // The page's look from the View menu: shown at once, written in a
     // moment, the rest of the file as it was.
     lntrn_kit::desktop::update("appearance", |t| t.insert("accent", lntrn_data::Doc::Str("#2563EB".into()))).unwrap();

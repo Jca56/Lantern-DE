@@ -189,7 +189,7 @@ pub fn page(ui: &mut Ui, ed: &mut Editor, view: &mut View, height: f64, mut p: P
 
     // ---- the desk, the sheet on it ----
     ui.draw.push_clip(desk);
-    ui.draw.rect(desk, look::BG.fade(ui.state.opacity));
+    ui.draw.rect(desk, look::bg().fade(ui.state.opacity));
     ui.draw.shadow(place.sheet, 0.0, m.px(18.0), Color::BLACK.fade(0.45));
     ui.draw.rect(place.sheet, ink(p.inks.page));
     let (from, to) = (ed.layout.para_at((view.scroll - PAGE_TOP * m.scale) as f32), ed.layout.para_at((view.scroll + desk.height()) as f32));
@@ -267,7 +267,7 @@ pub fn page(ui: &mut Ui, ed: &mut Editor, view: &mut View, height: f64, mut p: P
     // The scroll bar, when there is somewhere to scroll to.
     if most > 0.0 {
         let thumb = thumb_rect(bar, view.scroll, most);
-        ui.draw.rounded_rect(thumb.shrink(m.px(3.0)), m.px(3.0), look::TRACK.lerp(look::TEXT, if bar_r.hovered || bar_r.held { 0.5 } else { 0.15 }));
+        ui.draw.rounded_rect(thumb.shrink(m.px(3.0)), m.px(3.0), look::track().lerp(look::text(), if bar_r.hovered || bar_r.held { 0.5 } else { 0.15 }));
     }
     ui.draw.pop_clip();
     if r.hovered && !sides.iter().any(|s| s.hovered) && !bar_r.hovered && place.sheet.contains(ui.state.pointer) {

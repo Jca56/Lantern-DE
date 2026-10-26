@@ -96,7 +96,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, heads: &[Head], drafts: &mut [Draft], selec
     let m = ui.m;
     // The row of buttons under it brings its own room.
     let well = Rect::new(rect.min + Vec2::splat(m.px(14.0)), Vec2::new(rect.max.x - m.px(14.0), rect.max.y));
-    ui.draw.rounded_rect(well, m.px(12.0), look::WELL);
+    ui.draw.rounded_rect(well, m.px(12.0), look::well());
     let n = drafts.len().min(heads.len());
     if n == 0 {
         return false;
@@ -178,10 +178,10 @@ fn paint(ui: &mut Ui, face: Rect, index: usize, head: &Head, d: &Draft, picked: 
     let accent = ui.theme.accent;
     let radius = m.px(10.0);
     let (fill, edge, ink) = match (d.enabled, picked) {
-        (true, true) => (accent.lerp(look::CARD, 0.8), accent, look::TEXT),
-        (true, false) => (look::BUTTON, if hot { look::TEXT_DIM } else { look::TRACK }, look::TEXT),
-        (false, true) => (look::CARD, accent.fade(0.7), look::TEXT_DIM),
-        (false, false) => (look::CARD, if hot { look::TEXT_DIM } else { look::LINE }, look::TEXT_DIM),
+        (true, true) => (accent.lerp(look::card(), 0.8), accent, look::text()),
+        (true, false) => (look::button(), if hot { look::text_dim() } else { look::track() }, look::text()),
+        (false, true) => (look::card(), accent.fade(0.7), look::text_dim()),
+        (false, false) => (look::card(), if hot { look::text_dim() } else { look::line() }, look::text_dim()),
     };
     ui.draw.rounded_rect(face, radius, fill);
     ui.draw.stroke_rect(face, m.px(if picked { 3.0 } else { 2.0 }), radius, edge);
@@ -201,7 +201,7 @@ fn paint(ui: &mut Ui, face: Rect, index: usize, head: &Head, d: &Draft, picked: 
         lines.push((&d.name, f64::from(body.line_height()), ink, 1));
     }
     if ui.measure(&detail, &small) <= inner {
-        lines.push((&detail, f64::from(small.line_height()), look::TEXT_DIM, 2));
+        lines.push((&detail, f64::from(small.line_height()), look::text_dim(), 2));
     }
     // Lines that don't fit under the number go, the last first.
     while lines.len() > 1 && lines.iter().map(|l| l.1).sum::<f64>() > face.height() - m.px(12.0) {

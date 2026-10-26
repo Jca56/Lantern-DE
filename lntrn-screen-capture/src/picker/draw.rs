@@ -84,8 +84,8 @@ pub fn bar(ui: &mut Ui, bar: &Bar, mode: &mut usize, sound: &mut Sources, can_re
     let m = ui.m;
     let radius = m.px(BAR_RADIUS);
     ui.draw.shadow(bar.panel.translate(Vec2::new(0.0, m.px(4.0))), radius, m.px(16.0), Color::BLACK.fade(0.5));
-    ui.draw.rounded_rect(bar.panel, radius, look::CARD);
-    ui.draw.stroke_rect(bar.panel, m.px(1.0), radius, look::LINE);
+    ui.draw.rounded_rect(bar.panel, radius, look::card());
+    ui.draw.stroke_rect(bar.panel, m.px(1.0), radius, look::line());
     let id = ui.id("modes");
     controls::segmented(ui, id, bar.modes, mode, &MODES);
     toggle(ui, bar.desktop, DESKTOP, &mut sound.desktop);
@@ -105,14 +105,14 @@ pub fn bar(ui: &mut Ui, bar: &Bar, mode: &mut usize, sound: &mut Sources, can_re
 /// flips it.
 fn toggle(ui: &mut Ui, rect: Rect, label: &str, value: &mut bool) {
     let m = ui.m;
-    ui.draw.rounded_rect(rect, m.px(12.0), look::WELL);
-    ui.draw.stroke_rect(rect, m.px(1.0), m.px(12.0), look::LINE);
+    ui.draw.rounded_rect(rect, m.px(12.0), look::well());
+    ui.draw.stroke_rect(rect, m.px(1.0), m.px(12.0), look::line());
     let id = ui.id(label);
     let slot = Rect::new(rect.min, Vec2::new(rect.max.x - m.px(12.0), rect.max.y));
     controls::switch(ui, id, rect, slot, value);
     let style = ui.text_style();
     let text = Rect::new(Vec2::new(rect.min.x + m.px(16.0), rect.min.y), Vec2::new(slot.max.x - m.px(SWITCH_W), rect.max.y));
-    ui.text_in_rect(label, &style, text, look::TEXT);
+    ui.text_in_rect(label, &style, text, look::text());
 }
 
 /// Darken all of `surface` but `hole`.
@@ -160,7 +160,7 @@ pub fn label(ui: &mut Ui, r: Rect, surface: Rect, text: &str) {
     let gap = m.px(14.0);
     let y = if r.min.y - size.y - gap >= surface.min.y { r.min.y - size.y - gap } else { r.min.y + gap };
     let x = r.min.x.clamp(surface.min.x, (surface.max.x - size.x).max(surface.min.x));
-    pill(ui, Rect::from_min_size(Vec2::new(x, y), size), text, look::TEXT);
+    pill(ui, Rect::from_min_size(Vec2::new(x, y), size), text, look::text());
 }
 
 /// What to do next, in a pill over the toolbar.
@@ -169,12 +169,12 @@ pub fn hint(ui: &mut Ui, bar: Rect, text: &str) {
     let style = ui.text_style();
     let size = Vec2::new(ui.measure(text, &style) + m.px(40.0), f64::from(style.line_height()) + m.px(18.0));
     let at = Vec2::new((bar.center().x - size.x * 0.5).round(), bar.min.y - m.px(16.0) - size.y);
-    pill(ui, Rect::from_min_size(at, size), text, look::TEXT);
+    pill(ui, Rect::from_min_size(at, size), text, look::text());
 }
 
 fn pill(ui: &mut Ui, r: Rect, text: &str, ink: Color) {
     let style = ui.text_style();
-    ui.draw.rounded_rect(r, r.height() * 0.5, look::CARD.fade(0.94));
-    ui.draw.stroke_rect(r, ui.m.px(1.0), r.height() * 0.5, look::LINE);
+    ui.draw.rounded_rect(r, r.height() * 0.5, look::card().fade(0.94));
+    ui.draw.stroke_rect(r, ui.m.px(1.0), r.height() * 0.5, look::line());
     ui.text_centered(text, &style, r, ink);
 }

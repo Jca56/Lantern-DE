@@ -60,7 +60,7 @@ pub(crate) fn run_loop(
     };
     let mut last_theme_stamp = theme_stamp();
     let mut bg_opacity = lntrn_theme::background_opacity();
-    *palette = FoxPalette::current();
+    *palette = Settings::palette();
     let mut last_theme_poll = Instant::now();
     // Watchers, git badges, and the results of off-thread work: everything
     // that has to move on while no frame is drawn (housekeeping.rs).
@@ -200,7 +200,7 @@ pub(crate) fn run_loop(
             let stamp = theme_stamp();
             if stamp != last_theme_stamp {
                 last_theme_stamp = stamp;
-                *palette = FoxPalette::current();
+                *palette = Settings::palette();
                 bg_opacity = lntrn_theme::background_opacity();
                 state.frame_done = true; // force a render this iteration
             }

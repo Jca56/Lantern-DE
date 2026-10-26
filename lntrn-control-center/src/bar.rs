@@ -8,8 +8,8 @@
 //! clicks through (U092), and the space kept from windows changes once a
 //! glide, not every frame.
 
-use lntrn_kit::desktop::{Desktop, Style};
-use lntrn_kit::look;
+use lntrn_kit::desktop::Desktop;
+use lntrn_kit::look::Palette;
 use lntrn_math::{Color, Rect, Vec2};
 use lntrn_ui::{Anchor, KeyboardMode, LayerConfig, Metrics, Theme, Ui};
 
@@ -17,8 +17,9 @@ use crate::hide;
 
 /// What the compositor knows the surface as.
 pub const NAMESPACE: &str = "lntrn-control-center";
-/// The Fox style's plate: the Command Center's panel (Fox Dark's `bg`).
-const FOX_PLATE: Color = Color::hex(0x181818);
+/// What the Control Center wears whatever the window style: Fox's
+/// charcoal, and no window background the user chose either.
+pub const PALETTE: Palette = Palette::FOX;
 
 /// The bar's size and where it floats, logical px: `[control_center]`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,12 +109,12 @@ fn monitors() -> impl Iterator<Item = String> {
     })
 }
 
-/// The shell's theme: the kit's, with the desktop's accent, but nothing
-/// of the shell's own painted behind or around the plate. The clear stays
-/// see-through past the plate, and the outline the shell rings its one
-/// area with is gone: the bar draws its own edge.
+/// The shell's theme: the kit's in [`PALETTE`] with the desktop's accent,
+/// but nothing of the shell's own painted behind or around the plate. The
+/// clear stays see-through past the plate, and the outline the shell rings
+/// its one area with is gone: the bar draws its own edge.
 pub fn theme(desktop: &Desktop) -> Theme {
-    Theme { bg: Color::TRANSPARENT, border_width: 0.0, ..look::theme(desktop.accent) }
+    Theme { bg: Color::TRANSPARENT, border_width: 0.0, ..PALETTE.theme(desktop.accent) }
 }
 
 /// What the plate is painted with.
@@ -128,13 +129,9 @@ pub struct Look {
 }
 
 impl Look {
-    /// The window background the desktop has, chosen or its style's own,
-    /// as see-through as the windows.
+    /// [`PALETTE`]'s window colour, as see-through as the windows.
     pub fn of(desktop: &Desktop) -> Look {
-        let plate = desktop.background.unwrap_or(match desktop.style {
-            Style::Lantern => look::BG,
-            Style::Fox => FOX_PLATE,
-        });
+        let plate = PALETTE.bg;
         let glass = desktop.opacity < 0.99;
         let alpha = if glass { desktop.opacity } else { 1.0 };
         Look { plate: plate.with_alpha(alpha), edge: plate.lerp(Color::WHITE, 0.10).with_alpha(alpha.max(0.6)), glass }
@@ -201,6 +198,8 @@ pub fn draw(ui: &mut Ui, look: Look, plate: Plate) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lntrn_kit::desktop::Style;
+    use lntrn_kit::look;
     use lntrn_ui::Margin;
 
     fn r(x0: f64, y0: f64, x1: f64, y1: f64) -> Rect {
@@ -263,11 +262,11 @@ mod tests {
     }
 
     #[test]
-    fn the_plate_wears_the_chosen_background_else_the_styles() {
-        let chosen = Desktop { background: Some(Color::hex(0x0E0E0E)), ..Desktop::default() };
-        assert_eq!(Look::of(&chosen).plate, Color::hex(0x0E0E0E));
-        assert_eq!(Look::of(&Desktop { style: Style::Fox, ..Desktop::default() }).plate, FOX_PLATE);
-        assert_eq!(Look::of(&Desktop::default()).plate, look::BG);
+    fn the_plate_keeps_fox_whatever_the_style_and_background() {
+        let chosen = Desktop { style: Style::Lantern, background: Some(Color::hex(0x0E0E0E)), ..Desktop::default() };
+        assert_eq!(Look::of(&chosen).plate, Palette::FOX.bg);
+        assert_eq!(Look::of(&Desktop::default()).plate, Palette::FOX.bg);
+        assert_eq!(theme(&chosen).text, Palette::FOX.text);
     }
 
     #[test]

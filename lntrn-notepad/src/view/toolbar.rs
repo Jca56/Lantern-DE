@@ -104,7 +104,7 @@ fn button(ui: &mut Ui, id: WidgetId, rect: Rect, face: Face, on: bool, tip: &str
     } else if r.hovered || r.held {
         ui.draw.rounded_rect(rect, radius, Color::WHITE.fade(if r.held { 0.12 } else { 0.07 }));
     }
-    let ink = if on { accent.lerp(Color::WHITE, 0.25) } else { look::TEXT };
+    let ink = if on { accent.lerp(Color::WHITE, 0.25) } else { look::text() };
     match face {
         Face::Icon(icon) => icon(ui.draw, Rect::from_center_size(rect.center(), Vec2::splat(rect.height() * 0.42)), ink, m.px(2.2)),
         Face::Letter(letter, style, bar) => {
@@ -165,8 +165,8 @@ pub fn toolbar(ui: &mut Ui, ed: &mut Editor, fonts: &[String], body: f32) -> Too
     let sized = slot(0, wide[0] + wide[1] + gap * 2.0, wide[2]);
     let part = sized.width() / 3.0;
     let third = |i: usize| Rect::from_min_size(Vec2::new(sized.min.x + part * i as f64, sized.min.y), Vec2::new(part, h));
-    ui.draw.rounded_rect(sized, m.px(12.0), look::BUTTON);
-    ui.draw.stroke_rect(sized, m.px(1.0), m.px(12.0), look::TRACK);
+    ui.draw.rounded_rect(sized, m.px(12.0), look::button());
+    ui.draw.stroke_rect(sized, m.px(1.0), m.px(12.0), look::track());
     let mut new_size = None;
     for (i, (name, sign, by)) in [("smaller", "\u{2212}", -2.0), ("bigger", "+", 2.0)].into_iter().enumerate() {
         if button(ui, id.with(name), third(i * 2), Face::Letter(sign, style.clone(), None), false, if by < 0.0 { "Smaller text" } else { "Bigger text" }) {
@@ -178,7 +178,7 @@ pub fn toolbar(ui: &mut Ui, ed: &mut Editor, fonts: &[String], body: f32) -> Too
     if value.hovered {
         ui.state.cursor_icon = CursorIcon::Pointer;
     }
-    ui.text_centered(&format!("{}", size.round()), &style, third(1), if value.hovered { ui.theme.accent } else { look::TEXT });
+    ui.text_centered(&format!("{}", size.round()), &style, third(1), if value.hovered { ui.theme.accent } else { look::text() });
     ui.tooltip(&value, "Text size");
     if value.clicked {
         *ui.state.open(sizes) = !*ui.state.open(sizes);
@@ -210,14 +210,14 @@ pub fn toolbar(ui: &mut Ui, ed: &mut Editor, fonts: &[String], body: f32) -> Too
         // The U is underlined and the S struck, as their text would be.
         let (c, half, w) = (rect.center(), m.px(8.0), m.px(1.8));
         match which {
-            Toggle::Underline => ui.draw.line(c + Vec2::new(-half, m.px(13.0)), c + Vec2::new(half, m.px(13.0)), w, look::TEXT),
-            Toggle::Strike => ui.draw.line(c + Vec2::new(-half, m.px(1.0)), c + Vec2::new(half, m.px(1.0)), w, look::TEXT),
+            Toggle::Underline => ui.draw.line(c + Vec2::new(-half, m.px(13.0)), c + Vec2::new(half, m.px(13.0)), w, look::text()),
+            Toggle::Strike => ui.draw.line(c + Vec2::new(-half, m.px(1.0)), c + Vec2::new(half, m.px(1.0)), w, look::text()),
             _ => {}
         }
     }
 
     // ---- colours ----
-    for (i, (which, letter, color, tip)) in [(Swatch::Text, "A", run.color.map_or(look::TEXT, Color::hex), "Text colour"), (Swatch::Highlight, "\u{25A7}", run.highlight.map_or(look::TRACK, Color::hex), "Highlight")].into_iter().enumerate() {
+    for (i, (which, letter, color, tip)) in [(Swatch::Text, "A", run.color.map_or(look::text(), Color::hex), "Text colour"), (Swatch::Highlight, "\u{25A7}", run.highlight.map_or(look::track(), Color::hex), "Highlight")].into_iter().enumerate() {
         let rect = square(2, i);
         if button(ui, id.with(tip), rect, Face::Letter(letter, big.clone().bold(), Some(color)), false, tip) {
             out.swatches = Some((which, Vec2::new(rect.min.x, rect.max.y + gap)));

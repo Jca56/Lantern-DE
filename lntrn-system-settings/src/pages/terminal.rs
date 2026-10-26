@@ -6,6 +6,7 @@ use lntrn_math::{Color, Rect, Vec2};
 use lntrn_ui::Ui;
 
 use crate::config::{CURSOR_STYLES, Config, TERMINAL_FONT_SIZES};
+use crate::kit::desktop::Style;
 use crate::kit::{self, look};
 
 const CURSORS: [(&str, &str); 3] = [(CURSOR_STYLES[0], "Block"), (CURSOR_STYLES[1], "Underline"), (CURSOR_STYLES[2], "Beam")];
@@ -19,7 +20,10 @@ fn size(v: f64) -> String {
 /// Text and the well it sits in, as the terminal picks them: by the
 /// window style, with the background the user chose over the style's.
 fn inks(cfg: &Config) -> (Color, Color) {
-    let (text, well) = if cfg.appearance.theme.starts_with("fox") { (Color::hex(0xECECEC), Color::hex(0x181818)) } else { (Color::hex(0xF0E6D2), Color::hex(0x1E1914)) };
+    let (text, well) = match Style::from_word(&cfg.appearance.theme) {
+        Style::Fox => (Color::hex(0xECECEC), Color::hex(0x181818)),
+        Style::Lantern => (Color::hex(0xF0E6D2), Color::hex(0x1E1914)),
+    };
     (text, Color::parse_hex(&cfg.appearance.background_color).map_or(well, |c| c.with_alpha(1.0)))
 }
 
@@ -28,7 +32,7 @@ fn sample(ui: &mut Ui, rect: Rect, font_size: f64, cursor: &str, (text, well): (
     let m = ui.m;
     let well_rect = rect.shrink(m.px(4.0));
     ui.draw.rounded_rect(well_rect, m.px(10.0), well);
-    ui.draw.stroke_rect(well_rect, m.px(1.0), m.px(10.0), look::LINE);
+    ui.draw.stroke_rect(well_rect, m.px(1.0), m.px(10.0), look::line());
     let mut style = kit::mono_style(ui);
     style.size = m.px(font_size) as f32;
     let inner = Rect::new(Vec2::new(well_rect.min.x + m.px(18.0), well_rect.min.y), Vec2::new(well_rect.max.x - m.px(18.0), well_rect.max.y));

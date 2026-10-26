@@ -69,13 +69,13 @@ fn draw_new_branch(app: &mut App, ui: &mut Ui, cx: &mut HostCx) -> bool {
     let small = small_style(ui);
     let said = ui.alloc(Vec2::new(FILL, small.line_height() as f64));
     if !name.is_empty() && name != d.branch_name.trim() {
-        ui.text_in_rect(&format!("It will be called {name}"), &small, said, look::TEXT_DIM);
+        ui.text_in_rect(&format!("It will be called {name}"), &small, said, look::text_dim());
     }
     let row = ui.alloc(Vec2::new(FILL, m.px(60.0)));
     let id = ui.id("push");
     changed |= controls::switch(ui, id, row, Rect::new(row.min, Vec2::new(row.max.x - m.px(8.0), row.max.y)), &mut d.branch_push);
     let style = ui.text_style();
-    ui.text_in_rect("Push it to origin too", &style, Rect::new(Vec2::new(row.min.x + m.px(16.0), row.min.y), row.max), look::TEXT);
+    ui.text_in_rect("Push it to origin too", &style, Rect::new(Vec2::new(row.min.x + m.px(16.0), row.min.y), row.max), look::text());
     changed
 }
 
@@ -93,7 +93,7 @@ fn draw_merge(app: &mut App, ui: &mut Ui) -> bool {
     let mut changed = false;
     for (label, picked) in [("From", &mut d.merge_from), ("Into", &mut d.merge_into)] {
         let row = ui.alloc(Vec2::new(FILL, m.px(60.0)));
-        ui.text_in_rect(label, &style, row, look::TEXT_DIM);
+        ui.text_in_rect(label, &style, row, look::text_dim());
         let id = ui.id(label);
         *picked = (*picked).min(names.len() - 1);
         changed |= pickers::dropdown(ui, id, Rect::new(Vec2::new(row.min.x + label_w, row.min.y), row.max), picked, &names);
@@ -101,7 +101,7 @@ fn draw_merge(app: &mut App, ui: &mut Ui) -> bool {
     let small = small_style(ui);
     let said = ui.alloc(Vec2::new(FILL, small.line_height() as f64 + m.px(8.0)));
     let (from, into) = (names[d.merge_from], names[d.merge_into]);
-    let (text, color) = if from == into { ("Pick two different branches.".to_owned(), look::WARN) } else { (format!("{into} gets everything {from} has. {from} stays as it is."), look::TEXT_DIM) };
+    let (text, color) = if from == into { ("Pick two different branches.".to_owned(), look::WARN) } else { (format!("{into} gets everything {from} has. {from} stays as it is."), look::text_dim()) };
     ui.text_in_rect(&text, &small, said, color);
     changed
 }

@@ -53,11 +53,11 @@ pub fn draw(frame: &Frame, ui: &mut Ui) {
                 let cell = Rect::from_min_size(Vec2::new(rect.min.x + pad + col as f64 * cell_w, rect.min.y + edge + line as f64 * cell_h), Vec2::new(cell_w - gap, cell_h));
                 let (number, rest) = cell.take_left(number_w);
                 let (value, bar) = rest.take_right(value_w);
-                ui.text_in_rect(&t.index.to_string(), &small, number, look::TEXT_DIM);
+                ui.text_in_rect(&t.index.to_string(), &small, number, look::text_dim());
                 let frac = f64::from(t.usage) / 100.0;
                 let id = ui.id("meter").with_index(t.index);
                 chart::meter(ui, id, bar, frac, chart::heat(frac, accent));
-                ui.text_right(&percent(f64::from(t.usage)), &small, value, look::TEXT);
+                ui.text_right(&percent(f64::from(t.usage)), &small, value, look::text());
             }
             ui.pop_id();
         });

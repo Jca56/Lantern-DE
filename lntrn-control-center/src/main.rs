@@ -96,6 +96,7 @@ fn main() {
     let settings = Settings::read().unwrap_or_default();
     let output = bar::home(settings.primary.as_deref());
     log_info!("{APP_ID}: on {}", output.as_deref().unwrap_or("the compositor's pick"));
+    lntrn_kit::look::wear(bar::PALETTE);
     let mut shell = Shell::new(Editor::Bar);
     shell.prefs.theme = bar::theme(&settings.desktop);
     let config = AppConfig {

@@ -38,9 +38,9 @@ pub fn switch(ui: &mut Ui, id: WidgetId, hit: Rect, slot: Rect, value: &mut bool
     }
     let t = ui.animate(id.with("on"), if *value { 1.0 } else { 0.0 }, 0.12);
     let accent = ui.theme.accent;
-    ui.draw.rounded_rect(pill, size.y * 0.5, look::TRACK.lerp(accent, t));
+    ui.draw.rounded_rect(pill, size.y * 0.5, look::track().lerp(accent, t));
     let knob = Vec2::new(pill.min.x + size.y * 0.5 + (size.x - size.y) * t, pill.center().y);
-    ui.draw.circle(knob, size.y * 0.5 - m.px(4.0), look::TEXT.lerp(look::on(accent), t));
+    ui.draw.circle(knob, size.y * 0.5 - m.px(4.0), look::text().lerp(look::on(accent), t));
     // The ring follows the pill's shape, not the theme's corner.
     if ui.state.focus == Some(id) && ui.state.focus_visible {
         let w = m.px(2.0);
@@ -96,7 +96,7 @@ pub fn slider(ui: &mut Ui, id: WidgetId, slot: Rect, value: &mut f64, range: (f6
     let kx = (x0 + (x1 - x0) * t).round();
     let half = m.px(3.0);
     let accent = ui.theme.accent;
-    ui.draw.rounded_rect(Rect::new(Vec2::new(x0 - half, cy - half), Vec2::new(x1 + half, cy + half)), half, look::TRACK);
+    ui.draw.rounded_rect(Rect::new(Vec2::new(x0 - half, cy - half), Vec2::new(x1 + half, cy + half)), half, look::track());
     ui.draw.rounded_rect(Rect::new(Vec2::new(x0 - half, cy - half), Vec2::new(kx, cy + half)), half, accent);
     let hot = r.hovered || r.held;
     let knob = Vec2::new(kx, cy);
@@ -104,11 +104,11 @@ pub fn slider(ui: &mut Ui, id: WidgetId, slot: Rect, value: &mut f64, range: (f6
         ui.draw.circle(knob, knob_r + m.px(6.0), accent.fade(0.25));
     }
     ui.draw.shadow(Rect::from_center_size(knob + Vec2::new(0.0, m.px(2.0)), Vec2::splat(knob_r * 2.0)), knob_r, m.px(6.0), Color::BLACK.fade(0.5));
-    ui.draw.circle(knob, knob_r, look::TEXT);
-    ui.draw.circle(knob, knob_r - m.px(4.0), if r.held { accent } else { look::CARD });
+    ui.draw.circle(knob, knob_r, look::text());
+    ui.draw.circle(knob, knob_r - m.px(4.0), if r.held { accent } else { look::card() });
 
     let style = ui.text_style();
-    ui.text_right(&show(*value), &style, Rect::new(Vec2::new(hit.max.x, slot.min.y), slot.max), look::TEXT);
+    ui.text_right(&show(*value), &style, Rect::new(Vec2::new(hit.max.x, slot.min.y), slot.max), look::text());
     ui.focus_ring(id, band);
     changed
 }
@@ -167,8 +167,8 @@ pub fn segmented(ui: &mut Ui, id: WidgetId, slot: Rect, selected: &mut usize, op
 
     let radius = m.px(RADIUS);
     let inset = m.px(4.0);
-    ui.draw.rounded_rect(rect, radius, look::WELL);
-    ui.draw.stroke_rect(rect, m.px(1.0), radius, look::LINE);
+    ui.draw.rounded_rect(rect, radius, look::well());
+    ui.draw.stroke_rect(rect, m.px(1.0), radius, look::line());
     if let Some(i) = hovered.filter(|i| *i != *selected) {
         ui.draw.rounded_rect(segment(i).shrink(inset), radius - inset, Color::WHITE.fade(0.06));
     }
@@ -177,7 +177,7 @@ pub fn segmented(ui: &mut Ui, id: WidgetId, slot: Rect, selected: &mut usize, op
     ui.draw.rounded_rect(thumb, radius - inset, ui.theme.accent);
     let style = ui.text_style();
     for (i, option) in options.iter().enumerate() {
-        let ink = if i == *selected { ui.theme.accent_text } else { look::TEXT };
+        let ink = if i == *selected { ui.theme.accent_text } else { look::text() };
         ui.text_centered(option, &style, segment(i), ink);
     }
     ui.focus_ring(id, rect);
@@ -215,9 +215,9 @@ pub fn button_of(ui: &mut Ui, id: WidgetId, rect: Rect, text: &str, kind: Kind, 
     if !enabled {
         // Still laid out under its id, so it can be found; it senses nothing.
         ui.interact(id, rect, Sense::NONE);
-        ui.draw.rounded_rect(rect, radius, look::BUTTON.fade(0.6));
-        ui.draw.stroke_rect(rect, m.px(1.0), radius, look::LINE);
-        ui.text_centered(text, &style, rect, look::TEXT_DIM.fade(0.6));
+        ui.draw.rounded_rect(rect, radius, look::button().fade(0.6));
+        ui.draw.stroke_rect(rect, m.px(1.0), radius, look::line());
+        ui.text_centered(text, &style, rect, look::text_dim().fade(0.6));
         return false;
     }
     let mut r = ui.interact(id, rect, Sense::CLICK);
@@ -235,9 +235,9 @@ pub fn button_of(ui: &mut Ui, id: WidgetId, rect: Rect, text: &str, kind: Kind, 
     };
     let accent = ui.theme.accent;
     let (face, edge, ink) = match kind {
-        Kind::Plain => (look::BUTTON.scale_rgb(lit), if r.hovered { accent } else { look::TRACK }, look::TEXT),
+        Kind::Plain => (look::button().scale_rgb(lit), if r.hovered { accent } else { look::track() }, look::text()),
         Kind::Primary => (accent.scale_rgb(if r.held { 0.85 } else { 1.0 }), accent, ui.theme.accent_text),
-        Kind::Danger => (look::BAD.lerp(look::CARD, if r.hovered || r.held { 0.55 } else { 0.8 }), look::BAD, look::BAD.lerp(Color::WHITE, 0.35)),
+        Kind::Danger => (look::BAD.lerp(look::card(), if r.hovered || r.held { 0.55 } else { 0.8 }), look::BAD, look::BAD.lerp(Color::WHITE, 0.35)),
     };
     if kind == Kind::Primary && r.hovered && !r.held {
         ui.draw.shadow(rect, radius, m.px(14.0), accent.fade(0.45));
@@ -268,10 +268,10 @@ pub fn glyph_button(ui: &mut Ui, id: WidgetId, rect: Rect, glyph: IconFn, tip: &
         1.0
     };
     let radius = m.px(RADIUS);
-    ui.draw.rounded_rect(rect, radius, look::BUTTON.scale_rgb(lit));
-    ui.draw.stroke_rect(rect, m.px(1.0), radius, if r.hovered { ui.theme.accent } else { look::TRACK });
+    ui.draw.rounded_rect(rect, radius, look::button().scale_rgb(lit));
+    ui.draw.stroke_rect(rect, m.px(1.0), radius, if r.hovered { ui.theme.accent } else { look::track() });
     let side = rect.width().min(rect.height()) * 0.5;
-    glyph(ui.draw, Rect::from_center_size(rect.center(), Vec2::splat(side)), if r.hovered { ui.theme.accent } else { look::TEXT }, m.px(2.5));
+    glyph(ui.draw, Rect::from_center_size(rect.center(), Vec2::splat(side)), if r.hovered { ui.theme.accent } else { look::text() }, m.px(2.5));
     ui.focus_ring(id, rect);
     ui.tooltip(&r, tip);
     r.clicked

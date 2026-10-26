@@ -202,7 +202,7 @@ fn actions(ui: &mut Ui, rect: Rect, st: &mut MonitorsState, cfg: &mut Config, cx
     let small = kit::small_style(ui);
     let words = Rect::new(Vec2::new(identify.max.x + gap, row.min.y), Vec2::new(reset.min.x - gap, row.max.y));
     if ui.measure(said, &small) <= words.width() {
-        ui.text_right(said, &small, words, look::TEXT_DIM);
+        ui.text_right(said, &small, words, look::text_dim());
     }
     if controls::button_of(ui, reset_id, reset, "Reset", Kind::Plain, dirty && idle) {
         st.reset();
@@ -218,7 +218,7 @@ fn trial(ui: &mut Ui, st: &mut MonitorsState, cfg: &mut Config, left: u64) -> bo
     let panel = ui.alloc(Vec2::new(FILL, m.px(150.0)));
     let accent = ui.theme.accent;
     let radius = m.px(15.0);
-    ui.draw.rounded_rect(panel, radius, accent.lerp(look::CARD, 0.86));
+    ui.draw.rounded_rect(panel, radius, accent.lerp(look::card(), 0.86));
     ui.draw.stroke_rect(panel, m.px(3.0), radius, accent);
     let pad = m.px(26.0);
     let (w, gap, h) = (m.px(BUTTON_W), m.px(14.0), m.px(BUTTON_H));
@@ -231,9 +231,9 @@ fn trial(ui: &mut Ui, st: &mut MonitorsState, cfg: &mut Config, left: u64) -> bo
     let (title_h, body_h) = (f64::from(title.line_height()), f64::from(body.line_height()));
     let text_w = (back.min.x - pad - (panel.min.x + pad)).max(1.0);
     let y = (panel.center().y - (title_h + body_h) * 0.5).round();
-    ui.text_in_rect("Keep this setup?", &title, Rect::from_min_size(Vec2::new(panel.min.x + pad, y), Vec2::new(text_w, title_h)), look::TEXT);
+    ui.text_in_rect("Keep this setup?", &title, Rect::from_min_size(Vec2::new(panel.min.x + pad, y), Vec2::new(text_w, title_h)), look::text());
     let counting = if left == 1 { "Going back to how it was in 1 second.".to_owned() } else { format!("Going back to how it was in {left} seconds.") };
-    ui.text_in_rect(&counting, &body, Rect::from_min_size(Vec2::new(panel.min.x + pad, y + title_h), Vec2::new(text_w, body_h)), look::TEXT_DIM);
+    ui.text_in_rect(&counting, &body, Rect::from_min_size(Vec2::new(panel.min.x + pad, y + title_h), Vec2::new(text_w, body_h)), look::text_dim());
 
     let (back_id, keep_id) = (ui.id("go-back"), ui.id("keep"));
     if controls::button(ui, back_id, back, "Go Back") {

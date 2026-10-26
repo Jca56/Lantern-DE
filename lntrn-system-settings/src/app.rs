@@ -11,7 +11,8 @@ use lntrn_ui::keymap::CTX_WINDOW;
 use lntrn_ui::{Action, AreaCx, FILL, Host, HostCx, Key, KeyConfig, KeyItem, KeyPress, Menu, MenuItem, Modifiers, Shell, Trigger, Ui, actions};
 
 use crate::config::Config;
-use crate::look;
+use crate::kit::desktop::{self, Style};
+use crate::look::{self, Palette};
 use crate::nav::Page;
 use crate::pages;
 use crate::pages::monitors::{MonitorsState, badge};
@@ -238,10 +239,13 @@ impl AppHost for App {
         if (shell.opacity - want).abs() > 1e-3 {
             shell.opacity = want;
         }
-        // The shell's own parts wear the Lantern look with the desktop's
-        // accent, whatever was saved: a new accent shows as it is picked.
-        let theme = look::theme(look::accent(&self.config.appearance.accent));
-        let restyled = shell.prefs.theme != theme;
+        // The app wears the style, background and accent being edited,
+        // whatever was saved: a new one shows as it is picked.
+        let a = &self.config.appearance;
+        let palette = Palette::of(Style::from_word(&a.theme)).with_bg(desktop::background(&a.background_color));
+        let repainted = look::wear(palette);
+        let theme = palette.theme(look::accent(&a.accent));
+        let restyled = repainted || shell.prefs.theme != theme;
         if restyled {
             shell.prefs.theme = theme;
         }

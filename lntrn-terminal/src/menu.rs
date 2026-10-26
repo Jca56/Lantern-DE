@@ -112,7 +112,7 @@ fn action_row(app: &mut App, ui: &mut Ui, cx: &mut HostCx, id: &str, label: &str
     }
     let style = ui.text_style();
     let inner = Rect::new(Vec2::new(rect.min.x + m.pad, rect.min.y), Vec2::new(rect.max.x - m.pad, rect.max.y));
-    let (ink, dim) = if on { (look::TEXT, look::TEXT_DIM) } else { (look::TEXT_DIM.fade(0.55), look::TEXT_DIM.fade(0.4)) };
+    let (ink, dim) = if on { (look::text(), look::text_dim()) } else { (look::text_dim().fade(0.55), look::text_dim().fade(0.4)) };
     ui.text_in_rect(label, &style, inner, ink);
     let key = if hint.is_empty() { app.key_hint(&Action::new(id)).unwrap_or_default() } else { hint.to_owned() };
     if !key.is_empty() {
@@ -133,7 +133,7 @@ fn size_row(app: &mut App, ui: &mut Ui) -> bool {
     let rect = ui.alloc(Vec2::new(FILL, m.widget_h));
     let style = ui.text_style();
     let inner = Rect::new(Vec2::new(rect.min.x + m.pad, rect.min.y), Vec2::new(rect.max.x - m.pad, rect.max.y));
-    ui.text_in_rect("Text Size", &style, inner, look::TEXT);
+    ui.text_in_rect("Text Size", &style, inner, look::text());
     let slot = Rect::new(Vec2::new(inner.min.x + ui.measure("Text Size", &style) + m.pad, inner.min.y), inner.max);
     let mut size = app.settings.font_size;
     let id = ui.id("size");
@@ -171,7 +171,7 @@ fn glyph(ui: &mut Ui, id: WidgetId, rect: Rect, picture: IconFn, tip: &str, hot:
         ui.state.cursor_icon = CursorIcon::Pointer;
         ui.draw.rounded_rect(rect.shrink(m.px(3.0)), m.px(10.0), hot.fade(if r.held { 0.4 } else { 0.25 }));
     }
-    let ink = if r.hovered || r.held { hot.lerp(Color::WHITE, 0.45) } else { look::TEXT };
+    let ink = if r.hovered || r.held { hot.lerp(Color::WHITE, 0.45) } else { look::text() };
     picture(ui.draw, Rect::from_center_size(rect.center(), Vec2::splat(rect.height() * 0.34)), ink, m.px(2.5));
     ui.focus_ring(id, rect);
     ui.tooltip(&r, tip);
@@ -249,7 +249,7 @@ fn controls_row(app: &mut App, ui: &mut Ui, cx: &mut HostCx) -> bool {
     let middle = Rect::from_min_size(Vec2::new(x0 + arrow, rect.min.y), Vec2::new(middle_w, side));
     if !fits {
         let style = ui.text_style();
-        ui.text_centered(&format!("{} / {count}", current + 1), &style, middle, look::TEXT);
+        ui.text_centered(&format!("{} / {count}", current + 1), &style, middle, look::text());
         return changed;
     }
     for i in 0..count {
@@ -260,7 +260,7 @@ fn controls_row(app: &mut App, ui: &mut Ui, cx: &mut HostCx) -> bool {
         }
         let lit = i == current;
         let radius = m.px(if lit || r.hovered { 7.0 } else { 5.0 });
-        ui.draw.circle(hit.center(), radius, if lit { accent } else { look::TRACK.lerp(look::TEXT, if r.hovered { 0.5 } else { 0.15 }) });
+        ui.draw.circle(hit.center(), radius, if lit { accent } else { look::track().lerp(look::text(), if r.hovered { 0.5 } else { 0.15 }) });
         if r.clicked && !lit {
             app.ops.push(Op::SelectTab(area, i));
             changed = true;

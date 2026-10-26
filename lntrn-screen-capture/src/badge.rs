@@ -49,13 +49,13 @@ impl Badge {
         let m = ui.m;
         let plate = ui.clip().shrink(m.px(4.0));
         let radius = m.px(18.0);
-        ui.draw.rounded_rect(plate, radius, kit::CARD);
-        ui.draw.stroke_rect(plate, m.px(1.0), radius, kit::LINE);
+        ui.draw.rounded_rect(plate, radius, kit::card());
+        ui.draw.stroke_rect(plate, m.px(1.0), radius, kit::line());
         let inner = plate.shrink(m.px(14.0));
         let style = ui.text_style();
         match phase {
-            Phase::Starting => ui.text_centered("Starting…", &style, inner, kit::TEXT_DIM),
-            Phase::Saving | Phase::Done => ui.text_centered("Saving…", &style, inner, kit::TEXT_DIM),
+            Phase::Starting => ui.text_centered("Starting…", &style, inner, kit::text_dim()),
+            Phase::Saving | Phase::Done => ui.text_centered("Saving…", &style, inner, kit::text_dim()),
             Phase::Recording => {
                 let elapsed = self.status.elapsed();
                 // The dot blinks with the seconds.
@@ -66,7 +66,7 @@ impl Badge {
                 let stop_w = controls::button_width(ui, "Stop");
                 let stop = Rect::from_min_size(Vec2::new(inner.max.x - stop_w, (inner.center().y - m.widget_h * 0.5).round()), Vec2::new(stop_w, m.widget_h));
                 let time = Rect::new(Vec2::new(dot.max.x + m.px(14.0), inner.min.y), Vec2::new(stop.min.x - m.px(12.0), inner.max.y));
-                ui.text_in_rect(&files::clock(elapsed.as_secs_f64()), &style, time, kit::TEXT);
+                ui.text_in_rect(&files::clock(elapsed.as_secs_f64()), &style, time, kit::text());
                 let id = ui.id("stop");
                 if controls::button_of(ui, id, stop, "Stop", Kind::Danger, !control::stopped()) {
                     control::stop();

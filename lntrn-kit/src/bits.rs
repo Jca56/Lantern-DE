@@ -24,7 +24,7 @@ pub fn badge(ui: &mut Ui, left: f64, mid_y: f64, text: &str, color: Color) -> f6
     let w = ui.measure(text, &style) + m.px(18.0);
     let h = m.px(BADGE_H);
     let rect = Rect::from_min_size(Vec2::new(left.round(), (mid_y - h * 0.5).round()), Vec2::new(w, h));
-    ui.draw.rounded_rect(rect, m.px(8.0), color.lerp(look::CARD, 0.78));
+    ui.draw.rounded_rect(rect, m.px(8.0), color.lerp(look::card(), 0.78));
     ui.text_centered(text, &style, rect, color);
     w
 }
@@ -41,9 +41,9 @@ pub fn banner(ui: &mut Ui, id: &str, text: &str, color: Color) -> bool {
     let text_h = ui.text.measure_wrapped(text, &style, text_w as f32).height as f64;
     let rect = ui.alloc(Vec2::new(FILL, (text_h + pad * 2.0).max(cross + m.px(12.0))));
     let radius = m.px(12.0);
-    ui.draw.rounded_rect(rect, radius, color.lerp(look::CARD, 0.82));
+    ui.draw.rounded_rect(rect, radius, color.lerp(look::card(), 0.82));
     ui.draw.stroke_rect(rect, m.px(1.0), radius, color.fade(0.6));
-    ui.text_at(text, &style, Vec2::new(rect.min.x + pad, (rect.center().y - text_h * 0.5).round()), text_w, look::TEXT);
+    ui.text_at(text, &style, Vec2::new(rect.min.x + pad, (rect.center().y - text_h * 0.5).round()), text_w, look::text());
 
     let hit = Rect::from_center_size(Vec2::new(rect.max.x - pad - cross * 0.5 + m.px(6.0), rect.center().y), Vec2::splat(cross));
     let id = ui.id(id).with("dismiss");
@@ -55,8 +55,8 @@ pub fn banner(ui: &mut Ui, id: &str, text: &str, color: Color) -> bool {
         ui.draw.rounded_rect(hit, m.px(10.0), Color::WHITE.fade(0.1));
     }
     let (c, s) = (hit.center(), m.px(8.0));
-    ui.draw.line(c - Vec2::splat(s), c + Vec2::splat(s), m.px(2.5), look::TEXT);
-    ui.draw.line(c + Vec2::new(-s, s), c + Vec2::new(s, -s), m.px(2.5), look::TEXT);
+    ui.draw.line(c - Vec2::splat(s), c + Vec2::splat(s), m.px(2.5), look::text());
+    ui.draw.line(c + Vec2::new(-s, s), c + Vec2::new(s, -s), m.px(2.5), look::text());
     ui.focus_ring(id, hit);
     r.clicked
 }

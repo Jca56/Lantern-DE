@@ -50,8 +50,8 @@ pub fn card(ui: &mut Ui, id: &str, f: impl FnOnce(&mut Card)) {
     if last > 0.0 {
         let rect = Rect::from_min_size(top, Vec2::new(w, last));
         let r = m.px(CARD_RADIUS);
-        ui.draw.rounded_rect(rect, r, look::CARD);
-        ui.draw.stroke_rect(rect, m.px(1.0), r, look::LINE);
+        ui.draw.rounded_rect(rect, r, look::card());
+        ui.draw.stroke_rect(rect, m.px(1.0), r, look::line());
     }
     let mut card = Card { ui, rows: 0, indent: 0.0, line_indent: 0.0, grip_w: 0.0, first: None };
     f(&mut card);
@@ -84,7 +84,7 @@ impl Card<'_, '_> {
         if self.rows > 0 {
             let pad = m.px(ROW_PAD);
             let y = (rect.min.y - (m.gap + m.px(1.0)) * 0.5).round();
-            self.ui.draw.hline(rect.min.x + pad + self.line_indent, rect.max.x - pad, y, m.px(1.0), look::LINE);
+            self.ui.draw.hline(rect.min.x + pad + self.line_indent, rect.max.x - pad, y, m.px(1.0), look::line());
         }
         self.rows += 1;
         self.first.get_or_insert(rect);
@@ -134,10 +134,10 @@ impl Card<'_, '_> {
         let ui = &mut *self.ui;
         let style = ui.text_style();
         let label_h = style.line_height() as f64;
-        ui.text_in_rect(label, &style, Rect::from_min_size(at.text, Vec2::new(at.text_w, label_h)), look::TEXT);
+        ui.text_in_rect(label, &style, Rect::from_min_size(at.text, Vec2::new(at.text_w, label_h)), look::text());
         if !hint.is_empty() {
             let small = small_style(ui);
-            ui.text_at(hint, &small, Vec2::new(at.text.x, at.text.y + label_h), at.text_w, look::TEXT_DIM);
+            ui.text_at(hint, &small, Vec2::new(at.text.x, at.text.y + label_h), at.text_w, look::text_dim());
         }
     }
 
@@ -264,7 +264,7 @@ impl Card<'_, '_> {
         let w = self.ui.measure(value, &style) + self.ui.m.px(2.0);
         self.row(label, hint, w, |ui, slot| {
             let shown = elide(ui, value, &style, slot.width(), Keep::Start);
-            ui.text_right(&shown, &style, slot, look::TEXT_DIM);
+            ui.text_right(&shown, &style, slot, look::text_dim());
         });
     }
 
@@ -280,7 +280,7 @@ impl Card<'_, '_> {
         self.row(label, hint, w, |ui, slot| {
             let (bar, words) = slot.take_right(bar_w.min(slot.width()));
             chart::meter(ui, id, bar, frac, color);
-            ui.text_right(text, &style, Rect::new(words.min, Vec2::new(words.max.x - between, words.max.y)), look::TEXT_DIM);
+            ui.text_right(text, &style, Rect::new(words.min, Vec2::new(words.max.x - between, words.max.y)), look::text_dim());
         });
     }
 

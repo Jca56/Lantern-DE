@@ -102,7 +102,7 @@ fn lists(ui: &mut Ui, repo: &Repo) -> Option<Act> {
         let rect = ui.alloc(Vec2::new(FILL, m.px(200.0)));
         glyphs::all_clear(ui, Vec2::new(rect.center().x, rect.min.y + m.px(80.0)), m.px(34.0), look::GOOD);
         let style = ui.text_style();
-        ui.text_centered("Nothing to commit", &style, Rect::new(Vec2::new(rect.min.x, rect.min.y + m.px(130.0)), rect.max), look::TEXT);
+        ui.text_centered("Nothing to commit", &style, Rect::new(Vec2::new(rect.min.x, rect.min.y + m.px(130.0)), rect.max), look::text());
         return None;
     }
     let mut act = None;
@@ -139,7 +139,7 @@ fn empty(c: &mut Card, text: &str) {
     let w = (c.ui.avail_width() - pad * 2.0).max(1.0);
     let h = c.ui.text.measure_wrapped(text, &style, w as f32).height as f64;
     c.block(h + pad * 2.0, |ui, rect| {
-        ui.text_at(text, &style, Vec2::new(rect.min.x + pad, rect.min.y + pad), w, look::TEXT_DIM);
+        ui.text_at(text, &style, Vec2::new(rect.min.x + pad, rect.min.y + pad), w, look::text_dim());
     });
 }
 
@@ -188,10 +188,10 @@ fn row(c: &mut Card, i: usize, file: &FileStatus, repo: &Repo) -> Option<Act> {
         let (name_h, folder_h) = (style.line_height() as f64, if folder.is_empty() { 0.0 } else { small.line_height() as f64 });
         let top = (rect.center().y - (name_h + folder_h) * 0.5).round();
         let name = elide(ui, name, &style, room, Keep::Start);
-        ui.text_in_rect(&name, &style, Rect::from_min_size(Vec2::new(text_x, top), Vec2::new(room, name_h)), look::TEXT);
+        ui.text_in_rect(&name, &style, Rect::from_min_size(Vec2::new(text_x, top), Vec2::new(room, name_h)), look::text());
         if !folder.is_empty() {
             let folder = elide(ui, folder, &small, room, Keep::End);
-            ui.text_in_rect(&folder, &small, Rect::from_min_size(Vec2::new(text_x, top + name_h), Vec2::new(room, folder_h)), look::TEXT_DIM);
+            ui.text_in_rect(&folder, &small, Rect::from_min_size(Vec2::new(text_x, top + name_h), Vec2::new(room, folder_h)), look::text_dim());
         }
         ui.focus_ring(id, glow);
 

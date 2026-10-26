@@ -371,11 +371,19 @@ impl Settings {
         }
     }
 
-    /// Theme variant — now reads from the unified `[appearance].theme` in
-    /// `lantern.toml`. The local `theme` field was dropped so System Settings
-    /// is the only source of truth.
-    pub fn theme_variant(&self) -> lntrn_theme::ThemeVariant {
-        lntrn_theme::active_variant()
+    /// The file manager's palette: Fox Dark whatever the window style
+    /// (`[appearance].theme` is for the apps on lntrn-kit), with the
+    /// desktop's accent and window background from `lantern.toml`.
+    pub fn palette() -> lntrn_ui::gpu::FoxPalette {
+        let color = |c: lntrn_theme::Rgba| lntrn_render::Color::from_rgba8(c.r, c.g, c.b, c.a);
+        let mut pal = lntrn_ui::gpu::FoxPalette::from_variant(lntrn_theme::ThemeVariant::FoxDark);
+        if let Some(accent) = lntrn_theme::active_accent() {
+            pal.accent = color(accent);
+        }
+        if let Some(bg) = lntrn_theme::active_background_color() {
+            pal.bg = color(bg);
+        }
+        pal
     }
 
     pub fn set_sort_by(&mut self, sort: crate::fs::SortBy) {

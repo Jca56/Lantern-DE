@@ -15,10 +15,13 @@ pub const PICKER_NAMESPACE: &str = "lntrn-screen-capture";
 /// the compositor's `screencopy_render.rs`).
 pub const BADGE_NAMESPACE: &str = "lntrn-screen-capture-badge";
 
-/// The kit's theme in the desktop's accent, with nothing of the shell's
-/// own painted: the surfaces are see-through but for what we draw.
+/// Wear the desktop's palette, and give back the kit's theme in it with
+/// the desktop's accent and nothing of the shell's own painted: the
+/// surfaces are see-through but for what we draw.
 pub fn theme(desktop: &Desktop) -> Theme {
-    Theme { bg: Color::TRANSPARENT, border_width: 0.0, ..look::theme(desktop.accent) }
+    let palette = desktop.palette();
+    look::wear(palette);
+    Theme { bg: Color::TRANSPARENT, border_width: 0.0, ..palette.theme(desktop.accent) }
 }
 
 /// The app's window, made as the surface `layer` says.

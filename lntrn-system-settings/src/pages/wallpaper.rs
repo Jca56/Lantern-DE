@@ -215,7 +215,7 @@ fn toolbar(ui: &mut Ui, count: usize, cx: &mut AreaCx<()>) {
     let bar = ui.alloc(Vec2::new(FILL, m.px(controls::BUTTON_H)));
     let small = kit::small_style(ui);
     let text = if count == 1 { "1 picture in ~/.lantern/wallpapers".to_owned() } else { format!("{count} pictures in ~/.lantern/wallpapers") };
-    ui.text_in_rect(&text, &small, Rect::new(Vec2::new(bar.min.x + m.px(5.0), bar.min.y), bar.max), look::TEXT_DIM);
+    ui.text_in_rect(&text, &small, Rect::new(Vec2::new(bar.min.x + m.px(5.0), bar.min.y), bar.max), look::text_dim());
     let mut right = bar.max.x;
     let mut button = |ui: &mut Ui, text: &str| {
         let w = controls::button_width(ui, text);
@@ -275,14 +275,14 @@ fn grid(ui: &mut Ui, st: &WallpaperState, current: &str) -> Option<String> {
         let ring = m.px(4.0);
         if up || r.hovered {
             let off = m.px(4.0) + ring;
-            ui.draw.stroke_rect(tile.expand(off), ring, radius + off, if up { accent } else { look::TRACK });
+            ui.draw.stroke_rect(tile.expand(off), ring, radius + off, if up { accent } else { look::track() });
         }
         match entry.image {
             Some(image) => ui.draw.image_uv(tile, image, cover_uv(image.aspect(), tile_w / tile_h), radius, Color::WHITE),
             None => {
-                ui.draw.rounded_rect(tile, radius, look::CARD);
-                ui.draw.stroke_rect(tile, m.px(1.0), radius, look::LINE);
-                ui.text_centered(if entry.failed { "No preview" } else { "Loading…" }, &small, tile, look::TEXT_DIM);
+                ui.draw.rounded_rect(tile, radius, look::card());
+                ui.draw.stroke_rect(tile, m.px(1.0), radius, look::line());
+                ui.text_centered(if entry.failed { "No preview" } else { "Loading…" }, &small, tile, look::text_dim());
             }
         }
         if up {
@@ -292,7 +292,7 @@ fn grid(ui: &mut Ui, st: &WallpaperState, current: &str) -> Option<String> {
             ui.draw.polyline(&[c + Vec2::new(-s, 0.0), c + Vec2::new(-s * 0.25, s * 0.7), c + Vec2::new(s, -s * 0.7)], m.px(3.0), ui.theme.accent_text, false);
         }
         let name = Rect::from_min_size(Vec2::new(tile.min.x, tile.max.y + m.px(6.0)), Vec2::new(tile_w, small.line_height() as f64));
-        ui.text_centered(&entry.name, &small, name, if up { look::TEXT } else { look::TEXT_DIM });
+        ui.text_centered(&entry.name, &small, name, if up { look::text() } else { look::text_dim() });
         ui.focus_ring(id, tile);
     }
     ui.pop_id();

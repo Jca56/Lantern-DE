@@ -13,6 +13,7 @@ use lntrn_math::{Color, Rect, Vec2};
 use lntrn_ui::Ui;
 
 use crate::config::{CC_DATE_STYLES, CC_GAPS_BELOW, CC_GAPS_SIDES, CC_GRID_ICONS, CC_HEIGHTS, CC_HIDE_DELAYS, CC_LAUNCHER_VIEWS, CC_MONITOR_RATES, CC_MONITOR_SPANS, CC_PEEKS, CC_RADII, CC_SLIDES, CC_VISIBILITIES, CC_WEEK_STARTS, Config, PANELS};
+use crate::kit::look::Palette;
 use crate::kit::{self, look, pixels};
 use crate::machine;
 
@@ -30,12 +31,6 @@ fn seconds(ms: f64) -> String {
     format!("{} s", s.trim_end_matches('0').trim_end_matches('.'))
 }
 
-/// What the bar is painted with, as it picks it: the window background
-/// chosen, else its style's.
-fn plate_color(cfg: &Config) -> Color {
-    let style = if cfg.appearance.theme.starts_with("fox") { Color::hex(0x181818) } else { look::BG };
-    Color::parse_hex(&cfg.appearance.background_color).map_or(style, |c| c.with_alpha(1.0))
-}
 
 /// The bottom of a screen, a wallpaper in the accent's shade, with the
 /// bar floating on it: `(height, radius, below, sides)` in logical px.
@@ -51,11 +46,12 @@ fn preview(ui: &mut Ui, rect: Rect, (height, radius, below, sides): (i64, i64, i
     let r = if below > 0 { px(radius) } else { 0.0 };
     ui.draw.rounded_rect(bar, r, plate);
     ui.draw.stroke_rect(bar, m.px(1.0), r, plate.lerp(Color::WHITE, 0.10));
-    ui.draw.stroke_rect(screen, m.px(1.0), corner, look::LINE);
+    ui.draw.stroke_rect(screen, m.px(1.0), corner, look::line());
 }
 
 pub fn draw(cfg: &mut Config, ui: &mut Ui) -> bool {
-    let plate = plate_color(cfg);
+    // Fox's charcoal, as the bar keeps it whatever the window style.
+    let plate = Palette::FOX.bg;
     let mut changed = false;
 
     kit::caption(ui, "Panel");

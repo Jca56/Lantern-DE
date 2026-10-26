@@ -109,7 +109,7 @@ pub fn switch(ui: &mut Ui, id: WidgetId, rect: Rect, on: bool) -> bool {
     let r = ui.interact(id, rect.expand(m.px(6.0)), Sense::CLICK);
     let t = ui.animate(id.with("knob"), if on { 1.0 } else { 0.0 }, 0.15);
     let accent = ui.theme.accent;
-    let track = look::TRACK.lerp(accent, t);
+    let track = look::track().lerp(accent, t);
     let track = if r.hovered { track.lerp(Color::WHITE, 0.08) } else { track };
     ui.draw.rounded_rect(rect, rect.height() * 0.5, track);
     let knob_r = rect.height() * 0.5 - m.px(4.0);
@@ -130,7 +130,7 @@ pub fn slider(ui: &mut Ui, id: WidgetId, rect: Rect, value: f64, max: f64, mark:
     let moved = (r.pressed || r.dragging).then(|| ((ui.state.pointer.x - track.min.x) / track.width().max(1.0)).clamp(0.0, 1.0) * max);
     let shown = moved.unwrap_or(value).clamp(0.0, max) / max.max(f64::EPSILON);
     let accent = ui.theme.accent;
-    ui.draw.rounded_rect(track, track.height() * 0.5, look::TRACK);
+    ui.draw.rounded_rect(track, track.height() * 0.5, look::track());
     let x = track.min.x + track.width() * shown;
     ui.draw.rounded_rect(Rect::new(track.min, Vec2::new(x.max(track.min.x + track.height()), track.max.y)), track.height() * 0.5, accent);
     if let Some(mark) = mark {

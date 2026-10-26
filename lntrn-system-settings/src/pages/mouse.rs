@@ -224,7 +224,7 @@ fn cursor_tiles(ui: &mut Ui, rect: Rect, tiles: &[(&str, &str, Option<ImageHandl
         if r.clicked && !in_use {
             picked = Some((*id).to_owned());
         }
-        ui.draw.rounded_rect(tile, radius, if r.hovered { look::BUTTON.scale_rgb(1.3) } else { look::BUTTON });
+        ui.draw.rounded_rect(tile, radius, if r.hovered { look::button().scale_rgb(1.3) } else { look::button() });
         if in_use {
             ui.draw.stroke_rect(tile, m.px(3.0), radius, accent);
         }
@@ -236,7 +236,7 @@ fn cursor_tiles(ui: &mut Ui, rect: Rect, tiles: &[(&str, &str, Option<ImageHandl
             ui.draw.image(Rect::from_center_size(room.center() + Vec2::new(0.0, m.px(6.0)), size).round(), *image, 0.0, Color::WHITE);
         }
         let label = Rect::new(Vec2::new(tile.min.x + m.px(8.0), tile.max.y - name_h), Vec2::new(tile.max.x - m.px(8.0), tile.max.y - m.px(6.0)));
-        ui.text_centered(name, &small, label, if in_use { look::TEXT } else { look::TEXT_DIM });
+        ui.text_centered(name, &small, label, if in_use { look::text() } else { look::text_dim() });
         ui.focus_ring(wid, tile);
     }
     ui.pop_id();

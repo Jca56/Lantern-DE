@@ -162,14 +162,14 @@ fn remote_row(ui: &mut Ui, rect: Rect, i: usize, repo: &RemoteRepo, dest: &Path,
     }
     let room = (right - left - tags_w - m.px(8.0)).max(m.px(60.0));
     let name = elide(ui, &repo.name, &style, room, Keep::Start);
-    ui.text_in_rect(&name, &style, Rect::from_min_size(Vec2::new(left, top), Vec2::new(room, name_h)), look::TEXT);
+    ui.text_in_rect(&name, &style, Rect::from_min_size(Vec2::new(left, top), Vec2::new(room, name_h)), look::text());
     let mut x = left + ui.measure(&name, &style) + m.px(14.0);
     for (tag, color) in tags {
         x += bits::badge(ui, x, top + name_h * 0.5, tag, color) + m.px(8.0);
     }
     let about = if repo.description.is_empty() { repo.full_name.as_str() } else { repo.description.as_str() };
     let about = elide(ui, about, &small, right - left, Keep::Start);
-    ui.text_in_rect(&about, &small, Rect::from_min_size(Vec2::new(left, top + name_h + m.px(4.0)), Vec2::new((right - left).max(0.0), small_h)), look::TEXT_DIM);
+    ui.text_in_rect(&about, &small, Rect::from_min_size(Vec2::new(left, top + name_h + m.px(4.0)), Vec2::new((right - left).max(0.0), small_h)), look::text_dim());
 
     pressed.then_some(if here { Act::Open(i) } else { Act::Clone(i) })
 }

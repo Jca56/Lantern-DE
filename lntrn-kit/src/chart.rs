@@ -110,16 +110,16 @@ fn trace(ui: &mut Ui, plot: Rect, s: &Series, max: f64, slots: usize, width: f64
 pub fn graph(ui: &mut Ui, id: WidgetId, rect: Rect, g: &Graph) -> Option<usize> {
     let m = ui.m;
     let radius = m.px(RADIUS);
-    ui.draw.rounded_rect(rect, radius, look::WELL);
-    ui.draw.stroke_rect(rect, m.px(1.0), radius, look::LINE);
+    ui.draw.rounded_rect(rect, radius, look::well());
+    ui.draw.stroke_rect(rect, m.px(1.0), radius, look::line());
     let plot = rect.shrink(m.px(INSET));
     for quarter in 1..4 {
         let y = (plot.min.y + plot.height() * f64::from(quarter) / 4.0).round();
-        ui.draw.hline(plot.min.x, plot.max.x, y, m.px(1.0), look::LINE.fade(0.55));
+        ui.draw.hline(plot.min.x, plot.max.x, y, m.px(1.0), look::line().fade(0.55));
     }
     if !g.top.is_empty() {
         let small = small_style(ui);
-        ui.text_at(g.top, &small, Vec2::new(plot.min.x + m.px(4.0), plot.min.y), plot.width(), look::TEXT_DIM.fade(0.75));
+        ui.text_at(g.top, &small, Vec2::new(plot.min.x + m.px(4.0), plot.min.y), plot.width(), look::text_dim().fade(0.75));
     }
 
     ui.draw.push_clip(rect);
@@ -139,11 +139,11 @@ pub fn graph(ui: &mut Ui, id: WidgetId, rect: Rect, g: &Graph) -> Option<usize> 
         return None;
     }
     let x = (plot.max.x - back as f64 * dx).round();
-    ui.draw.vline(x, plot.min.y, plot.max.y, m.px(1.0), look::TEXT_DIM.fade(0.6));
+    ui.draw.vline(x, plot.min.y, plot.max.y, m.px(1.0), look::text_dim().fade(0.6));
     for s in g.series {
         let pts = points(s.values, plot, g.max, g.slots);
         if let Some(p) = pts.len().checked_sub(back + 1).and_then(|i| pts.get(i)) {
-            ui.draw.circle(*p, m.px(6.0), look::WELL);
+            ui.draw.circle(*p, m.px(6.0), look::well());
             ui.draw.circle(*p, m.px(4.0), s.color);
         }
     }
@@ -177,7 +177,7 @@ fn filled(track: Rect, frac: f64) -> Rect {
 pub fn meter(ui: &mut Ui, id: WidgetId, rect: Rect, frac: f64, color: Color) {
     let track = bar(ui, rect);
     let round = track.height() * 0.5;
-    ui.draw.rounded_rect(track, round, look::TRACK);
+    ui.draw.rounded_rect(track, round, look::track());
     let t = ui.animate(id.with("level"), frac.clamp(0.0, 1.0), GLIDE);
     if t > 0.002 {
         ui.draw.rounded_rect(filled(track, t), round, color);
@@ -190,7 +190,7 @@ pub fn meter(ui: &mut Ui, id: WidgetId, rect: Rect, frac: f64, color: Color) {
 pub fn meter_parts(ui: &mut Ui, rect: Rect, parts: &[(f64, Color)]) {
     let track = bar(ui, rect);
     let round = track.height() * 0.5;
-    ui.draw.rounded_rect(track, round, look::TRACK);
+    ui.draw.rounded_rect(track, round, look::track());
     // Where each part ends; drawn last to first, so each lies over the
     // start of the one after it.
     let mut end = 0.0;
@@ -218,7 +218,7 @@ pub fn legend(ui: &mut Ui, at: Vec2, color: Color, label: &str) -> f64 {
     ui.draw.circle(Vec2::new(at.x + dot, mid.round()), dot, color);
     let text_x = at.x + dot * 2.0 + m.px(8.0);
     let w = ui.measure(label, &style);
-    ui.text_at(label, &style, Vec2::new(text_x, at.y), w + m.px(4.0), look::TEXT_DIM);
+    ui.text_at(label, &style, Vec2::new(text_x, at.y), w + m.px(4.0), look::text_dim());
     text_x + w - at.x
 }
 
@@ -250,8 +250,8 @@ pub fn tile(ui: &mut Ui, id: WidgetId, rect: Rect, t: &Tile) -> bool {
         ui.state.cursor_icon = CursorIcon::Pointer;
     }
     let radius = m.px(15.0);
-    ui.draw.rounded_rect(rect, radius, if r.hovered { look::CARD.scale_rgb(1.25) } else { look::CARD });
-    ui.draw.stroke_rect(rect, m.px(1.0), radius, if r.hovered { t.color } else { look::LINE });
+    ui.draw.rounded_rect(rect, radius, if r.hovered { look::card().scale_rgb(1.25) } else { look::card() });
+    ui.draw.stroke_rect(rect, m.px(1.0), radius, if r.hovered { t.color } else { look::line() });
 
     let pad = m.px(20.0);
     let (small, big) = (small_style(ui), title_style(ui));
@@ -262,11 +262,11 @@ pub fn tile(ui: &mut Ui, id: WidgetId, rect: Rect, t: &Tile) -> bool {
     let dot = m.px(6.0);
     ui.draw.circle(Vec2::new(left + dot, (y + small_h * 0.5).round()), dot, t.color);
     let title = Rect::from_min_size(Vec2::new(left + dot * 2.0 + m.px(8.0), y), Vec2::new(width - dot * 2.0 - m.px(8.0), small_h));
-    ui.text_in_rect(&t.title.to_uppercase(), &small.clone().bold(), title, look::TEXT_DIM);
+    ui.text_in_rect(&t.title.to_uppercase(), &small.clone().bold(), title, look::text_dim());
     y += small_h + m.px(4.0);
-    ui.text_in_rect(t.value, &big, Rect::from_min_size(Vec2::new(left, y), Vec2::new(width, big_h)), look::TEXT);
+    ui.text_in_rect(t.value, &big, Rect::from_min_size(Vec2::new(left, y), Vec2::new(width, big_h)), look::text());
     y += big_h;
-    ui.text_in_rect(t.note, &small, Rect::from_min_size(Vec2::new(left, y), Vec2::new(width, small_h)), look::TEXT_DIM);
+    ui.text_in_rect(t.note, &small, Rect::from_min_size(Vec2::new(left, y), Vec2::new(width, small_h)), look::text_dim());
     y += small_h + m.px(8.0);
 
     // The history takes what is left, clear of the rounded corners.

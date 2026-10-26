@@ -41,9 +41,9 @@ pub fn draw(ui: &mut Ui, rect: Rect, buttons: &[Button], selected: Option<usize>
 
     // The desktop under it, the track the buttons sit on, and the hub
     // with its four tiles.
-    ui.draw.circle(c, orbit + radius + m.px(14.0), look::WELL);
+    ui.draw.circle(c, orbit + radius + m.px(14.0), look::well());
     ui.draw.ring(c, orbit, m.px(2.5), accent.fade(0.45));
-    ui.draw.circle(c, hub, look::BUTTON);
+    ui.draw.circle(c, hub, look::button());
     ui.draw.ring(c, hub, m.px(2.0), accent.fade(0.85));
     let (tile, off) = (hub * 0.38, hub * 0.08);
     for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
@@ -73,7 +73,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, buttons: &[Button], selected: Option<usize>
         if picked {
             ui.draw.circle(center, radius + m.px(8.0), accent.fade(0.3));
         }
-        ui.draw.circle(center, radius, if r.hovered { look::BUTTON.scale_rgb(1.45) } else { look::BUTTON });
+        ui.draw.circle(center, radius, if r.hovered { look::button().scale_rgb(1.45) } else { look::button() });
         ui.draw.ring(center, radius, m.px(if picked { 3.5 } else { 2.0 }), if picked { accent } else { accent.fade(0.5) });
         match button.image {
             Some(image) => {
@@ -83,7 +83,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, buttons: &[Button], selected: Option<usize>
             }
             None => {
                 let initial: String = button.label.trim().chars().take(1).flat_map(char::to_uppercase).collect();
-                ui.text_centered(&initial, &style, hit, look::TEXT_DIM.fade(dim));
+                ui.text_centered(&initial, &style, hit, look::text_dim().fade(dim));
             }
         }
         ui.focus_ring(id, hit);

@@ -86,8 +86,8 @@ pub fn page(ui: &mut Ui, title: &str, blurb: &str, f: impl FnOnce(&mut Ui)) {
             let Some(f) = f.take() else { return };
             ui.space(m.px(15.0));
             let (big, small) = (title_style(ui), small_style(ui));
-            text_line(ui, title, &big, look::TEXT);
-            text_line(ui, blurb, &small, look::TEXT_DIM);
+            text_line(ui, title, &big, look::text());
+            text_line(ui, blurb, &small, look::text_dim());
             ui.space(m.px(10.0));
             f(ui);
             ui.space(m.px(40.0));
@@ -102,7 +102,7 @@ pub fn caption(ui: &mut Ui, s: &str) {
     let style = small_style(ui).bold();
     let r = ui.alloc(Vec2::new(FILL, m.px(30.0)));
     let inset = Rect::new(Vec2::new(r.min.x + m.px(5.0), r.min.y), r.max);
-    ui.text_in_rect(&s.to_uppercase(), &style, inset, look::TEXT_DIM);
+    ui.text_in_rect(&s.to_uppercase(), &style, inset, look::text_dim());
 }
 
 /// [`caption`] with a small text button at its right end: the heading of
@@ -114,7 +114,7 @@ pub fn caption_action(ui: &mut Ui, s: &str, action: &str) -> bool {
     let style = small_style(ui).bold();
     let r = ui.alloc(Vec2::new(FILL, m.px(36.0)));
     let inset = Rect::new(Vec2::new(r.min.x + m.px(5.0), r.min.y), r.max);
-    ui.text_in_rect(&s.to_uppercase(), &style, inset, look::TEXT_DIM);
+    ui.text_in_rect(&s.to_uppercase(), &style, inset, look::text_dim());
     if action.is_empty() {
         return false;
     }
@@ -140,7 +140,7 @@ pub fn note(ui: &mut Ui, s: &str) {
     let w = (ui.avail_width() - inset * 2.0).max(1.0);
     let h = ui.text.measure_wrapped(s, &style, w as f32).height as f64;
     let r = ui.alloc(Vec2::new(FILL, h));
-    ui.text_at(s, &style, Vec2::new(r.min.x + inset, r.min.y), w, look::TEXT_DIM);
+    ui.text_at(s, &style, Vec2::new(r.min.x + inset, r.min.y), w, look::text_dim());
 }
 
 /// `0..=1` as a percentage.

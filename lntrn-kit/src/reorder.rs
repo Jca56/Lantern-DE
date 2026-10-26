@@ -87,7 +87,7 @@ impl Card<'_, '_> {
             let plate = Rect::from_min_size(Vec2::new(x, y), Vec2::new(w, (laid[i].1 - m.gap).max(0.0)));
             let r = m.px(12.0);
             self.ui.draw.shadow(plate.translate(Vec2::new(0.0, m.px(6.0))), r, m.px(18.0), Color::BLACK.fade(0.55));
-            self.ui.draw.rounded_rect(plate, r, look::CARD.lerp(Color::WHITE, 0.05));
+            self.ui.draw.rounded_rect(plate, r, look::card().lerp(Color::WHITE, 0.05));
             self.ui.draw.stroke_rect(plate, m.px(1.5), r, self.ui.theme.accent.fade(0.7));
             self.ui.space(y - end);
             let rows = std::mem::replace(&mut self.rows, 0);
@@ -168,7 +168,7 @@ impl Card<'_, '_> {
         if hot {
             ui.draw.rounded_rect(face, m.px(10.0), Color::WHITE.fade(0.07));
         }
-        let ink = if lifted { ui.theme.accent } else if hot { look::TEXT } else { look::TEXT_DIM };
+        let ink = if lifted { ui.theme.accent } else if hot { look::text() } else { look::text_dim() };
         for (across, down) in [(-0.5, -1.0), (0.5, -1.0), (-0.5, 0.0), (0.5, 0.0), (-0.5, 1.0), (0.5, 1.0)] {
             ui.draw.circle(dots + Vec2::new(across, down) * m.px(DOT_GAP), m.px(DOT_R), ink);
         }

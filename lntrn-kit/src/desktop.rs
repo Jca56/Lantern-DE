@@ -11,7 +11,7 @@ use lntrn_data::{Doc, Map, toml};
 use lntrn_math::Color;
 use lntrn_ui::{Host, Shell};
 
-use crate::look;
+use crate::look::{self, Palette};
 
 /// The family every Lantern app falls back to.
 pub const DEFAULT_FAMILY: &str = "Inter";
@@ -30,14 +30,44 @@ pub fn config_path() -> PathBuf {
     lntrn_sys::dirs::lantern_config().unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".lantern/config")).join("lantern.toml")
 }
 
-/// The window style the desktop is set to (`[appearance] theme`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// The window style the desktop is set to (`[appearance] theme`): which
+/// palette every Lantern app on the kit wears.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Style {
     /// Warm near-black and tan.
-    #[default]
     Lantern,
-    /// Neutral dark grey.
+    /// Neutral charcoal.
     Fox,
+}
+
+impl Style {
+    /// What a desktop that hasn't chosen wears: what System Settings
+    /// shows it as.
+    pub const DEFAULT: Style = Style::Fox;
+
+    /// The style a stored `theme` means: `lantern`, or any of the `fox`
+    /// family (`fox`, `fox-dark`); anything else is the default.
+    pub fn from_word(word: &str) -> Style {
+        match word.trim() {
+            "lantern" => Style::Lantern,
+            w if w.starts_with("fox") => Style::Fox,
+            _ => Style::DEFAULT,
+        }
+    }
+
+    /// The word stored for it.
+    pub const fn word(self) -> &'static str {
+        match self {
+            Style::Lantern => "lantern",
+            Style::Fox => "fox-dark",
+        }
+    }
+}
+
+impl Default for Style {
+    fn default() -> Self {
+        Style::DEFAULT
+    }
 }
 
 /// The desktop's look as an app needs it.
@@ -55,7 +85,7 @@ pub struct Desktop {
 
 impl Default for Desktop {
     fn default() -> Self {
-        Self { accent: look::GOLD, opacity: 1.0, font: DEFAULT_FAMILY.to_owned(), style: Style::Lantern, background: None }
+        Self { accent: look::GOLD, opacity: 1.0, font: DEFAULT_FAMILY.to_owned(), style: Style::DEFAULT, background: None }
     }
 }
 
@@ -72,10 +102,22 @@ impl Desktop {
             accent: look::accent(text("appearance.accent")),
             opacity: doc.path("windows.background_opacity").and_then(Doc::as_f64).unwrap_or(1.0).clamp(0.05, 1.0),
             font: effective_family(text("appearance.font_family")),
-            style: if text("appearance.theme").starts_with("fox") { Style::Fox } else { Style::Lantern },
-            background: Color::parse_hex(text("appearance.background_color")).map(|c| c.with_alpha(1.0)),
+            style: Style::from_word(text("appearance.theme")),
+            background: background(text("appearance.background_color")),
         }
     }
+
+    /// The palette an app wears on this desktop: its style's, with the
+    /// window background the user chose.
+    pub fn palette(&self) -> Palette {
+        Palette::of(self.style).with_bg(self.background)
+    }
+}
+
+/// The window background a stored `background_color` means: none when it
+/// is empty (the style's own) or won't parse.
+pub fn background(hex: &str) -> Option<Color> {
+    Color::parse_hex(hex).map(|c| c.with_alpha(1.0))
 }
 
 /// `lantern.toml` as a document: an empty one when it is missing or
@@ -116,8 +158,10 @@ fn update_at(path: &std::path::Path, section: &str, edit: impl FnOnce(&mut Map))
     })
 }
 
-/// Keeps a shell wearing the Lantern look with the desktop's accent and
-/// opacity, picking up a change to `lantern.toml` within a second.
+/// Keeps the app wearing the desktop's palette, and a shell its theme in
+/// the desktop's accent and opacity, picking up a change to
+/// `lantern.toml` within a second. Made, it wears the palette at once, so
+/// the first frame is already in it.
 pub struct Follow {
     now: Desktop,
     stamp: Option<SystemTime>,
@@ -132,7 +176,9 @@ fn stamp() -> Option<SystemTime> {
 
 impl Default for Follow {
     fn default() -> Self {
-        Self { now: Desktop::read(), stamp: stamp(), looked: 0.0, reads: 0 }
+        let now = Desktop::read();
+        look::wear(now.palette());
+        Self { now, stamp: stamp(), looked: 0.0, reads: 0 }
     }
 }
 
@@ -168,12 +214,14 @@ impl Follow {
         if (shell.opacity - self.now.opacity).abs() > 1e-3 {
             shell.opacity = self.now.opacity;
         }
-        let theme = look::theme(self.now.accent);
+        let palette = self.now.palette();
+        let repainted = look::wear(palette);
+        let theme = palette.theme(self.now.accent);
         let restyled = shell.prefs.theme != theme;
         if restyled {
             shell.prefs.theme = theme;
         }
-        restyled
+        repainted || restyled
     }
 }
 
@@ -192,7 +240,24 @@ mod tests {
         assert_eq!(effective_family("  Fira Sans "), "Fira Sans");
         let fox = Desktop::from_doc(&toml::parse("[appearance]\ntheme = \"fox-dark\"\nbackground_color = \"#0E0E0E\"\n").unwrap());
         assert_eq!((fox.style, fox.background), (Style::Fox, Some(Color::hex(0x0E0E0E))));
-        assert_eq!((d.style, d.background), (Style::Lantern, None));
+        assert_eq!(fox.palette(), Palette { bg: Color::hex(0x0E0E0E), ..Palette::FOX });
+        // Unset, the style is what System Settings shows: Fox.
+        assert_eq!((d.style, d.background, d.palette()), (Style::Fox, None, Palette::FOX));
+        let lantern = Desktop::from_doc(&toml::parse("[appearance]\ntheme = \"lantern\"\n").unwrap());
+        assert_eq!(lantern.palette(), Palette::LANTERN);
+    }
+
+    /// Every word the desktop has stored for a style reads as it; what is
+    /// written back is the one System Settings offers.
+    #[test]
+    fn a_style_is_read_from_any_word_it_was_stored_as() {
+        for (word, style) in [("lantern", Style::Lantern), (" lantern ", Style::Lantern), ("fox", Style::Fox), ("fox-dark", Style::Fox), ("", Style::DEFAULT), ("night-sky", Style::DEFAULT)] {
+            assert_eq!(Style::from_word(word), style, "{word:?}");
+        }
+        assert_eq!(Style::from_word(Style::Lantern.word()), Style::Lantern);
+        assert_eq!(Style::from_word(Style::Fox.word()), Style::Fox);
+        assert_eq!(background(""), None);
+        assert_eq!(background("#0e0e0e"), Some(Color::hex(0x0E0E0E)));
     }
 
     /// One section's keys change; the rest of the file, lists of tables

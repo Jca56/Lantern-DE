@@ -79,7 +79,7 @@ pub fn notches(ui: &mut Ui, rect: Rect, acc: &mut f64) -> i32 {
 
 /// The well a stepper's value sits in.
 pub fn well(ui: &mut Ui, rect: Rect) {
-    ui.draw.rounded_rect(rect, ui.m.px(12.0), look::WELL.fade(0.55));
+    ui.draw.rounded_rect(rect, ui.m.px(12.0), look::well().fade(0.55));
 }
 
 /// A stepper across `rect`: `‹` at its left end, `›` at its right, `text`

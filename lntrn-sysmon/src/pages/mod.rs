@@ -39,7 +39,7 @@ pub fn draw(app: &mut App, ui: &mut Ui, cx: &mut AreaCx<()>) {
         // The sampler's first look is a quarter of a second off.
         let rect = ui.alloc(Vec2::new(FILL, ui.remaining_height().max(1.0)));
         let style = small_style(ui);
-        ui.text_centered("Taking a first look…", &style, rect, look::TEXT_DIM);
+        ui.text_centered("Taking a first look…", &style, rect, look::text_dim());
         return;
     };
     let frame = &*frame;
@@ -78,8 +78,8 @@ pub fn reading(ui: &mut Ui, caption: &str, value: &str) {
     let (small, style) = (small_style(ui).bold(), ui.text_style());
     let r = ui.alloc(Vec2::new(FILL, m.px(36.0)));
     let inset = Rect::new(Vec2::new(r.min.x + m.px(5.0), r.min.y), Vec2::new(r.max.x - m.px(5.0), r.max.y));
-    ui.text_in_rect(&caption.to_uppercase(), &small, inset, look::TEXT_DIM);
-    ui.text_right(value, &style, inset, look::TEXT);
+    ui.text_in_rect(&caption.to_uppercase(), &small, inset, look::text_dim());
+    ui.text_right(value, &style, inset, look::text());
 }
 
 /// How long ago the sample `back` steps before the newest was taken.

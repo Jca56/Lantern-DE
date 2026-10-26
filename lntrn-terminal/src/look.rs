@@ -43,7 +43,7 @@ mod tests {
     #[test]
     fn the_look_follows_the_desktop_and_the_settings() {
         let settings = Settings { font_size: 24.0, cursor: CursorShape::Beam, ..Settings::default() };
-        let lantern = look(&Desktop::default(), &settings);
+        let lantern = look(&Desktop { style: Style::Lantern, ..Desktop::default() }, &settings);
         assert_eq!((lantern.text, lantern.background), (Color::hex(0xF0E6D2), Color::hex(0x1E1914)));
         assert_eq!((lantern.font_size, lantern.cursor, lantern.links_need_ctrl), (24.0, CursorShape::Beam, true));
         let fox = look(&Desktop { style: Style::Fox, ..Desktop::default() }, &settings);

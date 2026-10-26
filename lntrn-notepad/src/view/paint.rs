@@ -5,6 +5,8 @@
 //! A mark's place is in pixels from the text column's left and the
 //! document's top, like the layout it comes from.
 
+use lntrn_kit::look::Palette;
+use lntrn_math::Color;
 use lntrn_text::{TextEngine, TextStyle};
 
 use super::layout::{LIST_STEP, QUOTE_INDENT, Set, Setting};
@@ -22,9 +24,19 @@ pub struct Inks {
 
 impl Inks {
     pub const PAPER: Inks = Inks { page: 0xFCFBF9, text: 0x1C1B18, dim: 0x706C64, accent: 0xC89600 };
+    /// The dark page in Lantern's palette; [`Inks::dark`] makes it in any.
     pub const DARK: Inks = Inks { page: 0x1D1914, text: 0xE8DCC8, dim: 0xA99C86, accent: 0xFAC800 };
     /// Ink on paper, whatever the screen shows.
     pub const PRINT: Inks = Inks { page: 0xFFFFFF, text: 0x000000, dim: 0x555555, accent: 0x333333 };
+
+    /// The dark page in `palette`: a card's face and the card's ink.
+    pub fn dark(palette: &Palette) -> Inks {
+        let rgb = |c: Color| {
+            let [r, g, b, _] = c.to_u8();
+            u32::from_be_bytes([0, r, g, b])
+        };
+        Inks { page: rgb(palette.card), text: rgb(palette.text), dim: rgb(palette.text_dim), accent: Self::DARK.accent }
+    }
 }
 
 pub enum Mark<'a> {

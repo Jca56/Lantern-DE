@@ -7,7 +7,8 @@ use lntrn_props::props;
 props! {
     /// The desktop's look: window style, accent, font, background.
     pub struct Appearance {
-        /// `"lantern"` or `"fox-dark"`: the window chrome every app draws.
+        /// `"lantern"` or `"fox-dark"`: the palette every app on the kit
+        /// wears (`kit::desktop::Style`).
         pub theme: String = "fox-dark".to_owned() => { id: 1 },
         /// Accent colour, hex.
         pub accent: String = "#FFC800".to_owned() => { id: 2 },
