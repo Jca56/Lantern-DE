@@ -35,7 +35,8 @@ pub enum ThumbKind {
     Video,
     /// WAV / MP3 — embedded cover art via `audio_tags`.
     Audio,
-    /// glTF scene (.glb / .gltf), drawn on the CPU (model.rs).
+    /// glTF scene (.glb / .gltf), drawn on the CPU, or a Prism document's
+    /// own picture (model.rs).
     Model,
 }
 

@@ -383,7 +383,7 @@ impl Gltf {
 /// A regular file opened for reading. Never blocks on a FIFO and never
 /// adopts a terminal (O_NONBLOCK, O_NOCTTY); anything but a regular file
 /// is refused, so a symlink to /dev/zero can't be read without end.
-fn open_regular(path: &Path) -> Option<File> {
+pub(super) fn open_regular(path: &Path) -> Option<File> {
     let file = std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)

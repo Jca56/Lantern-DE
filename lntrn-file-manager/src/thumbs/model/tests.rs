@@ -304,3 +304,46 @@ fn draw_models() {
         }
     }
 }
+
+/// A `.prism` file's bytes: the header, then `chunks` as (tag, payload).
+fn prism_file(chunks: &[(&[u8; 4], &[u8])]) -> Vec<u8> {
+    let app = b"0.1.0";
+    let mut out = b"PRSM".to_vec();
+    out.extend_from_slice(&1u32.to_le_bytes());
+    out.extend_from_slice(&(app.len() as u32).to_le_bytes());
+    out.extend_from_slice(app);
+    for (tag, payload) in chunks {
+        out.extend_from_slice(*tag);
+        out.extend_from_slice(&0u64.to_le_bytes());
+        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        out.extend_from_slice(payload);
+    }
+    out
+}
+
+#[test]
+fn a_prism_file_shows_the_picture_it_carries() {
+    let dir = scratch("prism");
+    let mut png = Vec::new();
+    image::RgbaImage::from_pixel(256, 128, image::Rgba([30, 160, 90, 255]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let path = dir.join("model.prism");
+    std::fs::write(&path, prism_file(&[(b"THMB", &png), (b"DOCM", b"whatever")])).unwrap();
+    let img = thumbnail(&path, 192).expect("its picture");
+    assert_eq!(img.dimensions(), (192, 96));
+    assert_eq!(middle(&img), [30, 160, 90, 255]);
+
+    // Found past other chunks too; none at all, or a file cut short inside
+    // it, keeps the generic icon.
+    std::fs::write(&path, prism_file(&[(b"DOCM", b"x"), (b"THMB", &png)])).unwrap();
+    assert!(thumbnail(&path, 192).is_some());
+    std::fs::write(&path, prism_file(&[(b"DOCM", b"x"), (b"SCEN", b"y")])).unwrap();
+    assert!(thumbnail(&path, 192).is_none());
+    let whole = prism_file(&[(b"THMB", &png)]);
+    std::fs::write(&path, &whole[..whole.len() - 10]).unwrap();
+    assert!(thumbnail(&path, 192).is_none());
+    std::fs::write(&path, b"PRSM").unwrap();
+    assert!(thumbnail(&path, 192).is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}

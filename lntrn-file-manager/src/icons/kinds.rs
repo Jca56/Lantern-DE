@@ -43,10 +43,11 @@ pub(super) fn thumb_kind(name: &str) -> Option<ThumbKind> {
     }
 }
 
-/// glTF 2.0 scenes, binary or text: what `thumbs::model` draws.
+/// glTF 2.0 scenes, binary or text, and Prism documents: what
+/// `thumbs::model` shows.
 pub(super) fn is_model_file(name: &str) -> bool {
     let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
-    matches!(ext.as_str(), "glb" | "gltf")
+    matches!(ext.as_str(), "glb" | "gltf" | "prism")
 }
 
 pub fn is_video_file(name: &str) -> bool {
