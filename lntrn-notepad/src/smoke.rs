@@ -8,6 +8,7 @@
 mod files;
 mod kinds;
 mod page;
+mod spelling;
 
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, Once};
@@ -145,6 +146,11 @@ impl Rig {
         if let Some(path) = path {
             action = action.with("path", Value::Str(path.display().to_string()));
         }
+        self.run(action);
+    }
+
+    /// Any action, arguments and all, as [`Rig::act`] runs one.
+    fn run(&mut self, action: Action) {
         let mut requests = Vec::new();
         crate::actions::run(&mut self.app, &action, &mut HostCx { pointer: Vec2::ZERO, requests: &mut requests });
         self.shell.request(&mut self.app, lntrn_ui::ShellRequest::ClosePopup);

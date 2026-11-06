@@ -20,3 +20,4 @@ lntrn-props = { path = "../../lantern-ui-2/crates/lntrn-props" }
 lntrn-data = { path = "../../lantern-ui-2/crates/lntrn-data" }
 lntrn-sys = { path = "../../lantern-ui-2/crates/lntrn-sys" }
 lntrn-kit = { path = "../lntrn-kit" }
+lntrn-spell = { path = "../../lantern-ui-2/crates/lntrn-spell" }

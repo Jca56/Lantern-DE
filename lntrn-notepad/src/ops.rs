@@ -308,6 +308,13 @@ impl App {
         self.follow.set_light(self.settings.paper);
         let mut again = self.follow.apply(shell);
         again |= self.sync_settings(shell);
+        if self.settings.spelling {
+            self.spelling.want();
+        }
+        again |= self.spelling.poll();
+        if self.spelling.loading() {
+            shell.state.request_redraw_after(0.1);
+        }
         if let Some(files) = self.incoming.as_ref().and_then(|rx| rx.try_recv().ok()) {
             self.ops.extend(files.into_iter().map(Op::Open));
         }

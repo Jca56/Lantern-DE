@@ -22,6 +22,7 @@ use crate::session::{self, Saver};
 use crate::settings::{BODY, Settings};
 use crate::view::find_bar::FindBar;
 use crate::view::page::{PageIn, View, page};
+use crate::spelling::Spelling;
 use crate::view::paint::Inks;
 use crate::view::toolbar::{Swatch, toolbar};
 
@@ -121,6 +122,8 @@ pub struct App {
     pub primary: bool,
     /// Files other launches of Notepad were asked to open.
     pub incoming: Option<Receiver<Vec<PathBuf>>>,
+    /// The dictionary, once loaded, and what it has checked.
+    pub spelling: Spelling,
     /// Which colour the swatch menu is for.
     pub swatch: Swatch,
     /// The document a question on screen is about; and the one whose
@@ -156,7 +159,7 @@ impl App {
         let settings = Settings::load();
         let mut follow = Follow::default();
         follow.set_light(settings.paper);
-        App { settings, seen_reads: follow.reads(), follow, settings_dirty: false, save_at: None, clip: None, pictures: HashMap::new(), fonts: Vec::new(), ops: Vec::new(), front: Weak::new(), front_area: None, took_focus: None, refocus: false, keys, named: Vec::new(), saver: Saver::default(), open: Vec::new(), session_at: None, remembers: true, primary: false, incoming: None, swatch: Swatch::Text, asked: Weak::new(), close_after: Weak::new(), export_pdf: None, export_as: "txt" }
+        App { settings, seen_reads: follow.reads(), follow, settings_dirty: false, save_at: None, clip: None, pictures: HashMap::new(), fonts: Vec::new(), ops: Vec::new(), front: Weak::new(), front_area: None, took_focus: None, refocus: false, keys, named: Vec::new(), saver: Saver::default(), open: Vec::new(), session_at: None, remembers: true, primary: false, incoming: None, spelling: Spelling::new(), swatch: Swatch::Text, asked: Weak::new(), close_after: Weak::new(), export_pdf: None, export_as: "txt" }
     }
 
     /// A new document with nothing in it, under the first name no open
@@ -166,6 +169,18 @@ impl App {
         let name = (1..).map(|n| if n == 1 { "Untitled".to_owned() } else { format!("Untitled {n}") }).find(|name| !taken(name)).unwrap_or_default();
         self.named.push(name.clone());
         Rc::new(RefCell::new(Document::untitled(name)))
+    }
+
+    /// The misspelled word the caret is in, and what it may have meant:
+    /// what the right-click menu offers first.
+    pub fn misspelling(&mut self, ed: &Editor) -> Option<(String, Vec<String>)> {
+        if !self.settings.spelling || ed.selection().is_some() {
+            return None;
+        }
+        let text = &ed.doc.para(ed.caret.para).text;
+        let word = text[self.spelling.range_at(text, ed.caret.byte)?].to_owned();
+        let suggestions = self.spelling.suggest(&word);
+        Some((word, suggestions))
     }
 
     pub fn inks(&self) -> Inks {
@@ -279,10 +294,11 @@ impl Host for App {
         self.refocus |= find.draw(ui, ed);
         let inks = self.inks();
         let height = (ui.remaining_height() - ui.m.px(STATUS_H) - ui.m.gap).max(ui.m.widget_h * 3.0);
-        let out = page(ui, ed, view, height, PageIn { inks, body: BODY, page_width: &mut self.settings.page_width, clip: &mut self.clip, pictures: &self.pictures, hits: &find.hits, hit: find.at, grab });
+        let out = page(ui, ed, view, height, PageIn { inks, body: BODY, page_width: &mut self.settings.page_width, clip: &mut self.clip, pictures: &self.pictures, hits: &find.hits, hit: find.at, grab, spelling: self.settings.spelling.then_some(&mut self.spelling) });
         self.settings_dirty |= out.resized;
         if let Some(at) = out.context {
-            cx.request(ShellRequest::ContextMenu(Box::new(menu::context(ed, at))));
+            let misspelling = self.misspelling(ed);
+            cx.request(ShellRequest::ContextMenu(Box::new(menu::context(ed, at, misspelling))));
         }
         self.status(ui, &d);
         false

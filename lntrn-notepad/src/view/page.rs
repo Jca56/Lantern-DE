@@ -16,6 +16,7 @@ use super::layout::Setting;
 use super::paint::{Inks, Mark, marks};
 use crate::doc::Pos;
 use crate::editor::{Clip, Editor};
+use crate::spelling::Spelling;
 
 /// Room the sheet keeps around its text, and around itself on the desk,
 /// in logical pixels.
@@ -74,6 +75,8 @@ pub struct PageIn<'a> {
     pub hit: Option<usize>,
     /// Take the keyboard this frame.
     pub grab: bool,
+    /// Underline the words the dictionary doesn't know.
+    pub spelling: Option<&'a mut Spelling>,
 }
 
 #[derive(Default)]
@@ -240,6 +243,25 @@ pub fn page(ui: &mut Ui, ed: &mut Editor, view: &mut View, height: f64, mut p: P
             }
         });
     }
+    // Words the dictionary doesn't know, but for the one being typed.
+    if let Some(spelling) = p.spelling.as_deref_mut() {
+        let typing = (focused && ed.selection().is_none()).then_some(ed.caret);
+        for para in from..=to {
+            let (set, top) = (&ed.layout.sets[para], ed.layout.tops[para]);
+            for word in spelling.misspelled(&ed.doc.para(para).text).iter() {
+                if typing == Some(Pos::new(para, word.end)) {
+                    continue;
+                }
+                for row in &set.rows {
+                    let (s, e) = (word.start.max(row.start), word.end.min(row.end));
+                    if s < e {
+                        let y = top + row.top + row.baseline + m.px(3.5) as f32;
+                        squiggle(ui, at(row.x_of(s), y), at(row.x_of(e), y).x, look::bad());
+                    }
+                }
+            }
+        }
+    }
     // A picture that is selected: its edge, and the corner that sizes it.
     if let Some((_, rect)) = picture_corner(ed, &place) {
         let frame = picture_rect(ed, &place).unwrap_or(rect);
@@ -304,4 +326,15 @@ pub fn picture_corner(ed: &Editor, place: &Place) -> Option<(usize, Rect)> {
     let rect = picture_rect(ed, place)?;
     let side = HANDLE * place.scale;
     Some((picture_at_caret(ed)?, Rect::new(rect.max - Vec2::splat(side), rect.max)))
+}
+
+/// A wavy line from `from` across to `to_x`, as a misspelling is
+/// underlined.
+fn squiggle(ui: &mut Ui, from: Vec2, to_x: f64, color: Color) {
+    let m = ui.m;
+    let (wave, high, step) = (m.px(6.0), m.px(1.6), m.px(1.0).max(1.0));
+    let at = |x: f64| Vec2::new(x, from.y + high * (std::f64::consts::TAU * (x - from.x) / wave).sin());
+    let mut points: Vec<Vec2> = std::iter::successors(Some(from.x), |x| Some(x + step)).take_while(|&x| x < to_x).map(at).collect();
+    points.push(at(to_x));
+    ui.draw.polyline(&points, m.px(1.5), color, false);
 }

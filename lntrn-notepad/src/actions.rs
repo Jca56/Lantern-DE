@@ -9,7 +9,7 @@ use lntrn_props::Value;
 use lntrn_ui::{Action, Dialog, HostCx, ShellRequest};
 
 use crate::app::{App, Shared};
-use crate::doc::{Align, List, Style, TextAttrs};
+use crate::doc::{Align, List, Pos, Style, TextAttrs};
 use crate::editor_ops::Toggle;
 use crate::io::{self, Kind as FileKind};
 use crate::menu;
@@ -111,6 +111,19 @@ pub fn run(app: &mut App, action: &Action, cx: &mut HostCx) {
         "file.open" => cx.request(ShellRequest::PathDialog { action: Action::new("file.open-path"), save: false, suggest: home_of(app.front.upgrade().as_ref()).display().to_string() }),
         "file.open-path" => app.ops.extend(path_of(action).map(Op::Open)),
         "view.paper" | "view.dark" => (app.settings.paper, app.settings_dirty) = (id == "view.paper", true),
+        "view.spelling" => (app.settings.spelling, app.settings_dirty) = (!app.settings.spelling, true),
+        "spell.add" => {
+            if let Some(Value::Str(word)) = action.arg("word")
+                && let Err(e) = app.spelling.add(word)
+            {
+                cx.toast(&format!("Couldn't keep the word: {e}"));
+            }
+        }
+        "spell.ignore" => {
+            if let Some(Value::Str(word)) = action.arg("word") {
+                app.spelling.ignore(word);
+            }
+        }
         // What a question on screen was about.
         "tab.close-discard" => app.ops.extend(app.asked.upgrade().map(|doc| Op::Close(Rc::downgrade(&doc)))),
         "tab.close-save" => {
@@ -197,6 +210,16 @@ fn on_document(app: &mut App, doc: &Shared, id: &str, action: &Action, cx: &mut 
         "edit.undo" => drop(ed.undo()),
         "edit.redo" => drop(ed.redo()),
         "edit.select-all" => ed.select_all(),
+        // The misspelled word the caret is in, put right.
+        "spell.use" => {
+            let text = &ed.doc.para(ed.caret.para).text;
+            if let Some(Value::Str(with)) = action.arg("word")
+                && let Some(word) = app.spelling.range_at(text, ed.caret.byte)
+            {
+                let para = ed.caret.para;
+                ed.replace(Pos::new(para, word.start), Pos::new(para, word.end), with);
+            }
+        }
         "find.show" | "find.replace" => d.find.show(id == "find.replace", ed.copy().map(|clip| clip.text)),
         "find.next" | "find.prev" => {
             if !d.find.open {

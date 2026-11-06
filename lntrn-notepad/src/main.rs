@@ -28,6 +28,7 @@ mod ops;
 mod paper;
 mod session;
 mod settings;
+mod spelling;
 #[cfg(test)]
 mod smoke;
 mod view;

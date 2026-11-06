@@ -164,8 +164,8 @@ fn settings_are_kept_and_followed() {
         std::fs::create_dir_all(config.parent().unwrap()).unwrap();
         let _ = std::fs::remove_file(&config);
         std::fs::write(config.with_file_name("notepad.toml"), "theme = \"dark\"\npage_width = 0.5\n").unwrap();
-        assert_eq!(Settings::load(), Settings { paper: false, page_width: 0.5 });
-        assert_eq!(Settings::reload(), Some(Settings { paper: false, page_width: 0.5 }));
+        assert_eq!(Settings::load(), Settings { paper: false, page_width: 0.5, ..Settings::default() });
+        assert_eq!(Settings::reload(), Some(Settings { paper: false, page_width: 0.5, ..Settings::default() }));
     });
     // A desktop that hasn't chosen a style is Fox, and so is the dark page;
     // switched to Lantern, the page follows while running.

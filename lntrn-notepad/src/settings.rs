@@ -18,11 +18,13 @@ pub struct Settings {
     /// How wide the sheet is on the desk, 0 (narrowest) to 1 (all the
     /// room).
     pub page_width: f64,
+    /// Words the dictionary doesn't know are underlined.
+    pub spelling: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { paper: true, page_width: 0.82 }
+        Self { paper: true, page_width: 0.82, spelling: true }
     }
 }
 
@@ -31,7 +33,7 @@ impl Settings {
     /// file of Notepad's own had the same two keys at its top.
     fn from_table(t: &Doc) -> Settings {
         let d = Settings::default();
-        Settings { paper: t.get("theme").and_then(Doc::as_str).map_or(d.paper, |theme| theme != "dark" && theme != "night_sky"), page_width: t.get("page_width").and_then(Doc::as_f64).filter(|w| w.is_finite()).unwrap_or(d.page_width).clamp(0.0, 1.0) }
+        Settings { paper: t.get("theme").and_then(Doc::as_str).map_or(d.paper, |theme| theme != "dark" && theme != "night_sky"), page_width: t.get("page_width").and_then(Doc::as_f64).filter(|w| w.is_finite()).unwrap_or(d.page_width).clamp(0.0, 1.0), spelling: t.get("spelling").and_then(Doc::as_bool).unwrap_or(d.spelling) }
     }
 
     /// The settings in `lantern.toml`. The first time there are none
@@ -61,6 +63,7 @@ impl Settings {
     fn write(&self, t: &mut Map) {
         t.insert("theme", Doc::Str(if self.paper { "paper" } else { "dark" }.to_owned()));
         t.insert("page_width", Doc::Float((self.page_width * 1000.0).round() / 1000.0));
+        t.insert("spelling", Doc::Bool(self.spelling));
     }
 
     /// Write them to `lantern.toml`, leaving the rest of it as it was.
@@ -77,18 +80,18 @@ mod tests {
 
     #[test]
     fn settings_survive_the_file_and_the_old_file_is_understood() {
-        let s = Settings { paper: false, page_width: 0.4567 };
+        let s = Settings { paper: false, page_width: 0.4567, spelling: false };
         let mut table = Map::new();
         s.write(&mut table);
         let mut doc = Doc::map();
         doc.set(SECTION, Doc::Map(table));
         let back = toml::parse(&toml::write(&doc)).unwrap();
-        assert_eq!(Settings::from_table(back.get(SECTION).unwrap()), Settings { paper: false, page_width: 0.457 });
+        assert_eq!(Settings::from_table(back.get(SECTION).unwrap()), Settings { paper: false, page_width: 0.457, spelling: false });
         // The old file, as Notepad wrote it; and nonsense put right.
         let old = toml::parse("theme = \"paper\"\npage_width = 0.820\n").unwrap();
-        assert_eq!(Settings::from_table(&old), Settings { paper: true, page_width: 0.82 });
+        assert_eq!(Settings::from_table(&old), Settings::default());
         let odd = toml::parse("theme = \"night_sky\"\npage_width = 7\n").unwrap();
-        assert_eq!(Settings::from_table(&odd), Settings { paper: false, page_width: 1.0 });
+        assert_eq!(Settings::from_table(&odd), Settings { paper: false, page_width: 1.0, ..Settings::default() });
         assert_eq!(Settings::from_table(&Doc::map()), Settings::default());
     }
 }

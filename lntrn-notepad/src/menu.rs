@@ -61,6 +61,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("picture.fit", "Picture: Fit the Page"),
     ("view.paper", "Paper Page"),
     ("view.dark", "Dark Page"),
+    ("view.spelling", "Check Spelling"),
 ];
 
 /// The keys the page itself takes, which the keymap doesn't know.
@@ -139,7 +140,10 @@ pub fn title_menu(app: &App, name: &str) -> Option<Menu> {
             ],
         ),
         "insert" => ("Insert", vec![item("Picture\u{2026}", "picture.insert")]),
-        "view" => ("View", vec![item("Paper Page", "view.paper").checked(app.settings.paper), item("Dark Page", "view.dark").checked(!app.settings.paper), MenuItem::separator(), item("Command Palette", actions::PALETTE)]),
+        "view" => {
+            let spelling = if app.settings.spelling && app.spelling.missing().is_some() { "Check Spelling (no dictionary)" } else { "Check Spelling" };
+            ("View", vec![item("Paper Page", "view.paper").checked(app.settings.paper), item("Dark Page", "view.dark").checked(!app.settings.paper), MenuItem::separator(), item(spelling, "view.spelling").checked(app.settings.spelling), MenuItem::separator(), item("Command Palette", actions::PALETTE)])
+        }
         _ => return None,
     };
     Some(Menu::new(title, items))
@@ -147,9 +151,21 @@ pub fn title_menu(app: &App, name: &str) -> Option<Menu> {
 
 /// The right-click menu for the page, at `at`: what can be done with
 /// what is selected, or with the picture under the pointer.
-pub fn context(ed: &Editor, at: Vec2) -> ContextMenu {
+/// The right-click menu. On a misspelled word (`misspelling`: the word
+/// and what it may have meant) it starts with what to put instead, and
+/// adding or ignoring the word.
+pub fn context(ed: &Editor, at: Vec2, misspelling: Option<(String, Vec<String>)>) -> ContextMenu {
     let row = |label: &str, id: &str| Item::action(label, Action::new(id));
-    let mut items = vec![row("Cut", "edit.cut"), row("Copy", "edit.copy"), row("Paste", "edit.paste"), row("Paste as Plain Text", "edit.paste-plain"), row("Select All", "edit.select-all"), Item::Separator];
+    let with = |label: &str, id: &str, word: &str| Item::action(label, Action::new(id).with("word", Value::Str(word.to_owned())));
+    let mut items = Vec::new();
+    if let Some((word, suggestions)) = misspelling {
+        if suggestions.is_empty() {
+            items.push(Item::Header("No suggestions".into()));
+        }
+        items.extend(suggestions.iter().map(|s| with(s, "spell.use", s)));
+        items.extend([with("Add to Dictionary", "spell.add", &word), with("Ignore All", "spell.ignore", &word), Item::Separator]);
+    }
+    items.extend([row("Cut", "edit.cut"), row("Copy", "edit.copy"), row("Paste", "edit.paste"), row("Paste as Plain Text", "edit.paste-plain"), row("Select All", "edit.select-all"), Item::Separator]);
     if picture_at_caret(ed).is_some() {
         items.extend([row("Its Own Size", "picture.natural"), row("Fit the Page", "picture.fit")]);
     } else {

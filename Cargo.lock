@@ -2767,6 +2767,7 @@ dependencies = [
  "lntrn-kit",
  "lntrn-math",
  "lntrn-props",
+ "lntrn-spell",
  "lntrn-sys",
  "lntrn-text 0.2.0",
  "lntrn-ui 0.2.0",
@@ -2918,6 +2919,13 @@ dependencies = [
  "lntrn-theme",
  "lntrn-ui 0.1.0",
  "winit",
+]
+
+[[package]]
+name = "lntrn-spell"
+version = "0.2.0"
+dependencies = [
+ "lntrn-sys",
 ]
 
 [[package]]
