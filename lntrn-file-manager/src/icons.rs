@@ -172,15 +172,15 @@ impl IconCache {
                 if crate::fs::is_slow_path(&entry.path) {
                     // On MTP the first read downloads the entire file. A
                     // photo is a few MB — fine one at a time on the slow
-                    // lane. A video frame or an audio tag costs the same
-                    // full download for a file that may be gigabytes, so
-                    // those keep the generic icon.
+                    // lane. A video frame, an audio tag or a model's
+                    // textures cost the same full download for a file that
+                    // may be gigabytes, so those keep the generic icon.
                     match kind {
                         ThumbKind::Image => {
                             self.pool
                                 .submit(key.clone(), entry.path.clone(), kind, true);
                         }
-                        ThumbKind::Video | ThumbKind::Audio => {
+                        ThumbKind::Video | ThumbKind::Audio | ThumbKind::Model => {
                             self.failed.insert(key.clone());
                         }
                     }

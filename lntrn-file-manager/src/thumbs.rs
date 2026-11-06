@@ -1,5 +1,5 @@
 //! Background thumbnail pipeline: a bounded worker pool plus an on-disk
-//! cache shared by image, SVG, video and audio-artwork thumbnails.
+//! cache shared by image, SVG, video, audio-artwork and 3D model thumbnails.
 //!
 //! The render thread never decodes media. It submits jobs via [`ThumbPool`]
 //! and drains finished RGBA buffers each frame (`IconCache::poll_thumbs`).
@@ -11,6 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
+mod model;
 mod pool;
 mod prune;
 
@@ -34,6 +35,8 @@ pub enum ThumbKind {
     Video,
     /// WAV / MP3 — embedded cover art via `audio_tags`.
     Audio,
+    /// glTF scene (.glb / .gltf), drawn on the CPU (model.rs).
+    Model,
 }
 
 // ── Disk cache ───────────────────────────────────────────────────────────────
@@ -96,6 +99,7 @@ pub fn generate(path: &Path, kind: ThumbKind) -> Option<(Vec<u8>, u32, u32)> {
     let thumb = match kind {
         ThumbKind::Video => video_frame(path)?,
         ThumbKind::Audio => audio_artwork(path)?,
+        ThumbKind::Model => model::thumbnail(path, THUMB_SIZE)?,
         ThumbKind::Image if is_svg => rasterize_svg_file(path)?,
         ThumbKind::Image => decode_image_limited(path)?,
     };

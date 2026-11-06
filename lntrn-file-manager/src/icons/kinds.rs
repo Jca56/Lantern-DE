@@ -36,9 +36,17 @@ pub(super) fn thumb_kind(name: &str) -> Option<ThumbKind> {
         Some(ThumbKind::Audio)
     } else if is_image_file(name) {
         Some(ThumbKind::Image)
+    } else if is_model_file(name) {
+        Some(ThumbKind::Model)
     } else {
         None
     }
+}
+
+/// glTF 2.0 scenes, binary or text: what `thumbs::model` draws.
+pub(super) fn is_model_file(name: &str) -> bool {
+    let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
+    matches!(ext.as_str(), "glb" | "gltf")
 }
 
 pub fn is_video_file(name: &str) -> bool {
