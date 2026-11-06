@@ -307,6 +307,12 @@ fn mime_from_extension(ext: &str) -> String {
         "psd" => "image/vnd.adobe.photoshop",
         "xcf" => "image/x-xcf",
 
+        // 3D models (Prism's own document, and what it imports)
+        "prism" => "application/x-prism",
+        "glb" => "model/gltf-binary",
+        "gltf" => "model/gltf+json",
+        "obj" => "model/obj",
+
         // Video
         "mp4" | "m4v" => "video/mp4",
         "mkv" => "video/x-matroska",

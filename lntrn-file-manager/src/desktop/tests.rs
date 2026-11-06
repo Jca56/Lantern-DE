@@ -56,4 +56,13 @@ fn lantern_documents_have_types_of_their_own() {
     assert_eq!(mime_from_extension("lstudio"), "application/x-lstudio");
     assert_eq!(mime_from_extension("lcut"), "application/x-lcut");
     assert_eq!(mime_from_extension("LCUT"), "application/x-lcut");
+    assert_eq!(mime_from_extension("prism"), "application/x-prism");
+}
+
+#[test]
+fn models_have_their_shared_types() {
+    // As shared-mime-info names them, so Prism's desktop entry matches.
+    assert_eq!(mime_from_extension("glb"), "model/gltf-binary");
+    assert_eq!(mime_from_extension("GLTF"), "model/gltf+json");
+    assert_eq!(mime_from_extension("obj"), "model/obj");
 }
