@@ -34,11 +34,11 @@ BINARIES := \
 	lntrn-lockscreen
 
 # Extra binaries from multi-binary crates
-EXTRA_BINARIES := notify-send lntrn-afterglowd
+EXTRA_BINARIES := notify-send
 
 .PHONY: all build deploy install install-bins install-icons install-config \
         install-desktop install-wallpaper install-session install-portal \
-        install-udev install-system fresh-install dirs clean deploy-%
+        install-udev install-system install-afterglow fresh-install dirs clean deploy-%
 
 all: build install
 	@echo ""
@@ -170,16 +170,20 @@ install-udev:
 	@sudo udevadm trigger
 	@echo "  ✓ udev rules installed (backlight + battery)"
 
-# OpenRC service for the Afterglow root daemon (Gentoo). Auto-detects the
-# desktop user, so no per-machine edits needed. Enable + start with:
-#   sudo rc-update add lntrn-afterglowd default && sudo rc-service lntrn-afterglowd start
-install-afterglow-service:
-	@echo "Installing lntrn-afterglowd OpenRC service..."
-	@sudo cp lntrn-afterglow/lntrn-afterglowd.initd /etc/init.d/lntrn-afterglowd
-	@sudo chmod +x /etc/init.d/lntrn-afterglowd
-	@echo "  ✓ /etc/init.d/lntrn-afterglowd"
-	@echo "    enable: sudo rc-update add lntrn-afterglowd default"
-	@echo "    start:  sudo rc-service lntrn-afterglowd start"
+# Afterglow's root helper (Gentoo, OpenRC). It runs as root, so it lives
+# root-owned in /usr/local/sbin, never in ~/.lantern/bin where anything
+# running as you could swap it. Builds it, installs it and its service,
+# enables it at boot and (re)starts it. Run again after changing it.
+install-afterglow:
+	cargo build --release -p lntrn-afterglowd
+	@echo "Installing lntrn-afterglowd..."
+	@sudo install -o root -g root -m 0755 target/release/lntrn-afterglowd /usr/local/sbin/lntrn-afterglowd
+	@sudo install -o root -g root -m 0755 lntrn-afterglow/daemon/lntrn-afterglowd.initd /etc/init.d/lntrn-afterglowd
+	@sudo rc-update add lntrn-afterglowd default >/dev/null 2>&1 || true
+	@sudo rc-service lntrn-afterglowd restart
+	@rm -f $(BIN_DIR)/lntrn-afterglowd
+	@echo "  ✓ /usr/local/sbin/lntrn-afterglowd, started and enabled at boot"
+	@echo "    log: /var/log/lntrn-afterglowd.log"
 
 # ── All system-level installs ───────────────────────────────────────────────
 

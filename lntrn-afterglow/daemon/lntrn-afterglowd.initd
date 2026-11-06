@@ -1,0 +1,22 @@
+#!/sbin/openrc-run
+# lntrn-afterglowd: Afterglow's root helper, the one part of Afterglow
+# that changes the hardware. It sets nothing when it starts, and puts
+# everything back to stock when it stops. Its socket is open to the
+# wheel group alone.
+#
+# Installed root-owned by `make install-afterglow`, never from
+# ~/.lantern/bin: a root service must not run a file its user can swap.
+
+description="Lantern Afterglow hardware helper"
+command="/usr/local/sbin/lntrn-afterglowd"
+command_background="yes"
+pidfile="/run/${RC_SVCNAME}.pid"
+output_log="/var/log/${RC_SVCNAME}.log"
+error_log="/var/log/${RC_SVCNAME}.log"
+# On its way out it puts the fans and clocks back: give it the time.
+retry="TERM/15/KILL/5"
+
+depend() {
+	need localmount
+	after bootmisc modules udev
+}

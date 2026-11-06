@@ -2380,14 +2380,24 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 
 [[package]]
 name = "lntrn-afterglow"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
- "anyhow",
- "libc",
- "lntrn-render 0.1.0",
- "lntrn-theme",
- "lntrn-ui 0.1.0",
- "winit",
+ "lntrn-afterglowd",
+ "lntrn-app",
+ "lntrn-core",
+ "lntrn-data",
+ "lntrn-kit",
+ "lntrn-math",
+ "lntrn-sys",
+ "lntrn-ui 0.2.0",
+]
+
+[[package]]
+name = "lntrn-afterglowd"
+version = "0.2.0"
+dependencies = [
+ "lntrn-data",
+ "lntrn-sys",
 ]
 
 [[package]]

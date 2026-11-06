@@ -1,0 +1,19 @@
+[package]
+name = "lntrn-afterglowd"
+version = "0.2.0"
+description = "Lantern DE - Afterglow's root helper: the one part that changes the hardware"
+authors = ["Alva"]
+edition = "2024"
+
+[lib]
+name = "lntrn_afterglowd"
+path = "src/lib.rs"
+
+[[bin]]
+name = "lntrn-afterglowd"
+path = "src/main.rs"
+
+# Runs as root: nothing past Lantern UI's own pure-std crates.
+[dependencies]
+lntrn-data = { path = "../../../lantern-ui-2/crates/lntrn-data" }
+lntrn-sys = { path = "../../../lantern-ui-2/crates/lntrn-sys" }
