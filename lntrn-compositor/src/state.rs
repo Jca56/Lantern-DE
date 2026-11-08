@@ -307,6 +307,12 @@ pub struct Lantern {
     /// Invalidated (None) whenever a motion event ends without computing a
     /// fresh hit (e.g. the Alt-Tab overlay intercepting motion).
     pub last_pointer_under: Option<(WlSurface, Point<f64, Logical>)>,
+    /// A pointer-constraint re-check is waiting for the loop to go idle
+    /// (input/game_focus.rs): keyboard focus changes queue one.
+    pub constraint_sync_queued: bool,
+    /// The button whose press only focused a fullscreen window (the game
+    /// clicked back into): its release is swallowed too.
+    pub eaten_click_button: Option<u32>,
     /// Last time we sent frame callbacks. Used to keep the vblank stream
     /// running at 60Hz while clients are actively rendering, so wgpu FIFO
     /// presentation doesn't get throttled by sparse vblank events.
@@ -640,6 +646,8 @@ impl Lantern {
             noflip_callbacks_wanted: HashSet::new(),
             last_pointer_render_location: None,
             last_pointer_under: None,
+            constraint_sync_queued: false,
+            eaten_click_button: None,
             last_callback_render: std::time::Instant::now() - std::time::Duration::from_secs(60),
             debug_counters: DebugCounters::from_env(),
             focused_surface: None,

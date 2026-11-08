@@ -1,4 +1,5 @@
 mod dispatch;
+mod game_focus;
 mod keyboard;
 pub(crate) mod layer;
 mod pointer;

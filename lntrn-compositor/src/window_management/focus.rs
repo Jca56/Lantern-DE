@@ -4,7 +4,6 @@ use smithay::{
     desktop::Window,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Point, Serial},
-    wayland::pointer_constraints::with_pointer_constraint,
 };
 
 use crate::state::Lantern;
@@ -78,8 +77,8 @@ impl Lantern {
         pointer.frame(self);
         // The surface under the cursor just gained pointer focus — if it has
         // a pending pointer-constraint (game requested a lock before it had
-        // focus), activate it now.
-        self.maybe_activate_pointer_constraint();
+        // focus) and holds the keyboard, activate it now.
+        self.sync_pointer_constraint();
     }
 
     /// Move the logical pointer position WITHOUT emitting client events.
@@ -94,34 +93,6 @@ impl Lantern {
         // Position changed out of band — the cached hit no longer matches.
         self.last_pointer_under = None;
         self.schedule_render();
-    }
-
-    /// Activate a pending (inactive) pointer constraint on the surface under
-    /// the cursor. `new_constraint` only activates when the surface already
-    /// has pointer focus at creation time; Proton games often request their
-    /// lock during the fullscreen dance BEFORE focus lands, so without this
-    /// re-check the lock never engages and mouse-look stays dead.
-    pub fn maybe_activate_pointer_constraint(&mut self) {
-        let Some(pointer) = self.seat.get_pointer() else {
-            return;
-        };
-        let pos = pointer.current_location();
-        let Some((surface, surface_loc)) = self.surface_under(pos) else {
-            return;
-        };
-        with_pointer_constraint(&surface, &pointer, |constraint| {
-            let Some(constraint) = constraint else { return };
-            if constraint.is_active() {
-                return;
-            }
-            // Only engage while the cursor is inside the constraint region
-            // (surface-local), matching the motion-path check.
-            let point = (pos - surface_loc).to_i32_round();
-            if !constraint.region().map_or(true, |r| r.contains(point)) {
-                return;
-            }
-            constraint.activate();
-        });
     }
 
     pub(crate) fn set_focus_surface(&mut self, surface: Option<WlSurface>, serial: Serial) {
@@ -179,6 +150,10 @@ impl Lantern {
 
         let keyboard = self.seat.get_keyboard().unwrap();
         keyboard.set_focus(self, focus_target, serial);
+        // A game that lost the keyboard lets go of the mouse; one that got
+        // it back takes it again. (`focus_changed` queues this too, but a
+        // focus cleared to None never reaches it.)
+        self.queue_pointer_constraint_sync();
 
         if let Some(surface) = surface {
             self.remember_window_surface(&surface);

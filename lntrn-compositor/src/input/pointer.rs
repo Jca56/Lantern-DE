@@ -60,8 +60,25 @@ impl Lantern {
             .filter(|(s, _)| s.is_alive())
             .or_else(|| self.surface_under(prev_loc));
         if let Some((ref surface, surface_loc)) = under_now {
+            // A constraint holds only while its window has the keyboard
+            // (input/game_focus.rs). Asked before with_pointer_constraint,
+            // which holds the surface lock the check needs, and only when
+            // there is a constraint: this runs on every motion event.
+            let has_constraint = with_pointer_constraint(surface, &pointer, |c| c.is_some());
+            let allowed = has_constraint && {
+                let focus = self.keyboard_focus_surface();
+                self.pointer_constraint_allowed(surface, focus.as_ref())
+            };
             with_pointer_constraint(surface, &pointer, |constraint| {
                 if let Some(constraint) = constraint {
+                    // Its window lost the keyboard (Alt+Tab, a click on the
+                    // other monitor): let the mouse go.
+                    if !allowed {
+                        if constraint.is_active() {
+                            constraint.deactivate();
+                        }
+                        return;
+                    }
                     // Region is surface-local; only honor the constraint while
                     // the pointer is actually inside it.
                     let point = (prev_loc - surface_loc).to_i32_round();
@@ -276,6 +293,12 @@ impl Lantern {
         if button == BTN_LEFT && button_state == ButtonState::Pressed {
             self.cursor.click_anim.trigger(pointer.current_location());
             self.schedule_render();
+        }
+
+        // The release of a press that only focused a fullscreen window: the
+        // client never saw the press, so it must not see the release.
+        if button_state == ButtonState::Released && self.take_eaten_release(button) {
+            return;
         }
 
         // Click while switcher is visible
@@ -608,7 +631,15 @@ impl Lantern {
             let top = self.surface_under(pos);
             let on_layer = top.as_ref().is_some_and(|(surface, _)| self.is_layer_surface(surface));
             if let Some((window, _loc)) = self.visible_element_under(pos).filter(|_| !on_layer) {
+                // Clicking back into a fullscreen game only focuses it: in
+                // the game that click would be an attack (input/game_focus.rs).
+                let eat = self.is_focusing_click_on_fullscreen(&window);
                 self.focus_window(&window, serial);
+                if eat {
+                    self.eaten_click_button = Some(button);
+                    self.schedule_render();
+                    return;
+                }
             } else if let Some((surface, _)) = top {
                 // Not a workspace window. An X11 surface here is an
                 // override-redirect window — a menu, a tooltip, a game's

@@ -82,6 +82,9 @@ impl SeatHandler for Lantern {
         // Setting focus runs smithay's internal liveness purge; if the
         // selection just got cleared because its source died, take over.
         crate::clipboard_manager::recheck_clipboard(self);
+        // Pointer constraints follow the keyboard. Queued: this runs with
+        // the keyboard locked, and reading its focus here would deadlock.
+        self.queue_pointer_constraint_sync();
     }
 }
 
@@ -290,8 +293,13 @@ delegate_pointer_gestures!(Lantern);
 
 impl PointerConstraintsHandler for Lantern {
     fn new_constraint(&mut self, surface: &WlSurface, pointer: &PointerHandle<Self>) {
-        // Activate the constraint immediately if the surface has pointer focus.
-        if pointer.current_focus().as_ref() == Some(surface) {
+        // Activate the constraint immediately if the surface has pointer
+        // focus AND its window has the keyboard: a game you Alt+Tabbed out
+        // of that re-requests its lock must not trap the mouse again.
+        let focus = self.keyboard_focus_surface();
+        if pointer.current_focus().as_ref() == Some(surface)
+            && self.pointer_constraint_allowed(surface, focus.as_ref())
+        {
             with_pointer_constraint(surface, pointer, |constraint| {
                 if let Some(constraint) = constraint {
                     constraint.activate();

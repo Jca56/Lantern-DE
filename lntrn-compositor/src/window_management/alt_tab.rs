@@ -1,6 +1,10 @@
 //! Alt-Tab switcher + round-robin window cycling.
 
-use smithay::{reexports::wayland_server::protocol::wl_surface::WlSurface, utils::Serial};
+use smithay::{
+    desktop::Window,
+    reexports::wayland_server::protocol::wl_surface::WlSurface,
+    utils::{Point, Rectangle, Serial},
+};
 
 use crate::state::Lantern;
 use crate::window_ext::WindowExt;
@@ -82,20 +86,18 @@ impl Lantern {
             .collect()
     }
 
-    /// Switcher entry list: windows on the focused output's active workspace,
-    /// plus any untracked mapped windows as a safety fallback (e.g. XWayland
+    /// Switcher entry list: windows on EVERY output's active workspace, plus
+    /// any untracked mapped windows as a safety fallback (e.g. XWayland
     /// transients that never routed through the standard map path).
-    /// Spawn-order preserved.
+    /// Spawn-order preserved. Every monitor, not just the cursor's: a
+    /// fullscreen game alone on its monitor had nothing to switch to, so
+    /// Alt+Tab couldn't get you to the other screen.
     fn switcher_entries(&self) -> Vec<WlSurface> {
-        let focused_output = self.focused_output_name();
         self.window_spawn_order
             .iter()
             .filter(|s| self.find_any_window(s).is_some())
             .filter(|s| match self.workspaces.window_workspace(s) {
-                Some((out, ws)) => {
-                    focused_output.as_deref() == Some(out.as_str())
-                        && ws == self.workspaces.active_id(&out)
-                }
+                Some((out, ws)) => ws == self.workspaces.active_id(&out),
                 None => true,
             })
             .cloned()
@@ -208,17 +210,51 @@ impl Lantern {
 
         if let Some(window) = self.restore_minimized_surface(&surface) {
             self.focus_window(&window, serial);
+            self.bring_cursor_to(&window);
             return true;
         }
 
         if let Some(window) = self.find_mapped_window(&surface) {
             self.focus_window(&window, serial);
+            self.bring_cursor_to(&window);
             return true;
         }
 
         self.forget_window(&surface);
         self.schedule_render();
         false
+    }
+
+    /// After switching to a window on ANOTHER monitor, put the cursor in the
+    /// middle of it, so it's ready to use. Out of a fullscreen game the
+    /// cursor sat hidden over the game; you'd have had to find it and drag
+    /// it across. Same-monitor switches leave the cursor where it is.
+    fn bring_cursor_to(&mut self, window: &Window) {
+        let Some(pos) = self.seat.get_pointer().map(|p| p.current_location()) else {
+            return;
+        };
+        let Some(output) = self.output_for_window(window) else {
+            return;
+        };
+        if self.output_at_point(pos).as_ref() == Some(&output) {
+            return;
+        }
+        let Some(output_geo) = self.workspaces.output_geometry(&output) else {
+            return;
+        };
+        let loc = self.workspaces.element_location(window).unwrap_or(output_geo.loc);
+        // The part of the window on its monitor: a window hanging off the
+        // edge would put its middle off-screen.
+        let visible = Rectangle::new(loc, window.geometry().size)
+            .intersection(output_geo)
+            .unwrap_or(output_geo);
+        let center = Point::from((
+            visible.loc.x as f64 + visible.size.w as f64 / 2.0,
+            visible.loc.y as f64 + visible.size.h as f64 / 2.0,
+        ));
+        self.warp_pointer_to(center);
+        // Hand the window pointer focus at the new spot.
+        self.refocus_pointer_at_cursor();
     }
 
     /// Cancel Alt+Tab: restore the original focus and hide the overlay.
