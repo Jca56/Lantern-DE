@@ -307,12 +307,15 @@ pub struct Lantern {
     /// Invalidated (None) whenever a motion event ends without computing a
     /// fresh hit (e.g. the Alt-Tab overlay intercepting motion).
     pub last_pointer_under: Option<(WlSurface, Point<f64, Logical>)>,
-    /// A pointer-constraint re-check is waiting for the loop to go idle
-    /// (input/game_focus.rs): keyboard focus changes queue one.
-    pub constraint_sync_queued: bool,
+    /// A pointer focus + constraint re-check is waiting for the loop to go
+    /// idle (input/game_focus.rs): keyboard focus changes queue one.
+    pub pointer_sync_queued: bool,
     /// The button whose press only focused a fullscreen window (the game
     /// clicked back into): its release is swallowed too.
     pub eaten_click_button: Option<u32>,
+    /// Keys the focused window was told are down and not yet up
+    /// (input/held_keys.rs): released to it before it loses the keyboard.
+    pub forwarded_keys: HashSet<smithay::input::keyboard::Keycode>,
     /// Last time we sent frame callbacks. Used to keep the vblank stream
     /// running at 60Hz while clients are actively rendering, so wgpu FIFO
     /// presentation doesn't get throttled by sparse vblank events.
@@ -646,8 +649,9 @@ impl Lantern {
             noflip_callbacks_wanted: HashSet::new(),
             last_pointer_render_location: None,
             last_pointer_under: None,
-            constraint_sync_queued: false,
+            pointer_sync_queued: false,
             eaten_click_button: None,
+            forwarded_keys: HashSet::new(),
             last_callback_render: std::time::Instant::now() - std::time::Duration::from_secs(60),
             debug_counters: DebugCounters::from_env(),
             focused_surface: None,
@@ -901,11 +905,7 @@ impl Lantern {
         // A fullscreen window covering this output takes priority over them —
         // all but a modal overlay, which is drawn above it.
         if let Some(output) = self.output_at_point(pos) {
-            let output_has_fullscreen = self.fullscreen_windows.iter().any(|fw| {
-                self.find_mapped_window(&fw.surface)
-                    .and_then(|w| self.output_for_window(&w))
-                    .map_or(false, |o| o == output)
-            });
+            let output_has_fullscreen = self.fullscreen_covering(&output).is_some();
             let output_geo = self.workspaces.output_geometry(&output).unwrap_or_default();
             // Iterate Top/Overlay layer surfaces newest-first so the most
             // recently created surface (e.g. lntrn-screenshot opening while
@@ -1065,14 +1065,10 @@ impl Lantern {
         let Some(output) = self.output_at_point(pos) else {
             return false;
         };
-        // A fullscreen window suppresses layer input on its output for all
-        // but a modal overlay (mirrors surface_under), so don't block window
-        // grabs behind it.
-        let output_has_fullscreen = self.fullscreen_windows.iter().any(|fw| {
-            self.find_mapped_window(&fw.surface)
-                .and_then(|w| self.output_for_window(&w))
-                .map_or(false, |o| o == output)
-        });
+        // A fullscreen window covering its output suppresses layer input
+        // there for all but a modal overlay (mirrors surface_under), so
+        // don't block window grabs behind it.
+        let output_has_fullscreen = self.fullscreen_covering(&output).is_some();
         let output_geo = self.workspaces.output_geometry(&output).unwrap_or_default();
         for ls in self.layer_surfaces.iter().rev() {
             if !ls.alive() {

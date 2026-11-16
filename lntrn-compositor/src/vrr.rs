@@ -39,16 +39,14 @@ impl Lantern {
     }
 
     /// True if any fullscreen window belongs to `output` (see
-    /// `output_for_window`). Also used by the render path to gate direct
-    /// scanout.
+    /// `output_for_window`), on top there or not: adaptive sync stays on
+    /// while another window is briefly raised over the game. Drawing and
+    /// input ask `fullscreen_covering` instead.
     ///
     /// By ownership, not by which output a corner of the window's rect falls
     /// on: with one output's rect reaching into another's that probe named
-    /// the wrong monitor, and getting this wrong matters for pacing — a
-    /// wrong "false" runs the 4K dual-kawase blur and disables direct
-    /// scanout during gameplay, a wrong "true" strips the other monitor's
-    /// blur and silences its panels.
-    pub(crate) fn output_has_fullscreen(&self, output: &Output) -> bool {
+    /// the wrong monitor.
+    fn output_has_fullscreen(&self, output: &Output) -> bool {
         self.fullscreen_windows
             .iter()
             .any(|fw| self.held_output(&fw.surface).as_ref() == Some(output))

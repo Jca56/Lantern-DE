@@ -6,6 +6,7 @@ use smithay::{
     utils::{Logical, Point, Serial},
 };
 
+use crate::keyboard_focus::KeyboardFocusTarget;
 use crate::state::Lantern;
 use crate::window_ext::WindowExt;
 
@@ -14,6 +15,13 @@ impl Lantern {
         let Some(surface) = window.get_wl_surface() else {
             return;
         };
+        // The window losing the keyboard has its held keys released before
+        // the first X11 request of this focus change, which is the raise
+        // below (input/held_keys.rs).
+        if !self.is_locked() {
+            let target = self.keyboard_target_for(&surface);
+            self.release_keys_before_focus_change(Some(&target));
+        }
         // Raise in BOTH the global self.space AND the window's per-workspace
         // Space so all Z-order consumers agree. Why both:
         //   - Rendering iterates the per-workspace Space's elements in
@@ -107,6 +115,10 @@ impl Lantern {
             "Updating keyboard focus"
         );
 
+        // Ahead of the activated-state X11 requests below (input/held_keys.rs).
+        let focus_target = surface.as_ref().map(|wls| self.keyboard_target_for(wls));
+        self.release_keys_before_focus_change(focus_target.as_ref());
+
         let previous_focus = self.focused_surface.clone();
         // Update focused_surface BEFORE broadcasting so foreign-toplevel clients
         // see the correct activated state.
@@ -132,34 +144,34 @@ impl Lantern {
             }
         }
 
-        // Build the keyboard focus target. For X11 surfaces we use the
-        // X11 variant so Smithay's KeyboardTarget impl also invokes the
-        // X11 server's SetInputFocus — native X11 games (SDL2 / XInput2 /
-        // XKBlib) won't receive key events without it.
-        let focus_target = surface.as_ref().map(|wls| {
-            let x11 = self
-                .space
-                .elements()
-                .find(|w| w.get_wl_surface().as_ref() == Some(wls))
-                .and_then(|w| w.x11_surface().cloned());
-            match x11 {
-                Some(x11s) => crate::keyboard_focus::KeyboardFocusTarget::X11(x11s),
-                None => crate::keyboard_focus::KeyboardFocusTarget::Wayland(wls.clone()),
-            }
-        });
-
-        let keyboard = self.seat.get_keyboard().unwrap();
-        keyboard.set_focus(self, focus_target, serial);
+        self.set_keyboard_focus(focus_target, serial);
         // A game that lost the keyboard lets go of the mouse; one that got
-        // it back takes it again. (`focus_changed` queues this too, but a
-        // focus cleared to None never reaches it.)
-        self.queue_pointer_constraint_sync();
+        // it back takes it again. And the raise may have put another window
+        // under the cursor. (`focus_changed` queues this too, but a focus
+        // cleared to None never reaches it.)
+        self.queue_pointer_sync();
 
         if let Some(surface) = surface {
             self.remember_window_surface(&surface);
         }
 
         self.schedule_client_render();
+    }
+
+    /// The keyboard focus target for a window's surface. An X11 window gets
+    /// the X11 variant, so that Smithay's `KeyboardTarget` impl also sets the
+    /// X server's input focus: native X11 games (SDL2 / XInput2 / XKBlib)
+    /// get no key events without it.
+    fn keyboard_target_for(&self, surface: &WlSurface) -> KeyboardFocusTarget {
+        let x11 = self
+            .space
+            .elements()
+            .find(|w| w.get_wl_surface().as_ref() == Some(surface))
+            .and_then(|w| w.x11_surface().cloned());
+        match x11 {
+            Some(x11) => KeyboardFocusTarget::X11(x11),
+            None => KeyboardFocusTarget::Wayland(surface.clone()),
+        }
     }
 
     pub fn focused_window(&self) -> Option<Window> {

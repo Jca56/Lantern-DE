@@ -69,6 +69,13 @@ impl Lantern {
                 let focus = self.keyboard_focus_surface();
                 self.pointer_constraint_allowed(surface, focus.as_ref())
             };
+            // Relative motion and buttons go to the pointer focus, so a
+            // constraint holds only on the surface that has it. This looks
+            // at what is under the cursor, which the focus can trail (the
+            // window switcher just closed, a window was raised here): then
+            // this event moves the pointer normally, handing focus over,
+            // and the next one engages.
+            let has_pointer = allowed && pointer.current_focus().as_ref() == Some(surface);
             with_pointer_constraint(surface, &pointer, |constraint| {
                 if let Some(constraint) = constraint {
                     // Its window lost the keyboard (Alt+Tab, a click on the
@@ -77,6 +84,9 @@ impl Lantern {
                         if constraint.is_active() {
                             constraint.deactivate();
                         }
+                        return;
+                    }
+                    if !has_pointer {
                         return;
                     }
                     // Region is surface-local; only honor the constraint while
@@ -657,11 +667,9 @@ impl Lantern {
                     // widget). Give it keyboard focus so OnDemand
                     // interactivity works; one that asked for no keyboard
                     // (the Control Center's bar) is never given it.
-                    let keyboard = self.seat.get_keyboard().unwrap();
-                    keyboard.set_focus(
-                        self,
+                    self.set_keyboard_focus(
                         Some(crate::keyboard_focus::KeyboardFocusTarget::Wayland(surface)),
-                        serial.into(),
+                        serial,
                     );
                 }
             } else {

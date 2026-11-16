@@ -214,7 +214,11 @@ pub fn render_surface(
     // Two things still need the composite pass on such an output: a modal
     // overlay, which is drawn above the fullscreen window, and a pending
     // screencopy, which reads the composited frame back.
-    let fullscreen_here = state.output_has_fullscreen(&output);
+    // "Covers" means it is also the top window here: with another window
+    // raised over it (`fullscreen_covering`), it is drawn in the ordinary
+    // window stack and none of this applies.
+    let covering_fullscreen = state.fullscreen_covering(&output).map(|fw| fw.surface.clone());
+    let fullscreen_here = covering_fullscreen.is_some();
     let allow_scanout = fullscreen_here
         && matches!(
             state.cursor.status,
@@ -1032,7 +1036,9 @@ pub fn render_surface(
         // Out of animation, `progress` defaults to 1 (no crossfade),
         // `combined_scale` is 1.0 (rescale is a no-op), and the snapshot
         // branch is skipped — identical fast path to before.
-        let target = if is_fullscreen {
+        // Above the layer surfaces only while it covers this output; under
+        // a window raised over it, it stacks like any other window.
+        let target = if is_fullscreen && covering_fullscreen.as_ref() == Some(&surface) {
             &mut fullscreen_elements
         } else {
             &mut window_elements

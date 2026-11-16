@@ -218,9 +218,7 @@ impl CompositorHandler for Lantern {
             use smithay::wayland::shell::wlr_layer::KeyboardInteractivity;
             if kb_interactivity == KeyboardInteractivity::Exclusive {
                 let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-                let keyboard = self.seat.get_keyboard().unwrap();
-                keyboard.set_focus(
-                    self,
+                self.set_keyboard_focus(
                     Some(crate::keyboard_focus::KeyboardFocusTarget::Wayland(
                         wl_surface,
                     )),
@@ -245,11 +243,7 @@ impl CompositorHandler for Lantern {
                     if let Some(window) = self.focused_window() {
                         self.focus_window(&window, serial);
                     } else {
-                        keyboard.set_focus(
-                            self,
-                            Option::<crate::keyboard_focus::KeyboardFocusTarget>::None,
-                            serial,
-                        );
+                        self.set_keyboard_focus(None, serial);
                     }
                     // No longer modal, so a fullscreen window covers it
                     // again: the pointer goes back to that window too.

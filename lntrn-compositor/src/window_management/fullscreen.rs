@@ -1,6 +1,7 @@
 //! Fullscreen state, animation, and the Wine-titlebar special case.
 
 use smithay::{
+    output::Output,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Point, Rectangle, Serial},
 };
@@ -14,6 +15,41 @@ impl Lantern {
         self.fullscreen_windows
             .iter()
             .any(|e| e.surface == *surface)
+    }
+
+    /// The fullscreen window covering `output` right now: one on its active
+    /// workspace that is also the top window there.
+    ///
+    /// A fullscreen window is drawn over the bar and every other layer
+    /// surface, and takes the pointer from them, only while it covers its
+    /// output. Focus another window on that monitor (Alt+Tab to Steam,
+    /// parked under the game) and that window is raised above it: the
+    /// fullscreen window then stacks like any other, so the raised window
+    /// shows, and gets the clicks, until the fullscreen one is focused
+    /// again. Before, a fullscreen window was drawn on top wherever it sat
+    /// in the stack, while clicks went by the stack: a window raised over
+    /// the game took the keyboard and the clicks over its area, unseen.
+    ///
+    /// "Top" is by the global mirror's order, the one both drawing and
+    /// pointer hit-testing use. Only workspace windows count: X11 popups
+    /// and the scratchpad are in no workspace. And a window is on the
+    /// output whose workspace holds it, not where a corner of its rect
+    /// falls: a wrong "no" here runs the 4K blur pass and drops direct
+    /// scanout during gameplay, a wrong "yes" strips the other monitor's
+    /// blur and silences its panels.
+    pub(crate) fn fullscreen_covering(&self, output: &Output) -> Option<&FullscreenWindow> {
+        // Called per pointer motion event: nearly always nothing to do.
+        if self.fullscreen_windows.is_empty() {
+            return None;
+        }
+        let name = output.name();
+        let active = self.workspaces.active_id(&name);
+        let top = self.space.elements().rev().find_map(|window| {
+            let surface = window.get_wl_surface()?;
+            (self.workspaces.window_workspace_ref(&surface) == Some((name.as_str(), active)))
+                .then_some(surface)
+        })?;
+        self.fullscreen_windows.iter().find(|fw| fw.surface == top)
     }
 
     pub fn fullscreen_surface(&mut self, surface: &WlSurface, serial: Serial) -> bool {

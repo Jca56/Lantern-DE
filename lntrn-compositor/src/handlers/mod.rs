@@ -84,7 +84,7 @@ impl SeatHandler for Lantern {
         crate::clipboard_manager::recheck_clipboard(self);
         // Pointer constraints follow the keyboard. Queued: this runs with
         // the keyboard locked, and reading its focus here would deadlock.
-        self.queue_pointer_constraint_sync();
+        self.queue_pointer_sync();
     }
 }
 

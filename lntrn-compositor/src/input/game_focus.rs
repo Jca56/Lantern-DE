@@ -17,6 +17,7 @@ use std::borrow::Cow;
 
 use smithay::{
     desktop::Window,
+    input::pointer::CursorImageStatus,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     wayland::{
         compositor::get_parent, pointer_constraints::with_pointer_constraint,
@@ -42,7 +43,7 @@ impl Lantern {
 
     /// The keyboard focus's surface. Never call it from inside a keyboard
     /// `set_focus` (`SeatHandler::focus_changed` runs while the keyboard is
-    /// locked): it would deadlock. That path queues [`Self::queue_pointer_constraint_sync`].
+    /// locked): it would deadlock. That path queues [`Self::queue_pointer_sync`].
     pub(crate) fn keyboard_focus_surface(&self) -> Option<WlSurface> {
         let focus = self.seat.get_keyboard()?.current_focus()?;
         focus.wl_surface().map(Cow::into_owned)
@@ -85,26 +86,36 @@ impl Lantern {
             .cloned()
     }
 
-    /// Re-check the pointer constraint once the event loop is idle. Keyboard
-    /// focus changes call this: they can happen while the keyboard is locked
-    /// (`focus_changed`) or inside a pointer grab (a window drag handing the
-    /// window to another monitor), where touching either handle deadlocks.
-    pub(crate) fn queue_pointer_constraint_sync(&mut self) {
-        if self.constraint_sync_queued {
+    /// Re-check pointer focus and the pointer constraint once the event loop
+    /// is idle. Keyboard focus changes call this: they can happen while the
+    /// keyboard is locked (`focus_changed`) or inside a pointer grab (a
+    /// window drag handing the window to another monitor), where touching
+    /// either handle deadlocks.
+    ///
+    /// Pointer focus first: a focus change restacks the windows under a
+    /// cursor that didn't move (Alt+Tab raising another window on this
+    /// monitor), and the window switcher takes the pointer away from every
+    /// window while it's up. Left stale, clicks went to the window now
+    /// underneath, and a game got its lock back without the pointer: no
+    /// motion, no buttons, until it lost the keyboard again.
+    pub(crate) fn queue_pointer_sync(&mut self) {
+        if self.pointer_sync_queued {
             return;
         }
-        self.constraint_sync_queued = true;
+        self.pointer_sync_queued = true;
         self.loop_handle.insert_idle(|state: &mut Lantern| {
-            state.constraint_sync_queued = false;
+            state.pointer_sync_queued = false;
+            state.sync_pointer_focus();
             state.sync_pointer_constraint();
         });
     }
 
     /// Bring the pointer constraint under the cursor in line with the
     /// keyboard: let go when its window lost the keyboard, engage when it has
-    /// it and the cursor sits inside the constraint's region. Proton games
-    /// request their lock mid-fullscreen-dance, before focus lands, so the
-    /// engage half matters as much as the release.
+    /// it, has pointer focus, and the cursor sits inside the constraint's
+    /// region. Proton games request their lock mid-fullscreen-dance, before
+    /// focus lands, and XWayland keeps one lock for good rather than asking
+    /// again, so the engage half matters as much as the release.
     pub fn sync_pointer_constraint(&mut self) {
         let Some(pointer) = self.seat.get_pointer() else {
             return;
@@ -134,6 +145,12 @@ impl Lantern {
         let Some((surface, surface_loc)) = under else {
             return;
         };
+        // Only the surface with pointer focus can hold one: relative motion
+        // and buttons go to the pointer focus, so a lock engaged on any
+        // other surface leaves its window with a dead mouse.
+        if pointer.current_focus().as_ref() != Some(&surface) {
+            return;
+        }
         if !self.pointer_constraint_allowed(&surface, focus.as_ref()) {
             return;
         }
@@ -148,6 +165,19 @@ impl Lantern {
                 constraint.activate();
             }
         });
+    }
+
+    /// The cursor is hidden by a fullscreen window that has the pointer: a
+    /// game hides its own, wherever on its monitor the cursor sits. (Not any
+    /// hidden cursor: a terminal hides it while you type.)
+    pub(crate) fn cursor_hidden_by_fullscreen(&self) -> bool {
+        if !matches!(self.cursor.status, CursorImageStatus::Hidden) {
+            return false;
+        }
+        let Some(focus) = self.seat.get_pointer().and_then(|p| p.current_focus()) else {
+            return false;
+        };
+        self.is_fullscreen(&root_surface(&focus))
     }
 
     // ── The focusing click on a fullscreen window is eaten ──

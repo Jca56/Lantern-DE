@@ -51,7 +51,7 @@ impl Lantern {
         // While locked, keys go to a live lock surface or to nobody.
         self.ensure_lock_focus();
 
-        self.seat.get_keyboard().unwrap().input::<(), _>(
+        let intercepted = self.seat.get_keyboard().unwrap().input::<(), _>(
             self,
             event.key_code(),
             event.state(),
@@ -611,6 +611,15 @@ impl Lantern {
                 FilterResult::Forward
             },
         );
+        // A release a binding swallowed still reaches the window that saw
+        // the press (input/held_keys.rs).
+        self.note_key(
+            event.key_code(),
+            event.state(),
+            intercepted.is_some(),
+            serial,
+            time,
+        );
 
         // The filter intercepted layer-mapped key(s) and recorded target
         // keycodes to inject. Forward them to the focused client now, outside
@@ -623,6 +632,7 @@ impl Lantern {
             for (keycode, state) in injects {
                 let serial = SERIAL_COUNTER.next_serial();
                 keyboard.input_forward(self, keycode, state, serial, time, false);
+                self.note_forwarded_key(keycode, state);
             }
         }
     }

@@ -9,6 +9,22 @@ use smithay::{
 use crate::state::Lantern;
 use crate::window_ext::WindowExt;
 
+/// The entries of `mru` that pass `listed`, in its order (most recent
+/// first), then any others from `spawn` that pass it, in theirs.
+fn recent_first<T: Clone + PartialEq>(
+    mru: &[T],
+    spawn: &[T],
+    listed: impl Fn(&T) -> bool,
+) -> Vec<T> {
+    let mut entries: Vec<T> = mru.iter().filter(|s| listed(s)).cloned().collect();
+    for entry in spawn.iter().filter(|s| listed(s)) {
+        if !entries.contains(entry) {
+            entries.push(entry.clone());
+        }
+    }
+    entries
+}
+
 impl Lantern {
     /// Round-robin window cycling including minimized windows.
     pub fn cycle_next_window(&mut self, serial: Serial) {
@@ -86,22 +102,27 @@ impl Lantern {
             .collect()
     }
 
-    /// Switcher entry list: windows on EVERY output's active workspace, plus
-    /// any untracked mapped windows as a safety fallback (e.g. XWayland
-    /// transients that never routed through the standard map path).
-    /// Spawn-order preserved. Every monitor, not just the cursor's: a
+    /// Switcher entry list, most recently used first: the focused window,
+    /// then the one used before it, and so on. A quick Alt+Tab picks the
+    /// second entry, so it flips between the last two windows (the game and
+    /// the browser) however many others are open. In the order windows were
+    /// opened, "Alt+Tab back" from one of three windows landed on the third.
+    ///
+    /// Windows on EVERY output's active workspace, not just the cursor's: a
     /// fullscreen game alone on its monitor had nothing to switch to, so
-    /// Alt+Tab couldn't get you to the other screen.
+    /// Alt+Tab couldn't get you to the other screen. Windows without a
+    /// workspace are listed too (a safety fallback, e.g. XWayland transients
+    /// that never routed through the standard map path), and any window
+    /// missing from the MRU list follows in the order it was opened.
     fn switcher_entries(&self) -> Vec<WlSurface> {
-        self.window_spawn_order
-            .iter()
-            .filter(|s| self.find_any_window(s).is_some())
-            .filter(|s| match self.workspaces.window_workspace(s) {
-                Some((out, ws)) => ws == self.workspaces.active_id(&out),
-                None => true,
-            })
-            .cloned()
-            .collect()
+        let listed = |s: &WlSurface| {
+            self.find_any_window(s).is_some()
+                && match self.workspaces.window_workspace(s) {
+                    Some((out, ws)) => ws == self.workspaces.active_id(&out),
+                    None => true,
+                }
+        };
+        recent_first(&self.window_mru, &self.window_spawn_order, listed)
     }
 
     pub fn focus_next_window(&mut self, serial: Serial) -> bool {
@@ -164,8 +185,16 @@ impl Lantern {
     }
 
     pub fn hide_alt_tab_switcher(&mut self) {
-        self.alt_tab_switcher.hide();
+        self.close_switcher();
         self.schedule_render();
+    }
+
+    /// Take the switcher down. While it was up it kept the pointer away from
+    /// every window (hovering picks a card instead), so pointer focus goes
+    /// back to whatever is under the cursor once the loop is idle.
+    fn close_switcher(&mut self) {
+        self.alt_tab_switcher.hide();
+        self.queue_pointer_sync();
     }
 
     /// Close a window from the switcher overlay (close button click).
@@ -206,7 +235,13 @@ impl Lantern {
             return false;
         };
 
-        self.alt_tab_switcher.hide();
+        self.close_switcher();
+        // Which window a switch landed on: the first question of any "Alt+Tab
+        // didn't focus it" report, and the log couldn't answer it.
+        tracing::info!(
+            app_id = %self.find_any_window(&surface).map(|w| w.get_app_id()).unwrap_or_default(),
+            "Alt+Tab switching to window"
+        );
 
         if let Some(window) = self.restore_minimized_surface(&surface) {
             self.focus_window(&window, serial);
@@ -228,7 +263,10 @@ impl Lantern {
     /// After switching to a window on ANOTHER monitor, put the cursor in the
     /// middle of it, so it's ready to use. Out of a fullscreen game the
     /// cursor sat hidden over the game; you'd have had to find it and drag
-    /// it across. Same-monitor switches leave the cursor where it is.
+    /// it across. Same-monitor switches leave the cursor where it is, unless
+    /// a fullscreen window is hiding it and it isn't over the new window:
+    /// out of a game to a window shown over it on the same monitor, the game
+    /// goes on hiding the cursor wherever it still shows around that window.
     fn bring_cursor_to(&mut self, window: &Window) {
         let Some(pos) = self.seat.get_pointer().map(|p| p.current_location()) else {
             return;
@@ -236,7 +274,8 @@ impl Lantern {
         let Some(output) = self.output_for_window(window) else {
             return;
         };
-        if self.output_at_point(pos).as_ref() == Some(&output) {
+        let on_its_monitor = self.output_at_point(pos).as_ref() == Some(&output);
+        if on_its_monitor && !self.cursor_hidden_by_fullscreen() {
             return;
         }
         let Some(output_geo) = self.workspaces.output_geometry(&output) else {
@@ -248,6 +287,11 @@ impl Lantern {
         let visible = Rectangle::new(loc, window.geometry().size)
             .intersection(output_geo)
             .unwrap_or(output_geo);
+        // Hidden but already over the window: it gets the pointer, and shows
+        // its own cursor, without a jump.
+        if on_its_monitor && visible.to_f64().contains(pos) {
+            return;
+        }
         let center = Point::from((
             visible.loc.x as f64 + visible.size.w as f64 / 2.0,
             visible.loc.y as f64 + visible.size.h as f64 / 2.0,
@@ -260,7 +304,7 @@ impl Lantern {
     /// Cancel Alt+Tab: restore the original focus and hide the overlay.
     pub fn cancel_alt_tab(&mut self, serial: Serial) {
         let original = self.alt_tab_switcher.original_focus().cloned();
-        self.alt_tab_switcher.hide();
+        self.close_switcher();
 
         if let Some(surface) = original {
             if let Some(window) = self.find_mapped_window(&surface) {
@@ -269,5 +313,34 @@ impl Lantern {
             }
         }
         self.schedule_render();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::recent_first;
+
+    #[test]
+    fn most_recent_window_comes_first() {
+        // Opened as game, browser, guide; used last: browser, then game.
+        let spawn = ["game", "browser", "guide"];
+        let mru = ["browser", "game", "guide"];
+        assert_eq!(recent_first(&mru, &spawn, |_| true), ["browser", "game", "guide"]);
+    }
+
+    #[test]
+    fn unlisted_windows_are_left_out() {
+        let spawn = ["game", "browser", "guide"];
+        let mru = ["browser", "game", "guide"];
+        let entries = recent_first(&mru, &spawn, |w| *w != "game");
+        assert_eq!(entries, ["browser", "guide"]);
+    }
+
+    #[test]
+    fn windows_missing_from_the_mru_follow_in_spawn_order() {
+        let spawn = ["game", "popup", "browser", "dialog"];
+        let mru = ["browser", "game"];
+        let entries = recent_first(&mru, &spawn, |_| true);
+        assert_eq!(entries, ["browser", "game", "popup", "dialog"]);
     }
 }

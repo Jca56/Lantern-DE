@@ -70,13 +70,13 @@ impl Lantern {
         let saved_focus = keyboard.current_focus();
 
         // 1. Focus the target so it receives the upcoming keymap + keys.
-        keyboard.set_focus(self, Some(target), SERIAL_COUNTER.next_serial());
+        self.set_keyboard_focus(Some(target), SERIAL_COUNTER.next_serial());
 
         // 2. Swap the seat to the throwaway emoji keymap. This broadcasts the
         //    new keymap to the now-focused target so it decodes our keycodes.
         if keyboard.set_keymap_from_string(self, keymap).is_err() {
             tracing::warn!("type_text: failed to compile emoji keymap; aborting");
-            keyboard.set_focus(self, saved_focus, SERIAL_COUNTER.next_serial());
+            self.set_keyboard_focus(saved_focus, SERIAL_COUNTER.next_serial());
             return;
         }
 
@@ -112,7 +112,7 @@ impl Lantern {
         }
 
         // 5. Hand focus back to the Command Center.
-        keyboard.set_focus(self, saved_focus, SERIAL_COUNTER.next_serial());
+        self.set_keyboard_focus(saved_focus, SERIAL_COUNTER.next_serial());
     }
 }
 

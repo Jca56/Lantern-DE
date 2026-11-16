@@ -99,9 +99,7 @@ impl SessionLockHandler for Lantern {
     fn unlock(&mut self) {
         let prev_focus = self.session_lock.take().and_then(|d| d.prev_focus);
         let serial = SERIAL_COUNTER.next_serial();
-        if let Some(keyboard) = self.seat.get_keyboard() {
-            keyboard.set_focus(self, prev_focus, serial);
-        }
+        self.set_keyboard_focus(prev_focus, serial);
         self.schedule_render_forced();
     }
 
@@ -119,14 +117,11 @@ impl SessionLockHandler for Lantern {
 
         // Hand keyboard focus to the lock surface so typed passwords reach it.
         let serial = SERIAL_COUNTER.next_serial();
-        if let Some(keyboard) = self.seat.get_keyboard() {
-            keyboard.set_focus(
-                self,
-                Some(KeyboardFocusTarget::Wayland(surface.wl_surface().clone())),
-                serial,
-            );
-            tracing::info!(output = %out.name(), "session lock: keyboard focus → lock surface");
-        }
+        self.set_keyboard_focus(
+            Some(KeyboardFocusTarget::Wayland(surface.wl_surface().clone())),
+            serial,
+        );
+        tracing::info!(output = %out.name(), "session lock: keyboard focus → lock surface");
 
         if let Some(data) = &mut self.session_lock {
             data.surfaces.insert(out.name(), surface);
@@ -201,7 +196,7 @@ impl Lantern {
         if target.is_none() && focus.is_none() {
             return;
         }
-        keyboard.set_focus(self, target, SERIAL_COUNTER.next_serial());
+        self.set_keyboard_focus(target, SERIAL_COUNTER.next_serial());
     }
 }
 
