@@ -270,6 +270,8 @@ impl Lantern {
         if !is_scratchpad {
             self.pending_center.insert(surface.clone());
         }
+        // And for the pointer, once it can be hit (focus.rs).
+        self.awaiting_first_frame.insert(surface.clone());
 
         // Start open animation (preset-aware: Springy grows from center).
         self.start_open_anim(&surface);
@@ -313,6 +315,7 @@ impl Lantern {
         self.pending_workspace_moves
             .retain(|m| m.surface != *surface);
         self.pending_center.remove(surface);
+        self.awaiting_first_frame.remove(surface);
         self.window_snapshots.remove(surface);
         self.animations.remove(surface);
         self.window_state_anim.remove(surface);

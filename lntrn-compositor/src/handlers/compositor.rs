@@ -166,6 +166,10 @@ impl CompositorHandler for Lantern {
 
         // Center windows that are waiting for their first real geometry
         self.center_pending_window(surface);
+        // Then the pointer, where centering left them.
+        if mapped_window.is_some() {
+            self.pointer_on_first_frame(surface);
+        }
 
         // Propagate title/app_id changes to foreign-toplevel clients
         if mapped_window.is_some() {

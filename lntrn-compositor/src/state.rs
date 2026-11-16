@@ -532,6 +532,9 @@ pub struct Lantern {
     // Window centering: windows waiting for their first real geometry before being centered
     pub pending_center: HashSet<WlSurface>,
     pub center_cascade_counter: i32,
+    /// Windows mapped but not drawn yet: the pointer goes to the one under
+    /// it on its first frame (window_management/focus.rs).
+    pub awaiting_first_frame: HashSet<WlSurface>,
 }
 
 impl Lantern {
@@ -773,6 +776,7 @@ impl Lantern {
             pending_x11_windows: Vec::new(),
             pending_center: HashSet::new(),
             center_cascade_counter: 0,
+            awaiting_first_frame: HashSet::new(),
         }
     }
 

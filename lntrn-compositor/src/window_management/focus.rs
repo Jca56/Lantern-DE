@@ -89,6 +89,29 @@ impl Lantern {
         self.sync_pointer_constraint();
     }
 
+    /// A new window's first frame hands it the pointer, if the cursor sits
+    /// over it. A window can only be hit once it has a buffer, and pointer
+    /// focus otherwise waits for real motion: one mapped under a still
+    /// cursor heard no `wl_pointer.enter` until the mouse moved. A game that
+    /// asks for fullscreen before it draws (the fullscreen path refocuses
+    /// while it can't be hit yet) kept the desktop's cursor until then, and
+    /// couldn't hide it for the pad. Runs on every commit of a mapped
+    /// window's root surface, so it bails early.
+    pub(crate) fn pointer_on_first_frame(&mut self, surface: &WlSurface) {
+        if !self.awaiting_first_frame.contains(surface) {
+            return;
+        }
+        let drawn = smithay::backend::renderer::utils::with_renderer_surface_state(surface, |rss| {
+            rss.buffer().is_some()
+        });
+        if drawn != Some(true) {
+            return;
+        }
+        self.awaiting_first_frame.remove(surface);
+        // Queued: on idle, after this commit's placement and centering.
+        self.queue_pointer_sync();
+    }
+
     /// Move the logical pointer position WITHOUT emitting client events.
     /// Used when a game fullscreens on an output the cursor isn't on: warp
     /// first, then `refocus_pointer_at_cursor()` delivers wl_pointer.enter
